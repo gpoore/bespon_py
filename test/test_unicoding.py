@@ -37,6 +37,7 @@ if all(os.path.isdir(x) for x in ('bespon', 'test', 'doc')):
 import bespon.unicoding as mdl
 import bespon.erring as err
 
+import pytest
 import unicodedata
 
 
@@ -112,14 +113,18 @@ def test_keydefaultdict():
 def test_UnicodeFilter_defaults():
     uf = mdl.UnicodeFilter()
     assert(uf.newlines == mdl.BESPON_DEFAULT_NEWLINES)
+    assert(uf.newline_chars == set(''.join(mdl.BESPON_DEFAULT_NEWLINES)))
+    assert(len(uf.newline_chars) == len(mdl.BESPON_DEFAULT_NEWLINES) - 1)
+    assert(len(uf.newline_chars_str) == len(uf.newline_chars) and all(x in uf.newline_chars for x in uf.newline_chars_str))
     assert(uf.nonliterals == mdl.BESPON_DEFAULT_NONLITERALS)
     assert(uf.shortescapes == mdl.BESPON_SHORT_ESCAPES)
     assert(uf.shortunescapes == mdl.BESPON_SHORT_UNESCAPES)
-    assert(len(uf.filternonliteralsdict) == len(mdl.BESPON_DEFAULT_NONLITERALS))
-    assert(len(uf.filterliteralslessnewlinesdict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])))
-    assert(len(uf.escapedict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + 1)  # All nonliterals + backlash
-    assert(len(uf.inline_escapedict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])) + 2)  # Nonliterals, slash, tab
-    assert(len(uf.unescapedict) == len(mdl.BESPON_SHORT_UNESCAPES))
+    assert(len(uf.filter_nonliterals_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS))
+    assert(len(uf.filter_literalslessnewlines_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])))
+    assert(len(uf.escape_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + 1)  # All nonliterals + backlash
+    assert(len(uf.inline_escape_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])) + 2)  # Nonliterals, slash, tab
+    assert(len(uf.unescape_dict) == len(mdl.BESPON_SHORT_UNESCAPES))
+    assert(len(uf.remove_newlines_dict) == len(mdl.BESPON_DEFAULT_NEWLINES) - 1)
 
 
 def test_UnicodeFilter_private_methods():
@@ -130,7 +135,7 @@ def test_UnicodeFilter_private_methods():
     assert(all(chr(n) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n < 128))
     assert(all(uf._escape_unicode_char(chr(n)) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n >= 128))
     assert(all(uf._unicode_escaped_hex_to_char_factory(e) == c for c, e in [('\x01', '\\x01'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]))
-
+    assert(all(uf._bin_escaped_hex_to_bytes_factory(e) == c for c, e in [(b'\x01', b'\\x01'), (b'\xaf', b'\\xaf'), (b'\x13', b'\\x13')]))
 
 def test_UnicodeFilter_public_methods():
     uf = mdl.UnicodeFilter()
@@ -144,6 +149,15 @@ def test_UnicodeFilter_public_methods():
     assert(all(uf.hasnonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals))
     assert(all(not uf.hasnonliterals(chr(n)) for n in range(0, 512) if chr(n) not in uf.nonliterals))
 
+    assert(all(uf.unescape('\\'+eol) == '' for eol in uf.newlines))
+    assert(all(uf.unescape('\\ '+eol) == '' for eol in uf.newlines))
+    assert(all(uf.unescape('\\\u3000'+eol) == '' for eol in uf.newlines))
+    assert(all(uf.unescape('\\ \u3000 \u3000'+eol) == '' for eol in uf.newlines))
+
+    b_raw = b'\\ \'\"\a\b\x1b\f\n\r\t\v/\x13\xaf'
+    b_esc = b'\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\x13\\xaf'
+    assert(uf.unescape_bin(b_esc) == b_raw)
+
     s_with_nonliterals = '''\
     literals
     \v\f\u0085\u2028\u2029
@@ -154,3 +168,43 @@ def test_UnicodeFilter_public_methods():
     trace = [T('\\v', 2, 2), T('\\f', 2, 3), T('\\x85', 2, 4), T('\\u2028', 2, 5),
              T('\\u2029', 2, 6), T('\\x00\\x01', 4, 9)]
     assert(uf.tracenonliterals(s_with_nonliterals) == trace)
+
+    assert(uf.unicode_to_bin_newlines('\r\r\n\n\u0085\u2028\u2029\v\f') == '\r\r\n\n\n\n\n\v\f')
+    assert(uf.remove_whitespace('\x20\u3000\t\r\n') == '')
+
+    assert(uf.removenewlines('\r_\r\n_\n') == '__')
+
+
+def test_UnicodeFilter_errors():
+    for c in '\x1c\x1d\x1e':
+        with pytest.raises(err.ConfigError):
+            uf = mdl.UnicodeFilter(literals=c)
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(literals='abc', nonliterals='cde')
+
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(nonliterals=['\r\n'])
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(nonliterals=['ab'])
+
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortescapes={'\\': '\\\\', '\\a': 'ab'})
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortescapes={'\a': '\\a'})
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortescapes={'\\': '\\\\', 'a': '\\\xff'})
+
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortunescapes={'\\a': '\a'})
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', '\\\xff': 'a'})
+    with pytest.raises(err.ConfigError):
+        uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', '\\a': 'aa'})
+    for esc in ('\\x', '\\X', '\\u', '\\U', '\\o', '\\O'):
+        with pytest.raises(err.ConfigError):
+            uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', esc: 'a'})
+
+    for esc in mdl.BESPON_SHORT_UNESCAPES:
+        with pytest.raises(err.UnknownEscapeError):
+            uf = mdl.UnicodeFilter()
+            uf._unicode_escaped_hex_to_char_factory(esc)

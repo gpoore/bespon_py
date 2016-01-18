@@ -122,7 +122,8 @@ NonliteralTrace = collections.namedtuple('NonliteralTrace', ['chars', 'lineno', 
 class UnicodeFilter(object):
     '''
     Check strings for literal code points that are not allowed,
-    backslash-escape and backslash-unescape strings, etc.
+    backslash-escape and backslash-unescape strings, filter out newline
+    characters, etc.
     '''
     def __init__(self, literals=None, nonliterals=None, onlyascii=False,
                  shortescapes=None, shortunescapes=None, xescapes=True):
@@ -160,14 +161,16 @@ class UnicodeFilter(object):
                 raise erring.ConfigError('Only single code points can be specified as nonliterals, with the exception of "\\r\\n"')
         self.nonliterals = nonliterals
         self.newlines = newlines
+        self.newline_chars = set(''.join(self.newlines))
+        self.newline_chars_str = ''.join(self.newline_chars)
         # Dict for filtering out all nonliterals, using `str.translate()`
-        self.filternonliteralsdict = {ord(c): None for c in self.nonliterals}
+        self.filter_nonliterals_dict = {ord(c): None for c in self.nonliterals}
         # Dict for filtering out all literals, except for newlines, using
         # `str.translate` --- this provides an easy way of locating all
         # nonliterals that are present on each line of the source
-        self.filterliteralslessnewlinesdict = collections.defaultdict(lambda: None)
-        self.filterliteralslessnewlinesdict.update({ord(c): c for c in self.nonliterals})
-        self.filterliteralslessnewlinesdict.update({ord(c): c for c in UNICODE_NEWLINE_CHARS})
+        self.filter_literalslessnewlines_dict = collections.defaultdict(lambda: None)
+        self.filter_literalslessnewlines_dict.update({ord(c): c for c in self.nonliterals})
+        self.filter_literalslessnewlines_dict.update({ord(c): c for c in UNICODE_NEWLINE_CHARS})
 
 
         # Dicts that map code points to their escaped versions, and vice versa
@@ -176,8 +179,10 @@ class UnicodeFilter(object):
         else:
             if '\\' not in shortescapes:
                 raise erring.ConfigError('Short backslash escapes must define the escape of "\\"')
-            if not all(len(c) == 1 for c in shortescapes):
-                raise erring.ConfigError('Short escapes only map single code points to escapes, not groups of code points')
+            if not all(len(c) == 1 for c in shortescapes.items()):
+                raise erring.ConfigError('Short escapes only map single code points to escapes, not groups of code points to escapes')
+            if not all(len(v) == 2 and ord(v[1]) < 128 for k, v in shortescapes.items()):
+                raise erring.ConfigError('Short escapes only map single code points to a backslash followed by a single ASCII character')
         self.shortescapes = shortescapes
 
         if shortunescapes is None:
@@ -187,56 +192,92 @@ class UnicodeFilter(object):
                 raise erring.ConfigError('Short backslash unescapes must define the meaning of "\\\\"')
             if not all(x.startswith('\\') and len(x) == 2 and ord(x[1]) < 128 for x in shortunescapes):
                 raise erring.ConfigError('All short backlash unescapes be a backslash followed by a single ASCII character')
+            if not all(len(v) ==1 for k, v in shortunescapes.items()):
+                raise erring.ConfigError('All short backlash unescapes be a backslash followed by a single ASCII character')
             if any(pattern in shortunescapes for pattern in ('\\x', '\\X', '\\u', '\\U', '\\o', '\\O')):
                 raise erring.ConfigError('Short backlash unescapes cannot use the letters X, U, or O, in either upper or lower case')
         self.shortunescapes = shortunescapes
 
+        self.shortescapes_bin = {k.encode('ascii'): v.encode('ascii') for k, v in self.shortescapes.items()}
+        self.shortunescapes_bin = {k.encode('ascii'): v.encode('ascii') for k, v in self.shortunescapes.items()}
+
 
         # Whether `\xHH` escapes are allowed
+        escape_re_pattern = r'\\x..|\\u....|\\U........|\\[\x20\u3000]*(?:{newlines})|\\.|\\'
+        # Since `newlines` is a set that may contain a two-character sequence
+        # (`\r\n`), need to ensure that any two-character sequence appears
+        # first in matching, so need reversed `sorted()`
+        escape_re_pattern = escape_re_pattern.format(newlines='|'.join(sorted(self.newlines, reverse=True)))
         if xescapes:
-            self.escape_re = re.compile(r'(\\x..|\\u....|\\U........|\\.|\\)', re.DOTALL)
+            self.escape_re = re.compile(escape_re_pattern, re.DOTALL)
             self._escape_unicode_char = self._escape_unicode_char_xuU
         else:
-            self.escape_re = re.compile(r'(\\u....|\\U........|\\.|\\)', re.DOTALL)
+            self.escape_re = re.compile(escape_re_pattern.lsplit('|', 1)[1], re.DOTALL)
             self._escape_unicode_char = self._escape_unicode_char_uU
+
+        escape_bin_re_pattern = rb'\\x..|\\\x20*(?:\r\n|\r|\n)|\\.|\\'
+        self.escape_bin_re = re.compile(escape_bin_re_pattern, re.DOTALL)
 
 
         # Dict for escaping code points that may not appear literally
         # Use with `str.translate()`
         # This is a minimalist form of escaping, given the current literals
-        escapedict = {ord(c): self._escape_unicode_char(c) for c in self.nonliterals}
+        escape_dict = {ord(c): self._escape_unicode_char(c) for c in self.nonliterals}
         # Copy over any relevant short escapes
         for k, v in self.shortescapes.items():
             n = ord(k)
-            if n in escapedict:
-                escapedict[n] = v
+            if n in escape_dict:
+                escape_dict[n] = v
         # Want everything that must be escaped, plus the backslash that makes
         # escaping possible in the first place
-        escapedict[ord('\\')] = shortescapes['\\']
+        escape_dict[ord('\\')] = shortescapes['\\']
         if not onlyascii:
-            self.escapedict = escapedict
+            self.escape_dict = escape_dict
         else:
             # Factory function adds characters to dict as they are requested
-            # All escapes already in `escapedict` are valid ASCII, since
+            # All escapes already in `escape_dict` are valid ASCII, since
             # `_escape_unicode_char()` gives hex escapes, and short escapes
             # must use ASCII characters
-            self.escapedict = keydefaultdict(self._unicode_to_escaped_ascii_factory, escapedict)
+            self.escape_dict = keydefaultdict(self._unicode_to_escaped_ascii_factory, escape_dict)
+
 
         # Escaping with no literal line breaks
         # Inherits onlyascii settings
         # Copy over all newlines escapes and the tab short escape, if it exists
-        inline_escapedict = self.escapedict.copy()
-        inline_escapedict.update({ord(k): v for k, v in UNICODE_NEWLINE_CHAR_ESCAPES.items()})
+        inline_escape_dict = self.escape_dict.copy()
+        inline_escape_dict.update({ord(k): v for k, v in UNICODE_NEWLINE_CHAR_ESCAPES.items()})
         if '\t' in self.shortescapes:
-            inline_escapedict[ord('\t')] = self.shortescapes['\t']
-        self.inline_escapedict = inline_escapedict
+            inline_escape_dict[ord('\t')] = self.shortescapes['\t']
+        self.inline_escape_dict = inline_escape_dict
 
 
         # Dict for unescaping with current settings
         # Used for looking up backlash escapes found by `re.sub()`
         # Starts with all short escapes; the factory function adds additional
         # escapes as they are requested
-        self.unescapedict = keydefaultdict(self._unicode_escaped_hex_to_char_factory, self.shortunescapes)
+        self.unescape_dict = keydefaultdict(self._unicode_escaped_hex_to_char_factory, self.shortunescapes)
+        self.unescape_bin_dict = keydefaultdict(self._bin_escaped_hex_to_bytes_factory, self.shortunescapes_bin)
+
+        # Dict for removing all newlines
+        self.remove_newlines_dict = {ord(c): None for c in self.newline_chars}
+
+
+        # Dict for tranlating Unicode newlines into a bytes-compatible form
+        self.unicode_to_bin_newlines_dict = {ord(c): '\n' for c in UNICODE_NEWLINE_CHARS if ord(c) >= 128}
+
+
+        # Space characters to be treated as spaces
+        self.space_chars = set(['\x20', '\u3000'])
+        self.space_chars_str = ''.join(self.space_chars)
+
+
+        # Indentation characters
+        self.indentation_chars = set(['\x20', '\t', '\u3000'])
+        self.indentation_chars_str = ''.join(self.indentation_chars)
+
+        # Overall whitespace
+        self.whitespace = self.indentation_chars | self.newline_chars | self.space_chars
+        self.remove_whitespace_dict = {ord(c): None for c in self.whitespace}
 
 
     @staticmethod
@@ -279,13 +320,13 @@ class UnicodeFilter(object):
         return c
 
 
-    @staticmethod
-    def _unicode_escaped_hex_to_char_factory(s):
+    def _unicode_escaped_hex_to_char_factory(self, s):
         '''
         Given a string in `\\xHH`, `\\uHHHH`, or `\\UHHHHHHHH` form, return the
-        Unicode code point corresponding to the hex value of the `H`'s.  Raise
-        an error for `\\<char>`, which is the only other form the argument will
-        ever take.
+        Unicode code point corresponding to the hex value of the `H`'s.  Given
+        `\\<spaces or ideographic spaces><newline>`, return an empty string.
+        Otherwise, raise an error for `\\<char>`, which is the only other form
+        the argument will ever take.
 
         Arguments to this function are prefiltered by a regex into the allowed
         hex escape forms.  Before this function is invoked, all known short
@@ -295,7 +336,32 @@ class UnicodeFilter(object):
         try:
             v = chr(int(s[2:], 16))
         except ValueError:
-            raise erring.UnknownEscapeError(s)
+            if s != '\\' and not s[1:].lstrip(self.space_chars_str).rstrip(self.newline_chars_str):
+                v = ''
+            else:
+                raise erring.UnknownEscapeError(s)
+        return v
+
+
+    def _bin_escaped_hex_to_bytes_factory(self, b):
+        '''
+        Given a string in `\\xHH` form, return the byte corresponding to the
+        hex value of the `H`'s.  Given `\\<spaces><newline>`, return an empty
+        byte string.  Otherwise, raise an error for `\\<byte>`, which is the
+        only other form the argument will ever take.
+
+        Arguments to this function are prefiltered by a regex into the allowed
+        hex escape forms.  Before this function is invoked, all known short
+        (2-letter) escape sequences have already been filtered out.  Any
+        remaining short escapes `\\<char>` at this point are unrecognized.
+        '''
+        try:
+            v = int(b[2:], 16).to_bytes(1, 'little')
+        except ValueError:
+            if b != b'\\' and not b[1:].lstrip(b'\x20').rstrip(b'\r\n'):
+                v = b''
+            else:
+                raise erring.UnknownEscapeError(b)
         return v
 
 
@@ -304,7 +370,7 @@ class UnicodeFilter(object):
         Within a string, replace all code points that are not allowed to appear
         literally with their escaped counterparts.
         '''
-        return s.translate(self.escapedict)
+        return s.translate(self.escape_dict)
 
 
     def inline_escape(self, s):
@@ -312,7 +378,7 @@ class UnicodeFilter(object):
         Within a string, replace all code points that are not allowed to appear
         literally with their escaped counterparts.  Also escape all newlines.
         '''
-        return s.translate(self.inline_escapedict)
+        return s.translate(self.inline_escape_dict)
 
 
     def unescape(self, s):
@@ -321,11 +387,22 @@ class UnicodeFilter(object):
         `\\uHHHH`, and `\\UHHHHHHHH`, as well as the form `\\<char>`, with the
         corresponding code points.
         '''
-        # Local reference to escapedict to speed things up a little
-        unescapedict = self.unescapedict
+        # Local reference to escape_dict to speed things up a little
+        unescape_dict = self.unescape_dict
         # For reference, the regex with `\xHH` escapes is:
         # escape_re = re.compile(r'(\\x..|\\u....|\\U........|\\.|\\)', re.DOTALL)
-        return self.escape_re.sub(lambda m: unescapedict[m.group(0)], s)
+        return self.escape_re.sub(lambda m: unescape_dict[m.group(0)], s)
+
+
+    def unescape_bin(self, b):
+        '''
+        Within a binary string, replace all backslash escapes of the form
+        `\\xHH`, as well as the form `\\<byte>`, with the corresponding
+        byte.
+        '''
+        # Local reference to speed things up a little
+        unescape_bin_dict = self.unescape_bin_dict
+        return self.escape_bin_re.sub(lambda m: unescape_bin_dict[m.group(0)], b)
 
 
     def hasnonliterals(self, s):
@@ -333,7 +410,7 @@ class UnicodeFilter(object):
         Make sure that a string does not contain any code points that are not
         allowed as literals.
         '''
-        sanitized_s = s.translate(self.filternonliteralsdict)
+        sanitized_s = s.translate(self.filter_nonliterals_dict)
         if len(sanitized_s) != len(s):
             return True
         else:
@@ -343,23 +420,45 @@ class UnicodeFilter(object):
     def tracenonliterals(self, s):
         '''
         Give the location of all code points in a string that are not allowed as
-        literals.  Return a list of named tuples that contain the line numbers
+        literals.  Return a list of named tuples that contains the line numbers
         and code points.  Line numbers are given in two forms, one calculated
         using standard `\r`, `\r\n`, `\n` newlines, and one using all Unicode
-        newlines.
+        newlines.  All returned characters are escaped, so that the output may
+        be used as-is.
         '''
         # Create a string containing all unique, allowed newlines
-        # For optimility, eliminate duplication between `\r`, `\n`, and `\r\n`
-        nl = ''.join(self.newlines)
-        nl = ''.join(set(nl))
+        nlc = self.newline_chars_str
         trace = []
         # Keep track of how many lines didn't end with `\r`, `\n`, or `\r\n`
         offset = 0
         # Work with a copy of s in which all literals, except for newlines, are removed
-        for n, line in enumerate(s.translate(self.filterliteralslessnewlinesdict).splitlines(True)):
-            nonlits = line.rstrip(nl)
+        for n, line in enumerate(s.translate(self.filter_literalslessnewlines_dict).splitlines(True)):
+            nonlits = line.rstrip(nlc)
             if nonlits:
                 trace.append(NonliteralTrace(self.escape(nonlits), n-offset+1, n+1))
             if not len(line.rstrip('\r\n')) < len(line):
                 offset += 1
         return trace
+
+
+    def unicode_to_bin_newlines(self, s):
+        '''
+        Convert all Unicode newlines (not `\r`, `\n`, `\r\n`) into
+        bytes-compatible newlines `\n`.
+        '''
+        return s.translate(self.unicode_to_bin_newlines_dict)
+
+
+    def removenewlines(self, s):
+        '''
+        Remove all newlines from a string.
+        '''
+        return s.translate(self.remove_newlines_dict)
+
+
+    def remove_whitespace(self, s):
+        '''
+        Remove all whitespace (indentation plus newlines plus spaces) from a
+        string.
+        '''
+        return s.translate(self.remove_whitespace_dict)
