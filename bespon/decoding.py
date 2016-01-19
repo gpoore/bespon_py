@@ -16,24 +16,34 @@ from .version import __version__
 import sys
 
 if sys.version_info.major == 2:
-    # Make `str()`, `bytes()`, and related used of `isinstance()` like Python 3
-    __str__ = str
-    class bytes(__str__):
-        '''
-        Emulate Python 3's bytes type.  Only for use with Unicode strings.
-        '''
-        def __new__(cls, obj, encoding=None, errors='strict'):
-            if not isinstance(obj, unicode):
-                raise TypeError('the bytes type only supports Unicode strings')
-            elif encoding is None:
-                raise TypeError('string argument without an encoding')
-            else:
-                return __str__.__new__(cls, obj.encode(encoding, errors))
     str = unicode
+    __chr__ = chr
+    chr = unichr
 
 from . import erring
 from . import unicoding
 import collections
+import binascii
+import base64
+
+
+
+
+class Source(object):
+    '''
+    Keep track of the name of a source (file name, or <string>), and of the
+    current location within the source (range of lines currently being parsed).
+
+    An instance is created when decoding begins, and line numbers are updated
+    as parsing proceedsd.  The source instance is passed on to any parsing
+    errors that are raised, to provide informative error messages.
+    '''
+    def __init__(self, name=None, start_lineno=0, end_lineno=0):
+        if name is None:
+            name = '<string>'
+        self.name = name
+        self.start_lineno = start_lineno
+        self.end_lineno = end_lineno
 
 
 
@@ -44,22 +54,28 @@ class BespONDecoder(object):
 
     Works with Unicode strings or iterables containing Unicode strings.
     '''
-    def __init__(self, reservedwords=None, parsers=None, aliases=None, **kwargs):
+    def __init__(self, reserved_words=None, parsers=None, aliases=None, **kwargs):
+        # If a `Source()` instance is provided, enhanced tracebacks are
+        # possible in some cases.  Start with default value.  An actual
+        # instance is created at the beginning of decoding.
+        self.source = None
+
+
         # Basic type checking on arguments
-        arg_dicts = (reservedwords, parsers, aliases)
+        arg_dicts = (reserved_words, parsers, aliases)
         if not all(x is None or isinstance(x, dict) for x in arg_dicts):
-            raise TypeError('Arguments {0} must be dicts'.format(','.join('"{0}"'.format(x) for x in arg_dicts)))
-        if reservedwords:
-            v_s = [v for k, v in reservedwords.items()]
-            if not all(x in v_s for x in (True, False, None)):
-                raise TypeError('"reservedwords" must define a mapping to True, False, and None')
+            raise TypeError('Arguments {0} must be dicts'.format(', '.join('"{0}"'.format(x) for x in arg_dicts)))
         if parsers:
             if not all(hasattr(v, '__call__') for k, v in parsers.items()):
                 raise TypeError('All parsers must be functions (callable)')
+            if any(k.lower() in ('bool', 'null', 'inf', '+inf', '-inf', 'nan') for k in parsers):
+                raise ValueError('Parsing of bool, null, inf, and nan is managed via "reserved_words"')
 
 
         # Defaults
-        self.default_reservedwords = {'true': True, 'false': False, 'null': None}
+        self.default_reserved_words = {'true': True, 'false': False, 'null': None,
+                                       'inf': float('inf'), '-inf': float('-inf'), '+inf': float('+inf'),
+                                       'nan': float('nan')}
 
         self.default_parsers = {#Basic types
                                 'dict':        dict,
@@ -73,18 +89,19 @@ class BespONDecoder(object):
                                 'bin.esc':     self.parse_bin_esc,
                                 #Optional types
                                 'bin.base64':  self.parse_bin_base64,
-                                'bin.hex':     self.parse_bin_hex,
+                                'bin.hex':     self.parse_bin_base16,
                                 'odict':       collections.OrderedDict,
                                 'set':         set,
                                 'tuple':       tuple,}
 
-        self.default_aliases = {'esc': 'str.esc', 'bin.b64': 'bin.base64'}
+        self.default_aliases = {'esc': 'str.esc', 'bin.b64': 'bin.base64',
+                                'bin.b16': 'bin.base16', 'bin.hex': 'bin.base16'}
 
 
         # Create actual dicts that are used
-        self.reservedwords = self.default_reservedwords.copy()
-        if reservedwords:
-            self.reservedwords.update()
+        self.reserved_words = self.default_reserved_words.copy()
+        if reserved_words:
+            self.reserved_words.update(reserved_words)
 
         self.parsers = self.default_parsers.copy()
         if parsers:
@@ -104,28 +121,41 @@ class BespONDecoder(object):
         self.newlines = self.unicodefilter.newlines
         self.newline_chars = self.unicodefilter.newline_chars
         self.newline_chars_str = self.unicodefilter.newline_chars_str
-        self.space_chars = self.unicodedata.space_chars
-        self.space_chars_str = self.unicodedata.space_chars_str
-        self.indentation_chars = self.unicodefilter.indentation_chars
-        self.indentation_chars_str = self.unicodefilter.indentation_chars_str
+        self.spaces = self.unicodefilter.spaces
+        self.spaces_str = self.unicodefilter.spaces_str
+        self.indents = self.unicodefilter.indents
+        self.indents_str = self.unicodefilter.indents_str
         self.whitespace = self.unicodefilter.whitespace
+        self.whitespace_str = self.unicodefilter.whitespace_str
+        ################################ TESTING
+        self.unicodefilter.source = Source()
+        self.source = Source()
 
 
-    def _inline_unwrap(self, s_list):
+    def _unwrap_inline(self, s_list):
         '''
         Unwrap an inline string.
+
+        Any line that ends with a newline preceded by spaces (space or
+        ideographic space) has the newline stripped.  Otherwise, a trailing
+        newline is replace by a space.  The last line will not have a newline,
+        and any trailing whitespace it has will already have been dealt with
+        during parsing, so it is passed through unmodified.
         '''
         s_list_inline = []
-        for line in s_list:
-            line_strip_nl = line.rstrip(self.newline_chars_str)
-            if line_strip_nl.rstrip(self.space_chars_str) != line_strip_nl:
+        newline_chars_str = self.newline_chars_str
+        spaces_str = self.spaces_str
+        for line in s_list[:-1]:
+            line_strip_nl = line.rstrip(newline_chars_str)
+            if line_strip_nl.rstrip(spaces_str) != line_strip_nl:
                 s_list_inline.append(line_strip_nl)
             else:
                 s_list_inline.append(line_strip_nl + '\x20')
-        return s_list_inline
+        s_list_inline.append(s_list[-1])
+        return ''.join(s_list_inline)
 
 
-    def parse_str(self, s_list, inline):
+    def parse_str(self, s_list, inline=False):
         '''
         Return a formatted string.
 
@@ -138,36 +168,37 @@ class BespONDecoder(object):
         handled; any unwrapping for inline strings remains to be done.
         '''
         if inline:
-            s = ''.join(self._inline_unwrap(s_list))
+            s = self._unwrap_inline(s_list)
         else:
             s = ''.join(s_list)
         return s
 
 
-    def parse_str_esc(self, s_list, inline):
+    def parse_str_esc(self, s_list, inline=False):
         '''
         Return an unescaped version of a string.
         '''
         return self.unicodefilter.unescape(self.parse_str(s_list, inline))
 
 
-    def parse_bin(self, s_list, inline):
+    def parse_bin(self, s_list, inline=False):
         '''
         Return a binary string.
         '''
         if inline:
-            s = ''.join(self._inline_unwrap(s_list))
+            s = self._unwrap_inline(s_list)
         else:
             s = ''.join(s_list)
+        # If there are Unicode newline characters, convert them to `\n`
         s = self.unicodefilter.unicode_to_bin_newlines(s)
         try:
             b = s.encode('ascii')
-        except UnicodeEncodeError:
-            raise erring.UnicodeEncodeError('')
+        except UnicodeEncodeError as e:
+            raise erring.BinaryStringEncodeError(s, e, self.source)
         return b
 
 
-    def parse_bin_esc(self, s_list, inline):
+    def parse_bin_esc(self, s_list, inline=False):
         '''
         Return an unescaped version of a binary string.
         '''
@@ -175,35 +206,44 @@ class BespONDecoder(object):
         return self.unicodefilter.unescape_bin(b)
 
 
-    def parse_bin_base64(self, s_list, inline):
+    def parse_bin_base64(self, s_list, inline=False):
         '''
         Return a base64-decoded byte string.
         '''
-        from base64 import b64decode
         s = ''.join(s_list)
         s = self.unicodefilter.remove_whitespace(s)
         try:
-            b = b64decode(s, validate=True)
-        except binascii.Error:
-            raise erring.B64('')
+            b = base64.b64decode(s)
+        except  (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
+            raise erring.BinaryBase64DecodeError(s, e, self.source)
         return b
 
 
-    def parse_bin_hex(self, s_list, inline):
+    def parse_bin_base16(self, s_list, inline=False):
         '''
         Return a byte string from hex decoding.
         '''
-        import binascii
         s = ''.join(s_list)
         s = self.unicodefilter.remove_whitespace(s)
-        return binascii.unhexlify(s)
+        try:
+            b = base64.b16decode(s)
+        except (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
+            raise erring.BinaryBase16DecodeError(s, e, self.source)
+        return b
 
 
 
     def decode(self, obj):
+        # Create a Source() instance for tracking parsing location and
+        # providing informative error messages.  Pass it to UnicodeFilter()
+        # instance so that it can use it as well.
+        self.source = Source()
+        self.unicodefilter.source = self.source
         if isinstance(obj, str):
             pass
         else:
             pass
+        self.source = None
+        self.unicodefilter.source = None
 
 # HANDLE BOM
