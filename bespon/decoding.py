@@ -232,18 +232,91 @@ class BespONDecoder(object):
         return b
 
 
+    def decode(self, s):
+        if not isinstance(s, str):
+            raise ValueError('BespONDecoder only decodes strings')
 
-    def decode(self, obj):
         # Create a Source() instance for tracking parsing location and
         # providing informative error messages.  Pass it to UnicodeFilter()
         # instance so that it can use it as well.
         self.source = Source()
         self.unicodefilter.source = self.source
-        if isinstance(obj, str):
-            pass
-        else:
-            pass
+
+        if self.unicodefilter.has_nonliterals(s):
+            trace = self.unicodefilter.trace_nonliterals(s)
+            msg = '\n' + self.unicodefilter.format_nonliterals_trace(trace)
+            raise erring.InvalidLiteralCharacterError(msg)
+
+        self._lineno_line_gen = ((n+1, line) for (n, line) in enumerate(s))
+        self._parse_to_ast()
+
+        # Clean up Source() instance.  Don't want it hanging around in case
+        # the decoder instance or its methods are used again.
         self.source = None
         self.unicodefilter.source = None
 
-# HANDLE BOM
+
+    def _process_first_line(self, s):
+        '''
+        Handle any BOMs.  Handle any `%!bespon` in the first line.
+
+        Note that after the string is already in memory, we can't do anything
+        about the possibility of UTF-32 BOMs.  UTF-32BE is `\\U0000FEFF`, which
+        at this point can't be distinguished from UTF-16BE.  And Python won't
+        allow `\\UFFFE0000`, which is the UTF-32LE BOM.  This shouldn't be an
+        issue, because if UTF-32 is incorrectly interpreted, it would result
+        in null bytes, which aren't allowed as literals by default.
+        '''
+        BOM = {'UTF-8': '\xEF\xBB\xBF',
+               'UTF-16BE': '\uFEFF',
+               'UTF-16LE': '\uFFFE'}
+        encs = []
+        for enc, chars in BOM.items():
+            if s.startswith(chars):
+                s = s[len(chars):]
+                encs.append(enc)
+        for enc, chars in BOM.items():
+            if s.startswith(chars):
+                s = s[len(chars):]
+                encs.append(enc)
+        if len(encs) > 1:
+            raise ValueError('Encountered BOM for multiple encodings {0}'.format(', '.join(e for e in encs)))
+
+        magic_number = '%!bespon'
+        if s.startswith(magic_number):
+            s = s[len(magic_number):]
+            if s.rstrip(self.whitespace_str):
+                raise ValueError('Invalid first line, or unsupported parser directives:\n  {0}'.format(magic_number+s))
+            s = ''
+        return s
+
+
+    def _split_line_on_indent(self, s):
+        '''
+        Split a line into its leading indentation and everything else.
+        '''
+        line = s.lstrip(self.indents_str)
+        indent = s[:len(s)-len(line)]
+        return (indent, line)
+
+
+    def _parse_to_ast(self):
+        self._ast = []
+        self._ast_pos = self._ast
+        lineno, line = next(self.lineno_line_gen, None)
+        if line is None:
+            self._ast_pos.append('')
+            return
+        line = self._process_first_line(line)
+        self.source.start_lineno = lineno
+        if not line:
+            lineno, line = next(self.lineno_line_gen, None)
+            self.source.start_lineno = lineno
+            if line is None:
+                self._ast_pos.append('')
+                return
+            indent, line = self._split_line_on_indent(line)
+            self.indent = indent
+
+        while line is not None:
+            line = self._parse_line[line[0]](line)

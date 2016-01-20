@@ -124,7 +124,7 @@ def test_keydefaultdict():
 def test_NonliteralTrace():
     t = mdl.NonliteralTrace('chars', 1, 2)
     assert(len(t) == 3)
-    assert(t.chars == 'chars' and t.lineno == 1 and t.unicodelineno == 2)
+    assert(t.chars == 'chars' and t.lineno == 1 and t.unicode_lineno == 2)
 
 
 def test_python_splitlines():
@@ -198,8 +198,8 @@ def test_UnicodeFilter_public_methods():
     assert(uf.escape_to_inline(s_raw) == s_esc_inline)
     assert(uf.unescape(s_esc) == s_raw)
     assert(uf.unescape(s_esc_inline) == s_raw)
-    assert(all(uf.hasnonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals))
-    assert(all(not uf.hasnonliterals(chr(n)) for n in range(0, 512) if chr(n) not in uf.nonliterals))
+    assert(all(uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals))
+    assert(all(not uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) not in uf.nonliterals))
 
     assert(all(uf.unescape('\\'+eol) == '' for eol in uf.newlines))
     assert(all(uf.unescape('\\ '+eol) == '' for eol in uf.newlines))
@@ -223,8 +223,9 @@ def test_UnicodeFilter_public_methods():
     T = mdl.NonliteralTrace
     trace = [T('\\v', 2, 2), T('\\f', 2, 3), T('\\x85', 2, 4), T('\\u2028', 2, 5),
              T('\\u2029', 2, 6), T('\\x00\\x01', 4, 9)]
-    assert(uf.tracenonliterals(s_with_nonliterals) == trace)
+    assert(uf.trace_nonliterals(s_with_nonliterals) == trace)
 
+    uf = mdl.UnicodeFilter(literals='\u0085\u2028\u2029')
     assert(uf.unicode_to_bin_newlines('\r\r\n\n\u0085\u2028\u2029\v\f') == '\r\r\n\n\n\n\n\v\f')
     assert(uf.remove_whitespace('\x20\u3000\t\r\n') == '')
 

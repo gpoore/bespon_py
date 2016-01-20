@@ -101,9 +101,9 @@ class keydefaultdict(collections.defaultdict):
 
 # Structure for keeping track of which code points that are not allowed to
 # appear literally in text did in fact appear, and where
-# `lineno` uses `\r`, `\n`, and `\r\n`, while `unicodelineno` uses all of
+# `lineno` uses `\r`, `\n`, and `\r\n`, while `unicode_lineno` uses all of
 #  UNICODE_NEWLINES
-NonliteralTrace = collections.namedtuple('NonliteralTrace', ['chars', 'lineno', 'unicodelineno'])
+NonliteralTrace = collections.namedtuple('NonliteralTrace', ['chars', 'lineno', 'unicode_lineno'])
 
 
 
@@ -485,7 +485,7 @@ class UnicodeFilter(object):
         return self.escape_bin_re.sub(lambda m: unescape_bin_dict[m.group(0)], b)
 
 
-    def hasnonliterals(self, s):
+    def has_nonliterals(self, s):
         '''
         Make sure that a string does not contain any code points that are not
         allowed as literals.
@@ -497,7 +497,7 @@ class UnicodeFilter(object):
             return False
 
 
-    def tracenonliterals(self, s):
+    def trace_nonliterals(self, s):
         '''
         Give the location of all code points in a string that are not allowed as
         literals.  Return a list of named tuples that contains the line numbers
@@ -519,6 +519,20 @@ class UnicodeFilter(object):
             if not len(line.rstrip('\r\n')) < len(line):
                 offset += 1
         return trace
+
+
+    def format_nonliterals_trace(self, trace):
+        '''
+        Format a nonliterals trace.  Used with InvalidLiteralCharacterError.
+        '''
+        m =       ['  Line number  (Unicode)    Chars\n']
+        template = '         {0}       {1}    {2}\n'
+
+        for t in trace:
+            m.append(template.format(str(t.lineno).rjust(4, ' '), str(t.unicode_lineno).rjust(4, ' '), t.chars))
+
+        return ''.join(m)
+
 
 
     def unicode_to_bin_newlines(self, s):

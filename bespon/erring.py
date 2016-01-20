@@ -38,6 +38,12 @@ class BespONException(Exception):
             return '\n  ' + t + '\n  ' + msg
 
 
+class InvalidLiteralCharacterError(BespONException):
+    '''
+    Character that is not allowed to appear literally has appeared.
+    '''
+
+
 class ConfigError(BespONException):
     '''
     Error in configuration or settings.

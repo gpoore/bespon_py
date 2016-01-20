@@ -100,3 +100,27 @@ def test_parse_bin_hex():
     with pytest.raises(err.BinaryBase16DecodeError):
         s = '\u20280102040816AFFF'
         dc.parse_bin_base16(s.splitlines(True))
+
+
+def test__process_first_line():
+    dc = mdl.BespONDecoder()
+    s = '\xEF\xBB\xBF\uFEFF'
+    with pytest.raises(ValueError):
+        dc._process_first_line(s)
+
+    s = '\uFFFE\xEF\xBB\xBF'
+    with pytest.raises(ValueError):
+        dc._process_first_line(s)
+
+    s = '\xEF\xBB\xBF%!bespon \r\n'
+    assert(dc._process_first_line(s) == '')
+
+    with pytest.raises(ValueError):
+        s = '\xEF\xBB\xBF%!bespon ? \r\n'
+        dc._process_first_line(s)
+
+
+def test__split_line_on_indent():
+    dc = mdl.BespONDecoder()
+    s = '\x20\u3000\t\x20\t\t\x20\u3000\r\n'
+    assert(dc._split_line_on_indent(s) == (s[:-2], '\r\n'))
