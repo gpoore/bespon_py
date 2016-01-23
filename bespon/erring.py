@@ -31,7 +31,7 @@ class BespONException(Exception):
         if source is None:
             return '\n  ' + msg
         else:
-            if source.start_lineno == source.end_lineno:
+            if source.start_lineno >= source.end_lineno:
                 t = 'In {0} on line {1}: '.format(source.name, source.start_lineno, source.end_lineno)
             else:
                 t = 'In {0} on lines {1}-{2}: '.format(source.name, source.start_lineno, source.end_lineno)
@@ -98,3 +98,14 @@ class BinaryBase16DecodeError(BinaryError):
     def __str__(self):
         msg = 'Failed to decode base16 (hex):\n  {0}'.format(self.error)
         return self.source_traceback(msg, self.source)
+
+
+class ParseError(BespONException):
+    '''
+    Error during parsing
+    '''
+    def __init__(self, msg, source=None):
+        self.msg = msg
+        self.source = source
+    def __str__(self):
+        return self.source_traceback(self.msg, self.source)

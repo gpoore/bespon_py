@@ -48,6 +48,14 @@ def test_parse_str():
     assert(dc.parse_str(s.splitlines(True), inline=True) == s.replace('\n', ''))
 
 
+def test_parse_str_empty():
+    dc = mdl.BespONDecoder()
+    assert(dc.parse_str_empty(['']) == '')
+    assert(dc.parse_str_empty(['', '']) == '')
+    with pytest.raises(err.ParseError):
+        dc.parse_str_empty(['\n'])
+
+
 def test_parse_str_esc():
     dc = mdl.BespONDecoder()
     s = '\\a\\b\\v\\f\\n\\r\\t\\u1234\\x01ABCD'
@@ -67,6 +75,14 @@ def test_parse_bin():
     with pytest.raises(err.BinaryStringEncodeError):
         t = 'ABCDEFG\a\b\f\v\xff'
         dc.parse_bin(t.splitlines(True))
+
+
+def test_parse_bin_empty():
+    dc = mdl.BespONDecoder()
+    assert(dc.parse_bin_empty(['']) == b'')
+    assert(dc.parse_bin_empty(['', '']) == b'')
+    with pytest.raises(err.ParseError):
+        dc.parse_bin_empty(['\n'])
 
 
 def test_parse_bin_esc():
@@ -102,25 +118,33 @@ def test_parse_bin_hex():
         dc.parse_bin_base16(s.splitlines(True))
 
 
-def test__process_first_line():
+def test__drop_bom():
     dc = mdl.BespONDecoder()
     s = '\xEF\xBB\xBF\uFEFF'
     with pytest.raises(ValueError):
-        dc._process_first_line(s)
+        dc._drop_bom(s)
 
     s = '\uFFFE\xEF\xBB\xBF'
     with pytest.raises(ValueError):
-        dc._process_first_line(s)
+        dc._drop_bom(s)
 
     s = '\xEF\xBB\xBF%!bespon \r\n'
-    assert(dc._process_first_line(s) == '')
-
-    with pytest.raises(ValueError):
-        s = '\xEF\xBB\xBF%!bespon ? \r\n'
-        dc._process_first_line(s)
+    assert(dc._drop_bom(s) == '%!bespon \r\n')
 
 
 def test__split_line_on_indent():
     dc = mdl.BespONDecoder()
     s = '\x20\u3000\t\x20\t\t\x20\u3000\r\n'
     assert(dc._split_line_on_indent(s) == (s[:-2], '\r\n'))
+
+
+def test_decode_basic():
+    dc = mdl.BespONDecoder()
+
+    dc.decode('')
+    assert(dc._ast == [])
+
+    dc.decode('\xEF\xBB\xBF')
+    assert(dc._ast == [])
+
+    dc.decode('("a")')

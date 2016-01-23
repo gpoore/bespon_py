@@ -229,6 +229,9 @@ def test_UnicodeFilter_public_methods():
     assert(uf.unicode_to_bin_newlines('\r\r\n\n\u0085\u2028\u2029\v\f') == '\r\r\n\n\n\n\n\v\f')
     assert(uf.remove_whitespace('\x20\u3000\t\r\n') == '')
 
+    fwhw = [('！', '!'), ('～', '~'), ('ａ', 'a'), ('Ａ', 'A'), ('＊', '*'), ('１', '1')]
+    assert(all(uf.fullwidth_to_halfwidth_ascii(fw) == hw for fw, hw in fwhw))
+
 
 def test_UnicodeFilter_errors():
     for c in '\x1c\x1d\x1e':

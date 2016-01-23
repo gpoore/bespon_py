@@ -326,6 +326,12 @@ class UnicodeFilter(object):
         self.unicode_to_bin_newlines_dict = {ord(c): '\n' for c in UNICODE_NEWLINE_CHARS if ord(c) >= 128}
 
 
+        # Dict for translating fullwidth versions of ASCII characters into
+        # normal (halfwidth) forms
+        offset = 0xFF01 - 0x21
+        self.fullwidth_to_halfwidth_ascii_dict = {n+offset: chr(n) for n in range(0x21, 0x7E+1)}
+
+
     @staticmethod
     def _escape_unicode_char_xuU(c):
         '''
@@ -534,7 +540,6 @@ class UnicodeFilter(object):
         return ''.join(m)
 
 
-
     def unicode_to_bin_newlines(self, s):
         '''
         Convert all Unicode newlines (not `\r`, `\n`, `\r\n`) into
@@ -552,3 +557,11 @@ class UnicodeFilter(object):
         string.
         '''
         return s.translate(self.remove_whitespace_dict)
+
+
+    def fullwidth_to_halfwidth_ascii(self, s):
+        '''
+        Translate all fullwidth ASCII equivalents into corresponding normal
+        (halfwidth) characters.
+        '''
+        return s.translate(self.fullwidth_to_halfwidth_ascii_dict)
