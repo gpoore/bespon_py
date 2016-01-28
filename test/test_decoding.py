@@ -14,6 +14,7 @@ from __future__ import (division, print_function, absolute_import,
 
 import sys
 import os
+import random
 
 if sys.version_info.major == 2:
     str = unicode
@@ -138,6 +139,93 @@ def test__split_line_on_indent():
     assert(dc._split_line_on_indent(s) == (s[:-2], '\r\n'))
 
 
+def test_int_re():
+    dc = mdl.BespONDecoder()
+    assert(dc._int_re.match('1'))
+    assert(dc._int_re.match('1234567890'))
+    assert(dc._int_re.match('1_23456789_0'))
+    assert(not dc._int_re.match('_1234567890'))
+    assert(not dc._int_re.match('1234567890_'))
+    assert(not dc._int_re.match('123456__7890'))
+    assert(dc._int_re.match('0xABCDEF0123456789'))
+    assert(dc._int_re.match('0xabcdef0123456789'))
+    assert(dc._int_re.match('0x0123456789abcdef'))
+    assert(dc._int_re.match('0x0_1_23456789abcd_e_f'))
+    assert(not dc._int_re.match('_0x0123456789abcdef'))
+    assert(not dc._int_re.match('0_x0123456789abcdef'))
+    assert(not dc._int_re.match('0x_0123456789abcdef'))
+    assert(not dc._int_re.match('0x0123456789abcdef_'))
+    assert(dc._int_re.match('0o01234567'))
+    assert(dc._int_re.match('0o7654321'))
+    assert(dc._int_re.match('0o7_65432_1'))
+    assert(not dc._int_re.match('_0o7654321'))
+    assert(not dc._int_re.match('0_o7654321'))
+    assert(not dc._int_re.match('0o_7654321'))
+    assert(not dc._int_re.match('0o7654321_'))
+    assert(not dc._int_re.match('0o765__4321'))
+    assert(dc._int_re.match('0b0'))
+    assert(dc._int_re.match('0b01'))
+    assert(dc._int_re.match('0b10'))
+    assert(dc._int_re.match('0b1_1_0'))
+    assert(not dc._int_re.match('_0b11011'))
+    assert(not dc._int_re.match('0_b11011'))
+    assert(not dc._int_re.match('0b_11011'))
+    assert(not dc._int_re.match('0b11011_'))
+    assert(not dc._int_re.match('0b110__11'))
+    assert(all(dc._int_re.match(str(random.randint(-1000000, 1000000))) for n in range(1000)))
+    assert(all(dc._int_re.match(hex(random.randint(-1000000, 1000000))) for n in range(1000)))
+
+
+def test_float_re():
+    dc = mdl.BespONDecoder()
+    assert(dc._float_re.match('0e0'))
+    assert(dc._float_re.match('+0e0'))
+    assert(dc._float_re.match('-0e0'))
+    assert(dc._float_re.match('0e+0'))
+    assert(dc._float_re.match('0e-0'))
+    assert(dc._float_re.match('1.'))
+    assert(dc._float_re.match('-1.'))
+    assert(dc._float_re.match('+1.'))
+    assert(dc._float_re.match('1.e1'))
+    assert(dc._float_re.match('-1.e1'))
+    assert(dc._float_re.match('+1.e1'))
+    assert(dc._float_re.match('0.12'))
+    assert(dc._float_re.match('-0.12'))
+    assert(dc._float_re.match('+0.12'))
+    assert(dc._float_re.match('.0e0'))
+    assert(dc._float_re.match('12e3'))
+    assert(dc._float_re.match('12e+3'))
+    assert(dc._float_re.match('12e-3'))
+    assert(dc._float_re.match('3.14e5'))
+    assert(dc._float_re.match('+3.14e5'))
+    assert(dc._float_re.match('-3.14e5'))
+    assert(dc._float_re.match('1_231_4.2_3_3e3_5_2'))
+    assert(not dc._float_re.match('_12314.233e352'))
+    assert(not dc._float_re.match('12314_.233e352'))
+    assert(not dc._float_re.match('12314._233e352'))
+    assert(not dc._float_re.match('_12314.233_e352'))
+    assert(not dc._float_re.match('12314.233e_352'))
+    assert(not dc._float_re.match('12314.233e352_'))
+    assert(dc._float_re.match('0x3.a7p10'))
+    assert(dc._float_re.match('0x3p10'))
+    assert(dc._float_re.match('0x3.p10'))
+    assert(dc._float_re.match('0x.a7p10'))
+    assert(dc._float_re.match('0x1_d_e.a_4_f7p+1_3_0'))
+    assert(not dc._float_re.match('0x1_d_e.a_4_f7p+1_3_f'))
+    assert(not dc._float_re.match('_0x1de.a4f7p130'))
+    assert(not dc._float_re.match('0_x1de.a4f7p130'))
+    assert(not dc._float_re.match('0x_1de.a4f7p130'))
+    assert(not dc._float_re.match('0x1de_.a4f7p130'))
+    assert(not dc._float_re.match('0x1de._a4f7p130'))
+    assert(not dc._float_re.match('0x1de.a4f7_p130'))
+    assert(not dc._float_re.match('0x1de.a4f7p_130'))
+    assert(not dc._float_re.match('0x1de.a4f7p130_'))
+    assert(all(dc._float_re.match(str(random.uniform(-1e9, 1e9))) for n in range(1000)))
+    assert(all(dc._float_re.match(float.hex(random.uniform(-1e9, 1e9))) for n in range(1000)))
+
+
+
+
 def test_decode_basic():
     dc = mdl.BespONDecoder()
 
@@ -146,5 +234,3 @@ def test_decode_basic():
 
     dc.decode('\xEF\xBB\xBF')
     assert(dc._ast == [])
-
-    dc.decode('("a")')

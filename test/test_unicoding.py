@@ -108,19 +108,6 @@ def test_string_constants():
     assert(all(len(k) == 1 for k in mdl.BESPON_SHORT_ESCAPES))
 
 
-def test_keydefaultdict():
-    kd = mdl.keydefaultdict(lambda x: x**2)
-    kd[2]
-    kd[4]
-    kd[8]
-    assert(kd == {2:4, 4:16, 8:64})
-
-    kd = mdl.keydefaultdict(lambda s: s)
-    assert('key' not in kd)
-    assert(kd['key'] == 'key')
-    assert('key' in kd and len(kd) == 1)
-
-
 def test_NonliteralTrace():
     t = mdl.NonliteralTrace('chars', 1, 2)
     assert(len(t) == 3)
@@ -229,8 +216,9 @@ def test_UnicodeFilter_public_methods():
     assert(uf.unicode_to_bin_newlines('\r\r\n\n\u0085\u2028\u2029\v\f') == '\r\r\n\n\n\n\n\v\f')
     assert(uf.remove_whitespace('\x20\u3000\t\r\n') == '')
 
-    fwhw = [('！', '!'), ('～', '~'), ('ａ', 'a'), ('Ａ', 'A'), ('＊', '*'), ('１', '1')]
-    assert(all(uf.fullwidth_to_halfwidth_ascii(fw) == hw for fw, hw in fwhw))
+    fwhw = [('！', '!'), ('～', '~'), ('ａ', 'a'), ('Ａ', 'A'), ('＊', '*'), ('１', '1'), ('\u3000', '\x20')]
+    assert(all(uf.fullwidth_to_ascii(fw) == hw for fw, hw in fwhw))
+    assert(all(uf.ascii_to_fullwidth(hw) == fw for fw, hw in fwhw))
 
 
 def test_UnicodeFilter_errors():

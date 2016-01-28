@@ -96,7 +96,9 @@ Together, the manual specification of indentation level and trailing line treatm
 \item[\href{https://github.com/toml-lang/toml}{TOML}]\hfill\\
 With its multiline strings, TOML is also an improvement over JSON.  In particular, its multiline string literals, delimited with three single quotation marks |'''|, are a significant improvement.  Unlike the YAML case, indentation and trailing empty lines are immediately obvious due to the closing quotation marks.  No manual specification of indentation or empty line behavior is required.
 
-When working with markup languages, it is quite possible that the three quotation marks |'''| will appear within text.  In this case, the user must fall back on escaped strings.  This is TOML's primary weakness.
+When working with markup languages, it is quite possible that the three quotation marks |'''| will appear within text.  In this case, the user must fall back on escaped strings.  This is a significant drawback; TOML cannot represent arbitrary text without escaping.
+
+Another limitation of TOML is that unquoted table (map/dictionary) keys may only contain letters, numbers, underscores, and dashes (|A-Za-z0-9_-|).  Also, string  values must always be quoted.  Less quoting for both keys and values would be more convenient.
 \end{description}
 
 The TOML approach comes closest to what is needed for working with markup languages.  While it is ideal in most circumstances, it fails to eliminate the need for escaping completely.  What is needed is a literal string delimiter that can adjust to the contents of the text being delimited.  It would be possible to use heredoc syntax or C++ raw string literal syntax or Perl quoting, but that would result in significant user-dependent variation.  A simpler approach would be to take inspiration from lightweight markup languages, like the fenced code blocks in \href{http://fletcherpenney.net/multimarkdown/}{MultiMarkdown} and \href{http://pandoc.org/README.html#pandocs-markdown}{Pandoc Markdown}.  That is, have a data serialization format \emph{for} markup inspired \emph{by} markup.  Enter \bespon.
@@ -111,9 +113,9 @@ The TOML approach comes closest to what is needed for working with markup langua
 
 The default encoding for \bespon\ files is UTF-8.  The use of a UTF-8 byte order mark (BOM) is strongly discouraged, but it should be checked for and discarded.
 
-\bespon\ libraries that work directly with files are encouraged to support an encoding option for use with legacy applications or in situations in which UTF-16 or UTF-32 are desirable.  If such a library supports UTF-16 or UTF-32, it should correctly handle BOMs.  A library that only works with decoded text should attempt to check for BOMs.  When an encoding other than UTF-8 is used, it is the responsibility of the sender and receiver to agree on an encoding and act appropriately.
+\bespon\ libraries that work directly with files are encouraged to support an encoding option for use with legacy applications or in situations in which UTF-16 or UTF-32 are desirable.  If such a library supports UTF-16 or UTF-32, it should correctly handle BOMs.  A library that only works with decoded text should attempt to check for BOMs for these formats as well.  When an encoding other than UTF-8 is used, it is the responsibility of the sender and receiver to agree on an encoding and act appropriately.  Regardless of the encoding used for a \bespon\ file, the decoded text cannot contain unpaired UTF-16 surrogates (0xD800--0xDFFF).
 
-By default, some characters may not appear literally in a \bespon\ file.  They may only appear within escaped strings, which use |\xHH| (8-bit), |\uHHHH| (16-bit), and |\UHHHHHHHH| (32-bit) hex notation, as well as the shorthand sequences |\\|, |\'|, |\"|, |\a|, |\b|, |\e|, |\f|, |\n|, |\r|, |\t|, |\v|.\footnote{Note that some of the shorthand sequences represent characters that are allowed to appear literally.  These escaped forms are only used in escaped strings.  Which quotation mark escaping is necessary depends on the string delimiters.  The escape |\/| should be allowed for cases when similarity to JSON is desired.  A library should recognize all of the short escaped forms in reading, but may optionally use |\x|, |\u|, or |\U| forms instead in text it emits.}  All characters with Unicode category ``Other, Control'' (Cc)\footnote{``Other, Control'' includes the range U+0000 to U+001F (ord 0--31), the character U+007F (ord 127, ``DELETE''), and U+0080 to U+009F (ord 128--159).} must not appear literally by default and must result in an error, with the following exceptions.  These characters must always be allowed as literals:
+By default, some code points may not appear literally in a \bespon\ file.  They may only appear within escaped strings, which use |\xHH| (8-bit), |\uHHHH| (16-bit), and |\UHHHHHHHH| (32-bit) hex notation, as well as the shorthand sequences |\\|, |\'|, |\"|, |\a|, |\b|, |\e|, |\f|, |\n|, |\r|, |\t|, |\v|.\footnote{Note that some of the shorthand sequences represent characters that are allowed to appear literally.  These escaped forms are only used in escaped strings.  Which quotation mark escaping is necessary depends on the string delimiters.  The escape |\/| should be allowed for cases when similarity to JSON is desired.  A library should recognize all of the short escaped forms in reading, but may optionally use |\x|, |\u|, or |\U| forms instead in text it emits.}  All characters with Unicode category ``Other, Control'' (Cc)\footnote{``Other, Control'' includes the range U+0000 to U+001F (ord 0--31), the character U+007F (ord 127, ``DELETE''), and U+0080 to U+009F (ord 128--159).} must not appear literally by default and must result in an error, with the following exceptions.  These characters must always be allowed as literals:
 \begin{itemize}
 \item Line feed U+000A |\n|
 \item Carriage return U+000D |\r|
@@ -133,21 +135,29 @@ If an implementation allows these as literals, they should be treated as line te
 
 An implementation may have an option that allows some or all of the remaining ``Other, Control'' characters to be enabled as literals.  However, this must not be the default.  When using such an option, special care should be taken to avoid security risks.  Control characters might be easily overlooked when they are allowed in unescaped form.
 
-The sequence |%!bespon| may be used at the beginning of the first line of a \bespon\ file to indicate the format.  In the future, optional arguments that customize parsing or other features may be allowed on the first line, following the |%!bespon| sequence.  If the sequence |%!bespon| is detected on the first line of a file, and if it is followed by anything other than whitespace characters, an error must be raised unless (1) the \bespon\ spec has been expanded to include parser directives, (2) the parser supports directives, and (3) the content following the opening sequence can be parsed.  The sequence |%!bespon| may appear multiple times within a \bespon\ file that contains multiple datasets, as a delimiter between them.  That is, concatenated \bespon\ files are valid.  The sequence |%!bespon.eof| indicates the end of a file as far as \bespon\ is concerned; all content after it is discarded.  It may useful in cases in which an end-of-file delimiter is desirable (for example, parsing a log file that may still be open for writing).  It also effectively comments out the remainder of a file.  The sequences |%!besponb|, |%!bespon.bin|, and |%!bespon.binary| are reserved for possible future use in a binary-only variant of \bespon.  All of the |%!bespon| sequences should be recognized both in ASCII and in corresponding fullwidwth forms (characters in U+FF01–FF5E).
+The sequence |%!bespon| may be used at the beginning of the first line of a \bespon\ file to indicate the format.  In the future, optional arguments that customize parsing or other features may be allowed on the first line, following the |%!bespon| sequence.  If the sequence |%!bespon| is detected on the first line of a file, and if it is followed by anything other than whitespace characters, an error must be raised unless (1) the \bespon\ spec has been expanded to include parser directives, (2) the parser supports directives, and (3) the content following the opening sequence can be parsed.  The sequence |%!bespon| may appear multiple times within a \bespon\ file that contains multiple datasets, as a delimiter between them.  That is, concatenated \bespon\ files are valid.  The sequence |%!bespon.eof| indicates the end of a file as far as \bespon\ is concerned; all content after it is discarded.  It may useful in cases in which an end-of-file delimiter is desirable (for example, parsing a log file that may still be open for writing).  It also effectively comments out the remainder of a file.  The sequences |%!besponb|, |%!bespon.bin|, and |%!bespon.binary| are reserved for possible future use in a binary-only variant of \bespon.  All of the |%!bespon| sequences should be recognized both in ASCII and in corresponding fullwidth forms (characters in U+FF01--U+FF5E).
 
-Due to the way that \bespon\ escapes strings, the empty string (|""| in many languages) only appears implicitly.  In compact syntax within a collection type, it appears as |;| (nothing---emptiness---before the collection element separator).  In non-compact syntax, it only appears implicitly.  A \bespon\ file that represents solely the empty string must at a minimum contain one or more newline characters after the removal of any BOM.  A file that contains no characters after the removal of the BOM must result in an error.  A file containing only the empty string should use |%!bespon| on the first line, or explicit typing |(str.empty)>| followed by an implicit empty string, to improve clarity for manual editing.  In general, a \bespon\ file should always end with one or more newline characters.
+Due to the way that \bespon\ escapes strings, the empty string (|""| in many languages) only appears implicitly.  In compact syntax within a collection type, it appears as |;| (nothing---emptiness---before the collection element separator).  In non-compact syntax, it only appears implicitly.  A \bespon\ file that represents solely the empty string must at a minimum contain one or more newline characters after the removal of any BOM.  A file that contains no characters after the removal of a BOM must result in an error.  A file containing only the empty string should use |%!bespon| on the first line, or explicit typing |(str.empty)>| followed by an implicit empty string, to improve clarity for manual editing.  In general, a \bespon\ file should always end with one or more newline characters.
 
 \section{Special characters}
 
 
-\bespon\ uses some characters for special purposes.  The set of special characters has purposely been kept as small as possible, so that there is less to consider when escaping.  Typically only the percent symbol |%|, parentheses |()|, semicolon |;|, equals sign |=|, and quotation marks |"| and |'| always have a special meaning that may require escaping.  In special contexts, the slash |/|, space and tab, plus sign |+|, greater-than sign |>|, square brackets |[]|, period |.|, and underscore |_| also have meaning, but usually in such a way that extra escaping is not required.
+\bespon\ uses some characters for special purposes.  The set of special characters has been kept small, so that there is as little as possible to remember when escaping.  In many situations, a string must only be escaped if it begins with parentheses |()|, curly braces |{}|, square brackets |[]|, or quotation marks |'"|, or if it contains the percent symbol |%| or semicolon |;|.
 
-\bespon\ allows data to be represented in three forms:  a compact form, somewhat analogous to JSON; an indentation-based form, somewhat analogous to YAML; and an INI-style form, somewhat analogous to TOML.  Some characters only have special significance in the indentation-based and INI-style forms.
+In special contexts, the equals sign |=|, slash (solidus) |/|, space and tab, plus sign |+|, greater-than sign |>|, period |.|, and underscore |_| also have meaning, but in such a way that extra escaping is typically not required.
+
+\bespon\ allows data to be represented in three forms:  a compact form, somewhat analogous to JSON; an indentation-based form, somewhat analogous to YAML; and an INI-style form, somewhat analogous to TOML.  Some characters only have special significance in some of these contexts.
+
+All special characters are in the ASCII range or in the fullwidth equivalents  U+FF01--U+FF5E, plus U+3000.  All special characters in the printable ASCII range except for the space (U+0021--U+007E) must be treated as identical to their fullwidth equivalents in U+FF01--U+FF5E.  For example, a list opened by the ASCII left square bracket |[| (U+005B) should be closed by the ASCII right square bracket |]| (U+005D), but could be closed by the fullwidth right square bracket \begin{CJK*}{UTF8}{gkai}|］|\end{CJK*} (U+FF3D).  Fullwidth ASCII equivalents are allowed to make the indentation-sensitive syntax more compatible with CJK characters.  They should not be used in non-CJK contexts.  The fullwidth characters in U+FF01--U+FF5E are treated as identical to their ASCII equivalents because distinguishing them could result in subtle errors when an ASCII character and its fullwidth equivalent are swapped.  For example, the list might appear to be closed by \begin{CJK*}{UTF8}{gkai}|］|\end{CJK*} (U+FF3D), but would not actually be.  This could have security implications.
+
+There is only one exception to treating ASCII characters as completely equivalent to their fullwidth counterparts.  A library may raise an error when paired special characters or groups of special characters, within a single pairing, are not all ASCII or not all fullwidth.
+
+The ASCII space U+0020 and ideographic space U+3000 have exactly the \emph{same role} as indentation characters in the indentation-sensitive syntax, but are never treated as \emph{identical} or as \emph{translatable} since there is not a universal ratio of their widths across all fonts.  In an ideal fixed-width font, the ratio of the width of the ideographic space to the space might be 2:1, but in practice, it is often more like 5:3.  Thus, any attempt to translate between the two would run into the same sorts of issues as attempts to treat horizontal tabs as equivalent to some number of spaces.
 
 
 \subsection{Comments -- percent sign and fullwidth percent sign (and trailing slash and trailing fullwidth solidus)}
 
-Single-line comments begin with the percent character |%| (U+0025).  A space between the |%| and the beginning of the comment is encouraged.
+Single-line comments begin with the percent character |%| (U+0025) and continue to the end of the line.  A space between the |%| and the beginning of the comment is encouraged.
 
 Multiline comments begin with three or more percent characters, and continue until an identical group of percent characters is found.  The closing group of percent characters must be followed immediately by a slash |/| (U+002F).  This allows the beginning and end of a long comment to be easily distinguished, even in the absence of syntax highlighting.  In multiline comments, the delimiters should be on lines by themselves.  This makes multiline comments more quickly distinguishable from single-line comments.
 
@@ -161,13 +171,15 @@ that goes on for two lines
 %%%/
 \end{Verbatim}
 
-The percent character |%| is chosen for the comment character because it is rare at the beginning of a string.  It is used as a comment character in \TeX\ and PostScript, so there is precedent.  The hash character |#| could be a logical choice, but given its widespread use as a comment character and in hashbangs and hashtags, using it as a comment character would increase the number of strings that require escaping.  The hash character is also common in lightweight markup languages as a header or numbered list indicator.  C-style slashes |//| could require that root path names be escaped, and would not allow the clear distinction between opening and closing delimiters for multiline comments.
+The percent character |%| is chosen for the comment character because it is rarely used.  It is used as a comment character in \TeX\ and PostScript, so there is precedent.  The hash character |#| could be a logical choice, but given its widespread use as a comment character, and its popularity in hashbangs, hashtags, and HTML bookmarks, using it as a comment character would increase the number of strings that require escaping.  The hash character is also common in lightweight markup languages as a header or numbered list indicator.  C++ slashes |//| would require escaping URLs, and would not allow the clear distinction between opening and closing delimiters for multiline comments.
+
+A comment may not interrupt another element.  A comment must not appear within an unquoted string or unquoted literal.  It may only appear before or after one.  A comment after an unquoted string or literal does not alter any requirements for a separating character or other syntax that indicates the end of the element or the separation of the element from subsequent elements.
 
 The fullwidth percent sign \begin{CJK*}{UTF8}{gkai}|％|\end{CJK*} (U+FF05) and fullwidth solidus \begin{CJK*}{UTF8}{gkai}|／|\end{CJK*} (U+FF0F) may be used instead of the percent sign and slash when working with CJK characters.  Otherwise, their use is discouraged.
 
 The sequence |%!bespon| is special.  It may be used at the beginning of the first line of a \bespon\ file to indicate the format.  Currently, this sequence must not be followed by anything but whitespace.  In future versions of the \bespon\, this sequence may optionally be followed by arguments that customize parsing or other features.
 
-The same sequence |%!bespon| may appear multiple times within a file as a delimiter between separate datasets.  That is, concatenated \bespon\ files are valid.  \bespon\ libraries should provide one mode for parsing \bespon\ files that contain only a single dataset.  This mode should raise an error if the sequence |%!bespon| is encountered anywhere other than the first line, with the exception that |%!bespon.eof| must always be valid if it is at the end of the file once trailing whitespace is stripped.  Libraries should provide another mode that is used to parse files that contain multiple datasets.  This should make all datasets accessible via a list or array, or alternatively iterate over individual datasets.  This mode may also return a dict mapping dataset names to datasets, in the event that all datasets include metadata that gives each set a name.
+The same sequence |%!bespon| may appear multiple times within a file as a delimiter between separate datasets.  That is, concatenated \bespon\ files are valid.  \bespon\ libraries should provide one mode for parsing \bespon\ files that contain only a single dataset.  This mode must raise an error if the sequence |%!bespon| is encountered anywhere other than the first line, with the exception that |%!bespon.eof| must always be valid as an end-of-file indicator.  Libraries should provide another mode that is used to parse files that contain multiple datasets.  This should make all datasets accessible via a list or array, or alternatively iterate over individual datasets.  This mode may also return a dict mapping dataset names to datasets, in the event that all datasets include metadata that gives each set a name.
 
 
 
@@ -187,20 +199,20 @@ In some cases, indentation is based off of a mix of indentation characters and o
 \end{Verbatim}
 If the plus sign is preceded or followed by a space or ideographic space, it is counted as a character (equivalent to a space or ideographic space) for indentation purposes.  If ideographic spaces are used for indentation, then the fullwidth plus sign \begin{CJK*}{UTF8}{gkai}|＋|\end{CJK*} (U+FF0B) should be used instead of the plus sign (U+002B) to ensure correct visual alignment.  If the plus (or fullwidth plus) is both preceded and followed by a tab, then it is ignored in determining indentation level.  This approach is applied to all cases in which indentation level must be determined from a mix of indentation characters and a single other character.
 
-There is never an indentation level that mixes indentation characters with more than one non-indentation character.  If such a case were allowed, then it would be necessary to normalize Unicode characters and/or use their character categories to determine which code points should be treater as contributing to the indentation level.  For a data serialization library, it is simpler avoid this complexity.
+There is never an indentation level that mixes indentation characters with more than one non-indentation character.  If such a case were allowed, then it would be necessary to normalize Unicode characters and/or use their character categories to determine which code points should be treated as contributing to the indentation level.  For a data serialization library, it is simpler avoid this complexity.
 
 
 \subsection{Indented lists -- plus sign and fullwidth plus sign}
 
 In non-compact syntax, the plus sign |+| (U+002B) and fullwidth plus sign \begin{CJK*}{UTF8}{gkai}|＋|\end{CJK*} (U+FF0B) are used, together with indentation, to denote the beginning of list items.  The fullwidth plus should only be used when ideographic spaces are used for indentation, which should only be done with CJK characters.
 
-A plus (or fullwidth plus) only starts a list when it is the first non-indentation character on a line, is indented relative to the current indentation level, and is followed by one or more indentation characters.  An unquoted plus followed by an indentation character may not appear at the beginning of an unquoted string in non-compact syntax, even if it could be determined from the indentation context that the plus is meant as a literal character rather than the beginning of a list item.  This promotes clarity and serves as a guard against indentation errors.
+A plus (or fullwidth plus) only starts a list when it is the first non-indentation character on a line, is indented relative to the current indentation level, is followed by one or more indentation characters, and is not within an unquoted string that already contains one or more non-indentation characters.
 
 When the top level of a dataset is a list, there is no need to indent a plus sign that starts an element, since there is no pre-existing indentation level relative to which to indent.
 
 The first non-indentation character after the plus sign sets the indentation level of the list item content.  All content must be indented based on this level.
 
-Logical choices for the beginning-of-list character are the plus |+|, hyphen |-|, and asterisk |*|.  The asterisk would be ideal, since it resembles a bullet point.  However, it is in common use in markup languages to denote italic/bold (emph/strong), so it may be expected at the beginning of a string.  While it would typically not appear at the beginning of a string with a following space (which would require quoting), its appearance could require that writers and readers take a second look to determine whether a list indeed starts.  That would add undesirable cognitive load.  A leading asterisk could also appear due pointers/dereferencing, etc.
+Logical choices for the beginning-of-list character are the plus |+|, hyphen |-|, and asterisk |*|.  The asterisk would be ideal, since it resembles a bullet point.  However, it is in common use in markup languages to denote italic/bold (emph/strong), so it may be expected at the beginning of a string.  While it would typically not appear at the beginning of a string with a following space (which could require quoting), its appearance could require that writers and readers take a second look to determine whether a list indeed starts.  That would add undesirable cognitive load.  A leading asterisk could also appear due pointers/dereferencing, etc.
 
 The hyphen is used by YAML and TOML.  Like the asterisk, it may be expected as a leading character in many cases.  It is used in command-line flags and as an ASCII approximation of an en dash or em dash.  A leading dash followed by a space is \href{https://en.wikipedia.org/wiki/Quotation_mark}{used in many languages to indicate quoting}, so that could also require additional escapes or cause confusion.  There is also the issue of visually distinguishing the hyphen from the various sorts of dash characters.  Finally, the hyphen does not have the same weight as the plus or asterisk, and thus is more easily overlooked.
 
@@ -217,15 +229,15 @@ Most \bespon\ strings do not need to be quoted.  When strings are quoted, double
 
 There are two kinds of quoted strings.  An inline string begins with a group of one or more identical quotation marks, and continues until an identical group of quotation marks is encountered.  The closing group of quotation marks may not be bounded on either side by the type of quotation marks it contains.  If the first or last non-space (or non-ideographic space) character in a string is a quotation mark of the same type as used in the delimiters, then the outermost space character will be stripped.  Thus, |"'"| and |'' ' ''| would both represent the single quotation mark |'|.\footnote{If an inline string begins with a delimiter on one line, immediately followed by a newline so that the actual string content does not begin until the next line, then the newline is treated as a space if the content begins with the delimiter character.  The newline could not have been put there by a line-breaking algorithm, so it must have been entered by the user, and thus is equivalent to a space.  If the newline is preceded by a space, then it might have been entered by the user or produced by automatic hard wrapping.  Regardless, it will be stripped by all standard procedures for handling newlines, because it is preceded by a space.  And then the space will be stripped because of the presence of the delimiting character.  Essentially, everything proceeds as if the newline were not there, unless it is the only thing there and thus obviously came from the user.  Dealing with the equivalent case for the closing delimiter follows the same logic.  }
 
-An inline string may be broken across multiple lines.  In this case, all lines after the first line with the opening delimiter should have the same indentation.  All leading indentation on subsequent lines will be stripped.  No line except for the first line, after the opening delimiter, or the last line, before the closing delimiter, may consist solely of indentation characters.  The presence of a line of indentation characters in any other location must trigger an error.
+An inline string may be broken across multiple lines.  In this case, all lines after the first line with the opening delimiter should have the same indentation.  All leading indentation on subsequent lines will be stripped.  No line except for the first line, after the opening delimiter, or the last line, before the closing delimiter, may consist solely of indentation characters and newlines.  The presence of a line of indentation characters in any other location must trigger an error.
 
 Any line breaks within an inline string are converted to spaces (U+0020), unless the preceding character is a space (U+0020) or ideographic space (U+3000), in which case they are stripped.  This means that if ideographic spaces are desired within inline strings, they must be entered explicitly at the ends of lines.  An inline string may span multiple lines, but the literal text it represents will always be a single line, without a final newline.
 
-A block string begins with a group of three or more identical quotation marks.  Nothing is allowed on the line after this opening delimiter except indentation characters.  The actual text follows on subsequent lines; any indentation characters and the line break following the opening delimiter do not contribute to the string.  The string ends when an identical group of quotation marks is encountered, unless the opening delimiter is preceded by only indentation characters, in which case the string does not end until a matching closing delimiter with the same indentation is found.  If a closing delimiter is not found in this case, then the resulting error message should alert the user to any closing delimiters that matched except for incorrect indentation.  The ending quotation marks must be followed immediately by a slash |/| or fullwidth solidus \begin{CJK*}{UTF8}{gkai}|／|\end{CJK*}.  This allows the beginning and end of a block string to be easily distinguished, and provides a guaranteed difference from inline string notation.
+A block string begins with a group of three or more identical quotation marks.  Nothing is allowed on the line after this opening delimiter except indentation characters.  The actual text follows on subsequent lines; any indentation characters and the line break following the opening delimiter do not contribute to the string.  The string ends when an identical group of quotation marks is encountered, unless the opening delimiter is preceded by only indentation characters, in which case the string does not end until a matching closing delimiter with the same indentation is found.  If a closing delimiter with the correct indentation is not found, then an error must be raised.  Ideally, the error will include the locations of delimiters that met the requirements except for indentation.  The ending quotation marks must be followed immediately by a slash |/| or fullwidth solidus \begin{CJK*}{UTF8}{gkai}|／|\end{CJK*}.  This allows the beginning and end of a block string to be easily distinguished, and provides a guaranteed difference from inline string notation.
 
-Within a block string, all line breaks are preserved.  The indentation level is set by the indentation level of the closing delimiter.  All lines of text within the block must be indented to at least the level of the closing delimiter; otherwise, an error must be raised.  All indentation shared with the closing delimiter is stripped.  The opening delimiter is only required to be at the same indentation level as the closing delimiter if the opening delimiter is on a line by itself, but having both delimiters share the same indentation is encouraged.  Since line breaks are preserved, the string will end with a newline.  If this is not desired, then an additional slash may be added to the closing delimiter, and the final newline will be stripped.
+Within a block string, all line breaks are preserved.  The indentation level is set by the indentation level of the closing delimiter.  All lines of text within the block must be indented to at least the level of the closing delimiter, except those consisting solely of indentation characters and newlines; otherwise, an error must be raised.  All indentation shared with the closing delimiter is stripped.  The opening delimiter is only required to be at the same indentation level as the closing delimiter if the opening delimiter is on a line by itself, but having both delimiters share the same indentation is encouraged.  Since line breaks are preserved, the string will end with a newline.  If this is not desired, then an additional slash may be added to the closing delimiter, and the final newline will be stripped.  Newline type (|\n| vs. |\u2028|, etc.) should be conserved within block strings.
 
-The opening delimiter for both inline and block strings may be identical, though this should be rare in practice.  Typically, an inline string should need less than three quotation marks, and the opening quotation marks should almost always be followed on the same line by text.  In these cases, the difference between an inline and block string will be immediately apparent.  In the rare cases in which an inline string does use three or more quotation marks, it may always be distinguished from a block string by an absence of empty lines and by the absence of one or two slashes |/| after the closing delimiter.  Also, the closing delimiter for an inline string is not required to be on a line by itself.
+The opening delimiter for both inline and block strings may be identical, though this should be rare in practice.  Typically, an inline string should need less than three quotation marks, and the opening quotation marks should almost always be followed on the same line by text.  In these cases, the difference between an inline and block string will be immediately apparent.  In the rare cases in which an inline string does use three or more quotation marks, it may always be distinguished from a block string by an absence of empty lines and by the absence of one or two slashes |/| after the closing delimiter.  Also, the closing delimiter for an inline string is not required to be the element on a line after indentation is stripped.
 
 Inline strings:
 \begin{Verbatim}
@@ -265,29 +277,30 @@ key =
 
 Quoted inline and block strings are only some of the possible string types; others are discussed below.
 
+Note that mixing an ASCII quotation mark with its fullwidth equivalent in a string delimiter is allowed, since the two characters must be treated as equivalent.  Libraries must parse this case correctly.  However, actually mixing the two types of characters is extremely discouraged, and libraries may alternatively raise an error in this case, since this is the one case in which an exception to treating ASCII and fullwidth as equivalent is allowed.
+
 
 \subsection{Ending delimiters -- slash and fullwidth solidus}
 
 Slashes |/| (U+002F) (and fullwidth solidus \begin{CJK*}{UTF8}{gkai}|／|\end{CJK*} (U+FF0F) for CJK) only have a special meaning as part of the ending delimiters for multiline comments and block strings.  They distinguish the opening delimiters from the closing delimiters in these cases, by appearing as the last character in the closing delimiter.  This is reminiscent of the use of the slash in closing HTML tags.  In the multiline string case, the slash may be doubled to indicate that the final newline is stripped.
 
 
-\subsection{Collection datatypes and typing -- parentheses, fullwidth parentheses, greater-than sign, and fullwidth greater-than sign}
+\subsection{Collection datatypes and typing -- parentheses, fullwidth parentheses, greater-than sign, fullwidth greater-than sign, square brackets, fullwidth square brackets, curly braces, fullwidth curly braces}
 
-In compact form, collection datatypes (list, dict, etc.) are delimited by parentheses |()| (U+0028 and U+0029).  When working with CJK characters, fullwidth parentheses \begin{CJK*}{UTF8}{gkai}|（）|\end{CJK*} (U+FF08 and U+FF09) may be used instead.  Mixing normal and fullwidth parentheses for delimiting a collection is not allowed.
+In compact form, collection datatypes are delimited by paired characters.  Lists are delimited by square brackets |[]| (U+005B and U+005D).  Dicts are delimited by curly braces |{}| (U+007B and U+007D).  Fullwidth versions may be used in CJK contexts.  Parentheses are reserved for delimiting special objects.\footnote{Parentheses are intended for a special dict-style object that is not required to be implemented.  In this object, all allowed keys are given default, pre-defined initial values upon initialization.  If a key is specified by name only, then it takes on a previously specified default value.  If a key-value pair is specified, then the key is mapped to that value.  Such objects are useful in configuration and are inspired by typical \LaTeX\ key-value packages.  They are also similar to some command-line flag parsers.}
 
-In compact form, whether a collection is a list (indexed by element number) or a dict (indexed by key) is determined by looking for |<key>=<value>| syntax.  Serialization formats typically use square brackets |[]| to delimit lists and curly braces |{}| to delimit dicts.  \bespon\ uses parentheses for both cases, with the two being distinguished based on context, to minimize the circumstances in which quoted strings (or other forms of escaping) are required.  Square brackets and curly braces are common in markup languages and computing.  Having to check all strings for a starting or unpaired bracket or brace would add undesirable cognitive load to working with unquoted strings.
+Deciding on criteria for quoting a string that contains parentheses/brackets/braces is difficult.  In compact notation, a string that begins with an opening character must be quoted, since otherwise a new object would be opened.  Symmetry would then suggest that an unquoted string may not begin with a closing character; in any case, in a typical syntax, an unquoted closing character would close an object.  Although this has been discussed in terms of compact notation, it also applies to non-compact notation, since non-compact notation may temporarily transition to compact notation at the beginning of any element.
 
-A \bespon\ library may provide an option to use square brackets |[]| to delimit lists and curly braces |{}| to delimit dicts.  However, this must not be the default behavior.  If such an option is enabled, then brackets and braces must be treated identically to parentheses in terms of rules for escaping and the conditions under which quoting is required.
+In terms of parsing for an object delimited by a given pair of characters, it would be possible to allow these characters within an unquoted string so long as they appear in pairs.  However, that would make parsing more complex.  It would also mean that the last character in an unquoted string could be identical to the following character, which closes the object.  For example, a list containing the string ``string[]'': |[string[]]|.  In such a situation, it could be necessary to glance at the entire unquoted string to determine whether all characters are paired, and which character actually closes the object.
 
-A string that contains parentheses must be quoted under the following conditions.
-\begin{itemize}
-\item The string begins or ends with a parenthesis, either opening |(| or closing |)|.  An opening parenthesis would otherwise begin a new object, while a closing parenthesis would close the current object.
-\item The string contains an unpaired parenthesis.  Note that the requirement that all parentheses be paired is stronger than the requirement that the string contain an equal number of opening and closing parentheses.
-\end{itemize}
+It would be possible to work around some of this by requiring that an unquoted string in compact form always end with a separator |;|.  Thus, the last example would become |[string[];]|.  It would be error-prone, since users expect a trailing separator to be optional.  In effect, this would be the opposite of the JSON trailing comma issue.  Given the excitement that has caused, it would be best not to replicate anything similar.
+
+The simplest solution would seem to be to require quoting any string that contains the characters used to delimit the current collection object.  Even this could be problematic, however.  A string that is perfectly valid in a list (no square brackets) would not be valid in a dict if it contains curly braces.  This suggests what might be called the \textit{principle of uniformity}:  An unquoted string must be valid in all contexts.
+
 
 Parentheses are also used to designate types beyond those that may be represented by standard syntax.  The syntax |(type)>| is used to designate the type of the following object.  Fullwidth parentheses and greater-than sign \begin{CJK*}{UTF8}{gkai}|＞|\end{CJK*} (U+FF1E) may be used with CJK characters.  Type designations must consist of non-whitespace, non-parentheses characters; no whitespace is allowed between the parentheses, or between the closing parenthesis and the greater-than sign.\footnote{``Whitespace'' should be interpreted as Unicode characters with character property WSpace.}  A greater-than sign is not allowed after a parenthesis that closes a collection type.
 
-\bespon\ specifies some types that must be implemented for |(type)>| syntax.  It also specifies several types that may optionally be implemented.  A library that does not implement these optional types must raise an error if they are encountered, or if any other unrecognized types are encountered.  All official types, both required and optional, are named with a |type.subtype.subsubtype| syntax.  In the future, a |type.subtype+subtype| or a |type.subtype=value| syntax may also be used.  All official types, both required and optional, will only use the following characters between the parentheses: |a-z|, |A-Z|, |0-9|, and the punctuation characters |+.:=,;_|.  The corresponding fullwidth characters must be treated as equivalent.
+\bespon\ specifies some types that must be implemented for |(type)>| syntax.  It also specifies several types that may optionally be implemented.  A library that does not implement these optional types must raise an error if they are encountered, or if any other unrecognized types are encountered.  All official types, both required and optional, are named with a |type.subtype.subsubtype| syntax.  In the future, a |type.subtype+subtype| or a |type.subtype=value| syntax may also be allowed.  All official types, both required and optional, will only use the following characters between the parentheses: |a-z|, |A-Z|, |0-9|, and the punctuation characters |+.:=,;_|.  The corresponding fullwidth characters must be treated as equivalent when performing type lookups.
 
 Libraries may implement types beyond those specified by \bespon.  These types should be named in |lib:type.subtype.subsubtype| form, where ``|lib|'' may be replaced with the library name or an abbreviation of it if desired.  Libraries may also implement hooks for user-defined types.  These should be named in the form |user:type.subtype.subsubtype| or |usr:type.subtype.subsubtype|.  |user| and |usr| should be accepted interchangeably.  This prevents library and user types from unintentionally colliding with official types.
 
@@ -299,24 +312,24 @@ The greater-than sign |>| (U+003E), and fullwidth equivalent \begin{CJK*}{UTF8}{
 
 \subsection{Separator -- semicolon and fullwidth semicolon}
 
-In compact syntax, individual items in a collection datatype are separated by semicolons |;| (U+003B).  For example, a list |(1; 2; 3)|.  The fullwidth semicolon \begin{CJK*}{UTF8}{gkai}|；|\end{CJK*} (U+FF1B) may be used in CJK contexts.
+In compact syntax, individual items in a collection datatype are separated by semicolons |;| (U+003B).  For example, a list |[1; 2; 3]|.  The fullwidth semicolon \begin{CJK*}{UTF8}{gkai}|；|\end{CJK*} (U+FF1B) may be used in CJK contexts.
 
-Semicolons and commas are logical choices for item separators.  Semicolons were chosen because they appear less frequently in most text and programming contexts, and thus reduce the need for quoted strings.  They are also more visible than commas.
+Semicolons and commas are logical choices for item separators.  Semicolons were chosen because they appear less frequently in most text and programming contexts, and thus reduce the need for quoted strings.  They are also more visible than commas, which helps with identifying implicit empty strings.
 
-In compact syntax, when nothing precedes a separator, it represents the empty string.  For example, |(abc;;)| is an list with two elements, the string |abc| and the empty string.  The empty string may never be implied in compact syntax, so that the meaning of a separator |;| after the last element in a collection is not ambiguous.  Thus, |(abc;)| and |(abc)| are identical lists containing a single string.  The |;)| does not imply a second element containing the empty string.
+In compact syntax, when nothing precedes a separator, it represents the empty string.  For example, |[abc;;]| is a list with two elements, the string |abc| and the empty string.  The empty string may never be implied in compact syntax, so that the meaning of a separator |;| after the last element in a collection is not ambiguous.  Thus, |[abc;]| and |[abc]| are identical lists containing a single string.  The |;]| does not imply a second element containing the empty string.
 
 
 \subsection{Key-value assignment and INI-style form -- equals sign and fullwidth equals sign, and slash and fullwidth solidus}
 
-The equals sign |=| (U+003D) is used in key-value assignment.  For example, |key=value|.  The fullwidth equals sign \begin{CJK*}{UTF8}{gkai}|＝|\end{CJK*} (U+FF1D) may be used in CJK contexts.  The equals sign may be preceded or followed by indentation characters.  If the key contains whitespace or special characters that require quoting, then it must be quoted.  The equals sign must only be recognized as the separator between a key-value pair when it follows a quoted key, when it is the first equals sign in a run of non-whitespace characters, or when it immediately follows the first run of indentation characters within a run of characters.  Any subsequent equals signs are never treated as key-value separators and need not be escaped, with the exception of an equals sign that immediately follows a prior equals sign that is a key-value separator, or an equals sign that would make the string containing it into a key-value pair in the absence of quoting.
+The equals sign |=| (U+003D) is used in key-value assignment.  For example, |key=value|.  The fullwidth equals sign \begin{CJK*}{UTF8}{gkai}|＝|\end{CJK*} (U+FF1D) may be used in CJK contexts.  The equals sign may be preceded or followed by indentation characters.  If the key contains whitespace or special characters that require quoting, then it must be quoted.
+
+The equals sign must only be recognized as the separator between a key-value pair (1) within a collection type that consists of key-value pairs (or in a context where such a collection type may begin), and (2) when it follows a properly quoted key, or when it is the first equals sign in a run of non-whitespace characters (optionally) followed by a run of indentation characters.  Any subsequent equals signs are never treated as key-value separators and need not be escaped, with the exception of immediately following equals signs, which should be separated by indentation characters or whitespace to avoid the sequence |===|, which has special meaning.
 
 In an indentation-sensitive context, the indentation level for |value| must be greater than the indentation level for the first letter of |key|.  If |value| is split over multiple lines, the first line upon which it appears after |key| sets the indentation level for subsequent lines, except in the case of quoted strings or similar elements that contain their indentation information in the closing delimiter.
 
 When an equals sign without preceding characters is encountered (for example, |=value|), it will be considered the separator between an empty string key and a value.  
 
-As a result of the use of the equals sign in key-value pairs, the text |==| is not allowed.  If it meant a key-value pair of the empty string and the equals sign, it would need to be |='='|.  If it meant a key-value pair of the empty string with a dict, containing a pairing of the empty string and the empty string, it would need to be |=(=;)| in compact syntax, and would require line breaks in indentation-based and INI-style forms.  In a similar way, |==<text>| is not allowed; it would need to be |='=<text>'| or |=(=<text>;)|.
-
-Since the text |==| is not allowed, the text |===| would likewise be invalid.  It is repurposed to support an INI-style syntax.  A line that begins with |===| must follow it with a path within the data serialization structure.  Everything following the line with the |===| will be assigned at this location.  For example, everything under the line |===key| would be under |key| in the dict at the current indentation level.  A location specified via the |===| syntax is in force until the next use of |===| at the same indentation level.  The special sequence |===/| ends all use of the INI-style syntax at the current indentation level.  The fullwidth solidus may be used in CJK contexts.  An element that is indented less than the opening |===| also ends all use of the INI-style syntax at the level of the |===|.  Uses of |===| at the same indentation level are not nested; using |===/| does not close the current INI-style block while leaving the previous block at the same indentation level open, but rather ends all INI-style syntax at the current indentation level.
+The sequence |===| is used to support an INI-style syntax when not in compact mode.  A line that begins with |===| (optionally preceded by indentation characters) must follow it with a path within the data serialization structure.  Everything following the line with the |===| will be assigned at this location.  For example, everything under the line |===key| would be under |key| in the dict at the current indentation level.  A location specified via the |===| syntax is in force until the next use of |===| at the same indentation level.  The special sequence |===/| ends all use of the INI-style syntax at the current indentation level.  The fullwidth solidus may be used in CJK contexts.  An element that is indented less than the opening |===| also ends all use of the INI-style syntax at the level of the |===|.  Uses of |===| at the same indentation level are not nested; using |===/| does not close the current INI-style block while leaving the previous block at the same indentation level open, but rather ends all INI-style syntax at the current indentation level.  Key paths specified via the |===| syntax are always relative to the current location and refer to locations at or below that location; there is not a syntax for root-based keys, or for specifying relative key levels above the current level.
 
 
 \subsection{Key paths -- period, fullwidth period, square brackets, fullwidth square brackets, plus sign, fullwidth plus sign, underscore, fullwidth low line}
@@ -326,6 +339,8 @@ In a dict, standard keys set values.  \bespon\ also allows for ``compound'' keys
 If literal square brackets enclosing an integer are desired at the end of a subkey (or as an entire subkey), if periods should not be interpreted as path separators, or if keys (or subkeys) contain whitespace, then keys (or subkeys) may be quoted.  Thus, |key1.'key2[0]'| would be two levels deep, with two string keys, while |'key1.key2[0]'| would be a single key.  If quoting is required immediately before list indexing, then the indexing must be separated from the quoting by a period.  For example, |'key1.key2'.[0]|. This means that in the key part of a dict, it is valid to have two quoted strings immediately adjacent, so long as they are only separated by a period.  The period may be thought of as a string concatenation operator, which operates on quoted or unquoted strings.  This syntax is not valid in any other context.
 
 When keys refer to lists, the lists are always zero-indexed.  When a list is assembled piece by piece, the special notation |[+]| may be used to refer to the next unused index in the list (that is, to append an element).  The notations |[-1]| may be used to refer to the last element.  A trailing pair of square brackets only needs to be escaped when it contains an integer or a plus sign.  Negative indices are treated as in Python.
+
+A key that begins with a list index (for example, |[0].subkey|) is invalid by default, because dicts only accept keys that are strings, integers, or floats.  This is treating the current dict as containing a key |[0]|, which could be interpreted as a list containing only |[0]|, or alternatively as indexing into an ordered dict.  Neither are allowed by default.
 
 When working with key paths two or more levels deep, the underscore character |_| (U+005F) or fullwidth low line \begin{CJK*}{UTF8}{gkai}|＿|\end{CJK*} (U+FF3F), when followed immediately by a period or by square brackets that index a list, refers to the last used key path, with the last element removed.  This allows more compact notation.  For example,
 \begin{Verbatim}
@@ -337,9 +352,11 @@ would be equivalent to the JSON
 \begin{Verbatim}
 {"complex_key": {"property": [1, 2, 3]} }
 \end{Verbatim}
-The underscore does not refer to the full path, because typically the final element will be fully assigned.  A literal underscore may be obtained by quoting when this shorthand notation is not desired.
+The underscore does not refer to the full path, because typically the final element will be fully assigned.  A literal underscore may be obtained by quoting when this shorthand notation is not desired.  When using the |===| syntax, the underscore |_| refers to the key path of the last usage of the syntax at the current indentation level, with the last element removed.
 
-Note that the period, underscore, and square brackets (when enclosing an integer or plus sign) only have special meaning when they occur within a key path.  In no other situation, particularly in unquoted strings, do they require any special treatment or escaping.
+Note that the period and underscore only have special meaning when they occur within a key path.  In no other situation, particularly in unquoted strings, do they require any special treatment or escaping.
+
+The unquoted slash |/| may not be used in path syntax.
 
 
 
@@ -351,7 +368,16 @@ Note that the period, underscore, and square brackets (when enclosing an integer
 
 Since \bespon\ is designed for working with literal text, these are of primary importance.  Default strings are pure Unicode string literals, with no escapes of any sort.
 
-Unquoted strings may not begin with a percent sign |%|, parentheses |()|, or quotation marks |'| or |"|.  In non-compact syntax, they may not begin with a plus sign |+| followed by indentation characters.  In compact syntax, they may not contain semicolons |;| or unpaired parentheses.  They may not begin with an equals sign |=|, or have an equals sign separated from the beginning of the string only by non-whitespace characters followed by optional indentation characters.  Quoting is also necessary when a string fits a pattern that would cause it to be misidentified as another type.
+Unquoted strings must meet certain requirements in order to avoid the need for quoting.  These are stricter than would be strictly necessary to avoid quoting.  They are based on the \textit{principle of uniformity}:  An unquoted string should be valid in all forms of \bespon\ syntax, and should not result in a syntax error or undesired data structure if it were copied to another collection type or put on a line by itself and indented relative to the parent element.
+\begin{itemize}
+\item Must not begin with parentheses |()|, curly braces |{}|, or square brackets |[]|.  Must not contain an unmatched pair of any of these characters.  An implementation must support these characters in nested pairs up to a total of three levels deep, and may raise an implementation-unsupported error for additional levels (upon encountering an opening character that would open a fourth level).  \textit{A beginning character would signal the closing of the current collection object (in compact notation) or the opening of a new object, or (for parentheses) an explicit type declaration.  In compact notation, unpaired internal characters would prematurely close the object or make the end of the object impossible to find if terminated by a closing character rather than a semicolon}|;|\textit{.  The requirement that internal characters be paired is necessary in compact form, but is more than would be strictly necessary otherwise.  Likewise, requiring all characters to be paired is a broader requirement than is strictly necessary within any one collection object delimited by a single set of these characters.  However, it is applied in all cases for overall simplicity and uniformity.}
+\item Must not begin with quotation marks |'| or |"|.  \textit{This would indicate a quoted string, or a quoted portion of a key.}
+\item Must not begin with an equals sign |=|, or have an equals sign separated from the beginning of the string by a single group of non-whitespace characters optionally followed by a single group of whitespace characters.  \textit{The beginning of a string cannot appear to be a key-value pair with an unquoted key.  In most situations, this case could actually be parsed correctly.  However, in the event of improper hard-wrapping in non-compact syntax, it is easily prone to errors.  It also presents the visual appearance of ambiguity, even if ambiguity does not actual exist.  }|key = value = and equals|\textit{ just looks like some sort of special object.}
+\item Must not begin with a plus sign |+| followed by an indentation character or whitespace.  \textit{This would make it look like the beginning of a list item in non-compact form.  Putting the string on a new line, indented from the parent element, would actually start a list.}
+\item Must not contain a percent sign |%|.  \textit{It would be possible to treat an unquoted string like a quoted string, in the sense that once it begins, all characters except those strictly required to end it are disabled.  However, that would make it impossible to have a comment after anything unquoted, including booleans and numbers, and that is unacceptable.}
+\item Must not contain a semicolon |;|.  \textit{This is only strictly necessary in non-compact syntax.  However, it ensures that transitioning between the two will require no modifications.}
+\item Must not fit a pattern that would cause it to be identified with an implicit literal (integer, float, null, boolean).
+\end{itemize}
 
 Unquoted strings may break over multiple lines, but subsequent lines must be indented relative to the parent element.  That is, all lines of a wrapped unquoted string should have the same indentation level in a list, but should be indented relative to the key when serving as the value in a key-value pair.  Unquoted strings may not contain lines consisting only of whitespace characters.  Leading and trailing whitespace characters will be stripped, and each newline will be converted to a space if not preceded by a space or ideographic space, in which case it will be stripped.\footnote{It would be tempting to deal with newlines as in \href{https://www.ietf.org/rfc/rfc2646.txt}{RFC 2646}, either in inline strings or perhaps in a wrapping mode with block strings.  However, that could make \bespon\ less easy to edit; it is very easy to go on to the next line without leaving a trailing space.  The current scheme will give reasonable behavior in the majority of cases.  Explicit entry of an ideographic space, or escaped strings with escaped newlines, can always be used to work around the default unwrapping.}
 
@@ -390,18 +416,18 @@ Any string consisting solely of |inf|, with or without a sign, or of |nan| will 
 
 \subsection{List}
 
-An ordered collection of elements.  In compact syntax, delimited by parentheses |()| with each element separated by semicolons |;|.  Otherwise, indicated by an indented plus sign |+| followed by one or more indentation characters.  May also be indicated via key path syntax, with index enclosed in square brackets |[]|.
+An ordered collection of elements.  In compact syntax, delimited by square brackets |[]| with each element separated by semicolons |;|.  Otherwise, indicated by an indented plus sign |+| followed by one or more indentation characters.  May also be indicated via key path syntax, with index enclosed in square brackets |[]|.
 
 Regardless of the actual underlying implementation, lists behave as if they can be accessed by index and allow appending.  They behave as Python lists.  Lists may contain elements of multiple types.
 
 
 \subsection{Dict}
 
-A mapping of keys to values, typically unordered.  Keys may be strings, null, booleans, integers, or floats.  However, the use of non-string keys is strongly discouraged, since floats may experience rounding errors on round-tripping, and some languages such as Python do not distinguish between integer and float keys when the two represent the same number.
+A mapping of keys to values, typically unordered.  String keys must be supported.  Libraries are encouraged to support all non-collection basic types (null, booleans, integers, floats) as keys to provide better serialization support, but this is not required.  With appropriate languages, libraries may also support other types, including collections types.  However, the use of non-string keys is strongly discouraged, particularly when \bespon\ is being used to pass data between different languages.  Floats are typically unsuitable as keys, since they may experience rounding errors on round-tripping.  Also, some languages treat non-string keys in a manner that could produce unexpected results.  For example, Python does not distinguish between integer and float keys when the two represent the same number (for example, |1.0| vs.\ |1|), and \href{http://php.net/manual/en/language.types.array.php}{PHP apparently typecasts} null, bool, and float keys to string or int.
 
-Libraries may allow keys of other types, but these are the only types of keys a library must support.  A library must raise an error if it encounters a key type beyond these that it does not support.
+A library must raise an error if it encounters a key type that it does not support.
 
-When saving dicts to file, libraries should sort the keys by binary representation in the specified encoding.  For example, in typical circumstances, all keys would be encoded as UTF-8, and then the resulting byte strings would be sorted.  This provides a fixed key order that makes file diffs meaningful.  A library may instead sort the Unicode strings, but since this is locale-dependent and needs to account for Unicode normalization, it is discouraged in the general case.
+When saving dicts to file, libraries should sort the keys by binary representation when expressed in \bespon\ form and then encoded in UTF-8.  This provides a fixed key order that makes file diffs meaningful.  A library may instead sort the Unicode strings, but since this is locale-dependent and needs to account for Unicode normalization, it is discouraged in the general case.
 
 
 
@@ -438,7 +464,7 @@ All binary types may be collected as unquoted strings, or as quoted inline or bl
 
 |(bin.unwrap)>| and |(bin.xunwrap)>| correspond to the equivalent |str| types.
 
-|(bin.base64)>| and the short form |(bin.b64)>| designates RFC 3548 Base64.  The content may be quoted, but this is not necessary given the characters involved.
+|(bin.base64)>| and the short form |(bin.b64)>| designates RFC 3548 Base64.  The content should be quoted since equals signs will typically be involved.
 
 |(bin.base16)>| (aliases |(bin.hex)>| and |(bin.b16)>|) designates hexadecimal.  Quoting is allowed but not necessary.
 
@@ -475,7 +501,9 @@ Designated by |(int.arb)>|, |(float.binaryarb)>| and |(int.decimalarb)>|.  |bina
 
 \subsection{Copying}
 
-With |(copy)>|, a following string is used as a key path, starting at root level.  The element pointed to by this path is shallow copied.  |(deepcopy)>| may be used for deep copies.
+With |(copy)>|, a following string is used as a key path, starting at the current level.  The element pointed to by this path is shallow copied.  |(deepcopy)>| may be used for deep copies.  The syntax |/<key>.<key>| may be used to refer to the root.  The syntax |../../<key>.<key>| may be used to specify relative paths at a higher level.  All syntax following the last slash is normal dot-separated key syntax; all dots preceding the last slash are interpreted as part of the unit |../| rather than separators for null string keys.
+
+Note:  It may be worth considering a reference syntax |(ref)>|, which provides a reference rather than performing some type of copy.
 
 \subsection{Special data}
 
@@ -552,30 +580,30 @@ The JSON example is from \href{https://en.wikipedia.org/wiki/JSON}{Wikipedia}.  
 \centering \textbf{BespON}
 
 \begin{Verbatim}
-(
+{
   firstName = John;
   lastName = Smith;
   age = 25;
-  address = (
+  address = {
     streetAddress = 21 2nd Street;
     city = New York;
     state = NY;
     postalCode = "10021"
-  );
-  phoneNumber = (
-    (
+  };
+  phoneNumber = [
+    {
       type = home;
       number = 212 555-1234
-    );
-    (
+    };
+    {
       type = fax;
       number = 646 555-4567
-    )
-  );
-  gender = (
+    }
+  ];
+  gender = {
     type = male
-  )
-)
+  }
+}
 \end{Verbatim}
 \end{multicols}
 \end{tcolorbox}
@@ -669,7 +697,7 @@ specialDelivery =
 \end{Verbatim}
 \end{multicols}
 \end{tcolorbox}
-The |specialDelivery| isn't quite the same as YAML, because YAML will have a final linebreak.  The exact equivalent of YAML could be accomplished by using a literal block string combined with |(str.unwrap)>|.
+The |specialDelivery| isn't quite the same as YAML, because YAML will have a final linebreak.
 
 
 
@@ -726,7 +754,7 @@ owner =
 
 database =
   server = 192.168.1.1
-  ports = (8001; 8001; 8002)
+  ports = [8001; 8001; 8002]
   connection_max = 5000
   enabled = true
 
@@ -741,13 +769,13 @@ servers =
     dc = eqdc10
 
 clients =
-  data = ( (gamma; delta); (1; 2) )
+  data = [ [gamma; delta]; [1; 2] ]
 
 % Line breaks are generally OK
-hosts = (
+hosts = [
   alpha;
   omega
-)
+]
 \end{Verbatim}
 \end{multicols}
 \end{tcolorbox}
@@ -900,7 +928,7 @@ dob = <some number>
 
 === database
 server = 192.168.1.1
-ports = (8001; 8001; 8002)
+ports = [ 8001; 8001; 8002 ]
 connection_max = 5000
 enabled = true
 
@@ -915,13 +943,13 @@ enabled = true
   dc = eqdc10
 
 === clients
-data = ( (gamma; delta); (1; 2) )
+data = [ [gamma; delta]; [1; 2] ]
 
 % Line breaks are generally OK
-hosts = (
+hosts = [
   alpha;
   omega
-)
+]
 \end{Verbatim}
 \end{multicols}
 \end{tcolorbox}
@@ -982,7 +1010,7 @@ dob = <some number>
 
 === database
 server = 192.168.1.1
-ports = (8001; 8001; 8002)
+ports = [ 8001; 8001; 8002 ]
 connection_max = 5000
 enabled = true
 
@@ -995,13 +1023,13 @@ ip = 10.0.0.2
 dc = eqdc10
 
 === clients.data
-( (gamma; delta); (1; 2) )
+[ [gamma; delta]; [1; 2] ]
 
 % Line breaks are generally OK
-hosts = (
+hosts = [
   alpha;
   omega
-)
+]
 \end{Verbatim}
 \end{multicols}
 \end{tcolorbox}

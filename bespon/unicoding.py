@@ -29,6 +29,7 @@ except ValueError:
 import collections
 import re
 from . import erring
+from . import tooling
 
 
 
@@ -80,21 +81,6 @@ BESPON_SHORT_UNESCAPES = {'\\\\': '\\',
                           '\\/': '/'}
 
 BESPON_SHORT_ESCAPES = {v:k for k, v in BESPON_SHORT_UNESCAPES.items() if v != '/' and v != '\x1B'}
-
-
-
-
-class keydefaultdict(collections.defaultdict):
-    '''
-    Default dict that passes missing keys to the factory function, rather than
-    calling the factory function with no arguments.
-    '''
-    def __missing__(self, k):
-        if self.default_factory is None:
-            raise KeyError(k)
-        else:
-            self[k] = self.default_factory(k)
-            return self[k]
 
 
 
@@ -253,7 +239,7 @@ class UnicodeFilter(object):
             # All escapes already in `escape_dict` are valid ASCII, since
             # `_escape_unicode_char()` gives hex escapes, and short escapes
             # must use printable ASCII characters
-            self.escape_dict = keydefaultdict(self._unicode_ord_to_escaped_ascii_factory, escape_dict)
+            self.escape_dict = tooling.keydefaultdict(self._unicode_ord_to_escaped_ascii_factory, escape_dict)
 
         # The bin dicts map ints to individual bytes or byte strings.
         # This looks the same as the Unicode case, but the usage is different
@@ -316,8 +302,8 @@ class UnicodeFilter(object):
         # Used for looking up backlash escapes found by `re.sub()`
         # Starts with all short escapes; the factory function adds additional
         # escapes as they are requested
-        self.unescape_dict = keydefaultdict(self._unicode_escaped_hex_to_char_factory, self.shortunescapes)
-        self.unescape_bin_dict = keydefaultdict(self._bin_escaped_hex_to_bytes_factory, self.shortunescapes_bin)
+        self.unescape_dict = tooling.keydefaultdict(self._unicode_escaped_hex_to_char_factory, self.shortunescapes)
+        self.unescape_bin_dict = tooling.keydefaultdict(self._bin_escaped_hex_to_bytes_factory, self.shortunescapes_bin)
 
 
         # Dict for tranlating Unicode newlines into a bytes-compatible form
@@ -326,10 +312,13 @@ class UnicodeFilter(object):
         self.unicode_to_bin_newlines_dict = {ord(c): '\n' for c in UNICODE_NEWLINE_CHARS if ord(c) >= 128}
 
 
-        # Dict for translating fullwidth versions of ASCII characters into
-        # normal (halfwidth) forms
+        # Dicts for translating fullwidth versions of ASCII characters into
+        # normal (halfwidth) forms, and vice versa
         offset = 0xFF01 - 0x21
-        self.fullwidth_to_halfwidth_ascii_dict = {n+offset: chr(n) for n in range(0x21, 0x7E+1)}
+        self.fullwidth_to_ascii_dict = {n+offset: chr(n) for n in range(0x21, 0x7E+1)}
+        self.fullwidth_to_ascii_dict[ord('\u3000')] = '\x20'
+        self.ascii_to_fullwidth_dict = {n: chr(n+offset) for n in range(0x21, 0x7E+1)}
+        self.ascii_to_fullwidth_dict[ord('\x20')] = '\u3000'
 
 
     @staticmethod
@@ -559,9 +548,17 @@ class UnicodeFilter(object):
         return s.translate(self.remove_whitespace_dict)
 
 
-    def fullwidth_to_halfwidth_ascii(self, s):
+    def fullwidth_to_ascii(self, s):
         '''
-        Translate all fullwidth ASCII equivalents into corresponding normal
-        (halfwidth) characters.
+        Translate all printable fullwidth ASCII equivalents (except for the
+        space) into corresponding ASCII (normal, halfwidth) characters.
         '''
-        return s.translate(self.fullwidth_to_halfwidth_ascii_dict)
+        return s.translate(self.fullwidth_to_ascii_dict)
+
+
+    def ascii_to_fullwidth(self, s):
+        '''
+        Translate all printable ASCII characters (except for the space) into
+        corresponding fullwidth characters.
+        '''
+        return s.translate(self.ascii_to_fullwidth_dict)
