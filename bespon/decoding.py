@@ -59,6 +59,7 @@ class AstObj(list):
                         or `kvpair` (key-value pair; what an object with
                         category `dict` must contain)
       +  compact      = Whether the object was opened in compact syntax.
+      +  indent       = Indentation of object.
       +  nodetype     = The type of the object, if the object is explicitly
                         typed via `(type)>` syntax.  Otherwise, type is
                         inherited from `cat`.
@@ -69,18 +70,17 @@ class AstObj(list):
                         providing line error information for instances that
                         were never closed.
     '''
-    __slots__ = ['cat', 'compact', 'nodetype', 'source', 'start_lineno']
-    def __init__(self, cat=None, compact=None, nodetype=None, source=None):
-        if cat is None or compact is None:
-            raise erring.ParseError('Collection object cannot be instantiated without category and syntax status', source)
+    __slots__ = ['cat', 'compact', 'indent', 'nodetype', 'source', 'start_lineno']
+    def __init__(self, cat, obj):
         self.cat = cat
-        self.compact = compact
-        self.nodetype = nodetype
-        self.source = source
-        if source is None:
+        self.compact = obj.compact
+        self.indent = obj.indent
+        self.nodetype = obj.next_type
+        self.source = obj.source
+        if self.source is None:
             self.start_lineno = None
         else:
-            self.start_lineno = source.start_lineno
+            self.start_lineno = self.source.start_lineno
         # Never instantiated with any contents
         list.__init__(self)
     def check_append(self, val):
@@ -98,16 +98,17 @@ class RootAstObj(AstObj):
     '''
     Root of AST.  May only contain a single object.
     '''
-    __slots__ = ['cat', 'compact', 'nodetype', 'source', 'start_lineno']
-    def __init__(self, source=None):
+    __slots__ = ['cat', 'compact', 'indent', 'nodetype', 'source', 'start_lineno']
+    def __init__(self, obj):
         self.cat = '(root)'
         self.compact = None
+        self.indent = None
         self.nodetype = '(root)'
-        self.source = source
-        if source is None:
+        self.source = obj.source
+        if self.source is None:
             self.start_lineno = None
         else:
-            self.start_lineno = source.start_lineno
+            self.start_lineno = self.source.start_lineno
         # Never instantiated with any contents
         list.__init__(self)
     def check_append(self, val):
@@ -401,7 +402,7 @@ class BespONDecoder(object):
         the root level, a BespON file may only contain a single scalar, or a
         single collection type.
         '''
-        self._ast = RootAstObj(source=self.source)
+        self._ast = RootAstObj(self)
         self._ast_pos = self._ast
         self._ast_pos_stack = []
         self._next_type = None
@@ -516,14 +517,18 @@ class BespONDecoder(object):
         # Regexes for identifying opening delimiters that may contains
         # multiple identical characters.  Treat ASCII and fullwidth
         # equivalents as identical.
-        def gen_opening_delim_regex(c):
-            c = self.unicodefilter.fullwidth_to_ascii(c)
-            p = '(?:{0}|{1})+'.format(c, self.unicodefilter.ascii_to_fullwidth(c))
+        def gen_opening_delim_regex(c, fullwidth_to_ascii=self.unicodefilter.fullwidth_to_ascii, ascii_to_fullwidth=self.unicodefilter.ascii_to_fullwidth):
+            c = fullwidth_to_ascii(c)
+            if c == '|':
+                p = '[{0}{1}](?:[{2}{3}]+|[{4}{5}]+)'.format(c, ascii_to_fullwidth(c), "'", ascii_to_fullwidth("'"), '"', ascii_to_fullwidth('"'))
+            else:
+                p = '[{0}{1}]+'.format(c, ascii_to_fullwidth(c))
             return re.compile(p)
         self._opening_delim_percent_re = gen_opening_delim_regex('%')
         self._opening_delim_single_quote_re = gen_opening_delim_regex("'")
         self._opening_delim_double_quote_re = gen_opening_delim_regex('"')
         self._opening_delim_equals_re = gen_opening_delim_regex('=')
+        self._opening_delim_pipe_re = gen_opening_delim_regex('|')
 
         # Dict of regex for identifying closing delimiters.  Automatically
         # generate needed regex on the fly.
@@ -531,9 +536,13 @@ class BespONDecoder(object):
             c = fullwidth_to_ascii(delim[0])
             cw = ascii_to_fullwidth(c)
             if c == '%':
-                p = '(?<!{0}|{1})(?:{0}|{1}){{{2}}}(?!{0}|{1})(?:/|\uFF0F)'.format(c, cw, len(delim))
+                p = '(?<![{0}{1}])[{0}{1}]{{{2}}}(?![{0}{1}])[/\uFF0F]'.format(c, cw, len(delim))
+            elif c == '|':
+                c_follow = fullwidth_to_ascii(delim[1])
+                cw_follow = ascii_to_fullwidth(c_follow)
+                p = '(?<![{0}{1}])[{0}{1}][{2}{3}]{{{4}}}[/\uFF0F]'.format(c, ascii_to_fullwidth(c), c_follow, cw_follow, len(delim)-1)
             else:
-                p = '(?<!{0}|{1})(?:{0}|{1}){{{2}}}(?!{0}|{1})(?:/|\uFF0F){{0,2}}'.format(c, cw, len(delim))
+                p = '(?<![{0}{1}])[{0}{1}]{{{2}}}(?![{0}{1}])[/\uFF0F]{{0,2}}'.format(c, cw, len(delim))
             return re.compile(p)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
@@ -575,6 +584,17 @@ class BespONDecoder(object):
             self.source.end_lineno = self.source.start_lineno + 1
         else:
             self.source.end_lineno += 1
+        return line
+
+
+    def _parse_line_at_next(self, line=None):
+        '''
+        Reset everything after `_parse_line_get_next()`, so that it's
+        equivalent to using `_parse_line_goto_next()`.  Useful when
+        `_parse_line_get_next()` is used for lookahead, but nothing is consumed.
+        '''
+        self.source.start_lineno = self.source.end_lineno
+        self._at_line_start = True
         return line
 
 
