@@ -141,6 +141,7 @@ def test__split_line_on_indent():
 
 def test_int_re():
     dc = mdl.BespONDecoder()
+    assert(dc._int_re.match('0'))
     assert(dc._int_re.match('1'))
     assert(dc._int_re.match('1234567890'))
     assert(dc._int_re.match('1_23456789_0'))
@@ -178,6 +179,8 @@ def test_int_re():
 
 def test_float_re():
     dc = mdl.BespONDecoder()
+    assert(dc._float_re.match('0.'))
+    assert(dc._float_re.match('.0'))
     assert(dc._float_re.match('0e0'))
     assert(dc._float_re.match('+0e0'))
     assert(dc._float_re.match('-0e0'))
@@ -234,3 +237,38 @@ def test_decode_basic():
 
     dc.decode('\xEF\xBB\xBF')
     assert(dc._ast == [])
+
+    dc.decode('%')
+    assert(dc._ast == [])
+    dc.decode('%\n')
+    assert(dc._ast == [])
+    dc.decode('%\n\n')
+    assert(dc._ast == [''])
+    dc.decode('%\n ')
+    assert(dc._ast == [''])
+
+    dc.decode('%\n%%% %%%/\n')
+    assert(dc._ast == [''])
+    dc.decode('%\n%%% %%%/')
+    assert(dc._ast == [''])
+
+    dc.decode('%\n%%%\n\n%%%/\n')
+    assert(dc._ast == [''])
+
+    dc.decode('(bin)>\n')
+    assert(dc._ast == [b''])
+
+    dc.decode('"a"\n')
+    assert(dc._ast == ["a"])
+
+    dc.decode('"a\nb"\n')
+    assert(dc._ast == ["a b"])
+
+    dc.decode('"""\na\nb\n"""/\n')
+    assert(dc._ast == ["a\nb\n"])
+
+    dc.decode('"""\na\nb\n"""//\n')
+    assert(dc._ast == ["a\nb"])
+
+    dc.decode(' """\n  a\n  b\n """//\n')
+    assert(dc._ast == [" a\n b"])

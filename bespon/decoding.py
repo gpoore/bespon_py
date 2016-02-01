@@ -124,7 +124,8 @@ class BespONDecoder(object):
 
     Works with Unicode strings or iterables containing Unicode strings.
     '''
-    def __init__(self, reserved_words=None, parsers=None, aliases=None, **kwargs):
+    def __init__(self, dict_parsers=None, list_parsers=None, string_parsers=None,
+                 reserved_words=None, aliases=None, **kwargs):
         # If a `Source()` instance is provided, enhanced tracebacks are
         # possible in some cases.  Start with default value.  An actual
         # instance is created at the beginning of decoding.
@@ -132,59 +133,83 @@ class BespONDecoder(object):
 
 
         # Basic type checking on arguments
-        arg_dicts = (reserved_words, parsers, aliases)
+        arg_dicts = (dict_parsers, list_parsers, string_parsers, reserved_words, aliases)
         if not all(x is None or isinstance(x, dict) for x in arg_dicts):
             raise TypeError('Arguments {0} must be dicts'.format(', '.join('"{0}"'.format(x) for x in arg_dicts)))
-        if parsers:
-            if not all(hasattr(v, '__call__') for k, v in parsers.items()):
-                raise TypeError('All parsers must be functions (callable)')
-            if any(k.lower() in ('bool', 'null', 'inf', '+inf', '-inf', 'nan') for k in parsers):
-                raise ValueError('Parsing of bool, null, inf, and nan is managed via "reserved_words"')
+        for d in arg_dicts:
+            if d:
+                if not all(hasattr(v, '__call__') for k, v in d.items()):
+                    raise TypeError('All parsers must be functions (callable)')
 
 
         # Defaults
+        self.default_dict_parsers = {'dict':  dict,
+                                     'odict': collections.OrderedDict,
+                                     None:    dict}
+
+        self.default_list_parsers = {'list':  list,
+                                     'set':   set,
+                                     'tuple': tuple,
+                                     None:    list}
+
+        self.default_string_parsers = {'int':        int,
+                                       'float':      float,
+                                       'str':        str,
+                                       'str.empty':  self.parse_str_empty,
+                                       'str.esc':    self.parse_str_esc,
+                                       'bin':        self.parse_bin,
+                                       'bin.empty':  self.parse_bin_empty,
+                                       'bin.esc':    self.parse_bin_esc,
+                                       'bin.base16': self.parse_bin_base16,
+                                       'bin.base64': self.parse_bin_base64,
+                                       None:         str}
+
         self.default_reserved_words = {'true': True, 'false': False, 'null': None,
                                        'inf': float('inf'), '-inf': float('-inf'), '+inf': float('+inf'),
                                        'nan': float('nan')}
-
-        self.default_parsers = {#Basic types
-                                'dict':        dict,
-                                'list':        list,
-                                'float':       float,
-                                'int':         int,
-                                'str':         self.parse_str,
-                                #Extended types
-                                'str.empty':   self.parse_str_empty,
-                                'str.esc':     self.parse_str_esc,
-                                #Optional types
-                                'bin':         self.parse_bin,
-                                'bin.empty':   self.parse_bin_empty,
-                                'bin.esc':     self.parse_bin_esc,
-                                'bin.base64':  self.parse_bin_base64,
-                                'bin.hex':     self.parse_bin_base16,
-                                'odict':       collections.OrderedDict,
-                                'set':         set,
-                                'tuple':       tuple,}
 
         self.default_aliases = {'esc': 'str.esc', 'bin.b64': 'bin.base64',
                                 'bin.b16': 'bin.base16', 'bin.hex': 'bin.base16'}
 
 
         # Create actual dicts that are used
+        self.dict_parsers = self.default_dict_parsers.copy()
+        if dict_parsers:
+            self.dict_parsers.update(dict_parsers)
+
+        self.list_parsers = self.default_list_parsers.copy()
+        if list_parsers:
+            self.list_parsers.update(list_parsers)
+
+        self.string_parsers = self.default_string_parsers.copy()
+        if string_parsers:
+            self.string_parsers.update(string_parsers)
+
+        self.parsers = {}
+        self.parsers.update(self.dict_parsers)
+        self.parsers.update(self.list_parsers)
+        self.parsers.update(self.string_parsers)
+
         self.reserved_words = self.default_reserved_words.copy()
         if reserved_words:
             self.reserved_words.update(reserved_words)
 
-        self.parsers = self.default_parsers.copy()
-        if parsers:
-            self.parsers.update(parsers)
-
         self.aliases = self.default_aliases.copy()
         if aliases:
+            self.aliases.update(aliases)
             for k, v in aliases.items():
-                if v not in self.parsers:
+                found = False
+                if v in self.dict_parsers:
+                    self.dict_parsers[k] = self.dict_parsers[v]
+                    found = True
+                if v in self.list_parsers:
+                    self.list_parsers[k] = self.list_parsers[v]
+                    found = True
+                if v in self.string_parsers:
+                    self.string_parsers[k] = self.string_parsers[v]
+                    found = True
+                if not found:
                     raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
-                self.parsers[k] = self.parsers[v]
 
 
         # Create a UnicodeFilter instance
@@ -380,8 +405,9 @@ class BespONDecoder(object):
         self._ast_pos = self._ast
         self._ast_pos_stack = []
         self._next_type = None
-        self._indent = ''
-        self._indent_stack = []
+        self._indent_level = ''
+        self._indent_level_stack = []
+        self._current_indent = ''
         self._in_compact = False
         self._in_compact_stack = []
 
@@ -390,7 +416,7 @@ class BespONDecoder(object):
         # had the BOM been removed before this stage.  Essentially, a file
         # will be treated as empty (producing no output) unless it contains
         # at least newlines.
-        line = self._parse_line_goto_next(None)
+        line = self._parse_line_goto_next()
         if line is not None:
             line = self._drop_bom(line)
             if not line:
@@ -468,10 +494,11 @@ class BespONDecoder(object):
                        '=':  self._parse_line_equals,
                        '+':  self._parse_line_plus,
                        ';':  self._parse_line_semicolon,
+                       '|':  self._parse_line_pipe
                       }
         for k, v in list(_parse_line.items()):
             _parse_line[self.unicodefilter.ascii_to_fullwidth(k)] = v
-        _parse_line[''] = self._parse_line_goto_next
+        _parse_line[''] = self._parse_line_whitespace
         for c in self.whitespace:
             _parse_line[c] = self._parse_line_whitespace
         self._parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string, _parse_line)
@@ -486,23 +513,27 @@ class BespONDecoder(object):
                         '''
         self._explicit_type_re = re.compile(pattern_type, re.VERBOSE | re.UNICODE)
 
-        # Dict of regex for identifying opening delimiters that may contains
+        # Regexes for identifying opening delimiters that may contains
         # multiple identical characters.  Treat ASCII and fullwidth
         # equivalents as identical.
         def gen_opening_delim_regex(c):
+            c = self.unicodefilter.fullwidth_to_ascii(c)
             p = '(?:{0}|{1})+'.format(c, self.unicodefilter.ascii_to_fullwidth(c))
             return re.compile(p)
-        opening_delim_re_dict = {c: gen_opening_delim_regex(c) for c in ('%', "'", '"', '=')}
-        for k, v in list(opening_delim_re_dict.items()):
-            opening_delim_re_dict[self.unicodefilter.ascii_to_fullwidth(k)] = v
-        self._opening_delim_re_dict = opening_delim_re_dict
+        self._opening_delim_percent_re = gen_opening_delim_regex('%')
+        self._opening_delim_single_quote_re = gen_opening_delim_regex("'")
+        self._opening_delim_double_quote_re = gen_opening_delim_regex('"')
+        self._opening_delim_equals_re = gen_opening_delim_regex('=')
 
         # Dict of regex for identifying closing delimiters.  Automatically
         # generate needed regex on the fly.
         def gen_closing_delim_regex(delim, fullwidth_to_ascii=self.unicodefilter.fullwidth_to_ascii, ascii_to_fullwidth=self.unicodefilter.ascii_to_fullwidth):
             c = fullwidth_to_ascii(delim[0])
             cw = ascii_to_fullwidth(c)
-            p = '(?:{0}|{1}){{{2}}}(?!{0}|{1})(?:/|\uFF0F){{0,2}}'.format(c, cw, len(delim))
+            if c == '%':
+                p = '(?<!{0}|{1})(?:{0}|{1}){{{2}}}(?!{0}|{1})(?:/|\uFF0F)'.format(c, cw, len(delim))
+            else:
+                p = '(?<!{0}|{1})(?:{0}|{1}){{{2}}}(?!{0}|{1})(?:/|\uFF0F){{0,2}}'.format(c, cw, len(delim))
             return re.compile(p)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
@@ -535,14 +566,22 @@ class BespONDecoder(object):
         self._float_re = re.compile(pattern_float, re.VERBOSE)
 
 
-    def _parse_line_get_next(self):
-        '''Get next line.  For use in lookahead in string scanning, etc.'''
+    def _parse_line_get_next(self, line=None):
+        '''
+        Get next line.  For use in lookahead in string scanning, etc.
+        '''
         line = next(self._line_gen, None)
-        self.source.end_lineno += 1
+        if self.source.end_lineno <= self.source.start_lineno:
+            self.source.end_lineno = self.source.start_lineno + 1
+        else:
+            self.source.end_lineno += 1
         return line
 
-    def _parse_line_goto_next(self, line):
-        '''Go to next line, after current parsing is complete.'''
+
+    def _parse_line_goto_next(self, line=None):
+        '''
+        Go to next line, after current parsing is complete.
+        '''
         line = next(self._line_gen, None)
         self.source.start_lineno += 1
         self._at_line_start = True
@@ -550,28 +589,61 @@ class BespONDecoder(object):
 
 
     def _parse_line_percent(self, line):
-        delim = self._opening_delim_re_dict['%'].match(line).group(0)
+        '''
+        Parse comments.
+        '''
+        delim = self._opening_delim_percent_re.match(line).group(0)
         if len(delim) < 3:
-            if len(delim) == 1:
+            if len(delim) == 1 and line[1:2] in ('!', '\uFF01'):
                 line_ascii = self.unicodefilter.fullwidth_to_ascii(line)
                 if line_ascii.startswith('%!bespon'):
                     if self.source.start_lineno != 1:
-                        raise erring.ParseError('Encountered "%!bespon", but not at start of text', self.source)
+                        raise erring.ParseError('Encountered "%!bespon", but not on first line', self.source)
+                    elif not self._at_line_start:
+                        raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.source)
                     elif line_ascii[len('%!bespon'):].rstrip(self.whitespace_str):
                         raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line_ascii.rstrip(self.newline_chars_str)), self.source)
                     else:
-                        line = self._parse_line_goto_next(line)
+                        line = self._parse_line_goto_next()
+                else:
+                    line = self._parse_line_goto_next()
             else:
-                line = self._parse_line_goto_next(line)
+                line = self._parse_line_goto_next()
         else:
-            pass
+            line = line[len(delim):]
+            self._at_line_start = False
+            end_delim_re = self._closing_delim_re_dict[delim]
+            m = end_delim_re.search(line)
+            while m is None:
+                line = self._parse_line_get_next()
+                if line is None:
+                    raise erring.ParseError('Never found end of multi-line comment', self.source)
+                m = end_delim_re.match(line)
+            line = line[m.end():]
+            self._at_line_start = False
         return line
 
+
     def _parse_line_open_paren(self, line):
-        pass
+        '''
+        Parse explicit typing.
+        '''
+        m = self._explicit_type_re.match(line)
+        if not m:
+            raise erring.ParseError('Could not parse explicit type declaration', self.source)
+        t = m.group(0)[1:-2]
+        if t not in self.parsers:
+            raise erring.ParseError('Unknown type declaration "{0}"'.format(m.group(0)), self.source)
+        self._next_type = t
+        return line[m.end():]
+
 
     def _parse_line_close_paren(self, line):
-        pass
+        '''
+        Parse line segment beginning with closing parenthesis.
+        '''
+        raise erring.ParseError('Unexpected closing parenthesis', self.source)
+
 
     def _parse_line_open_bracket(self, line):
         pass
@@ -586,10 +658,120 @@ class BespONDecoder(object):
         pass
 
     def _parse_line_single_quote(self, line):
-        pass
+        '''
+        Parse single-quoted string.
+        '''
+        delim = self._opening_delim_single_quote_re.match(line).group(0)
+        line = line[len(delim):]
+        end_delim_re = self._closing_delim_re_dict[delim]
+        return self._parse_line_quoted_string(line, delim, end_delim_re)
+
 
     def _parse_line_double_quote(self, line):
-        pass
+        '''
+        Parse double-quoted string.
+        '''
+        delim = self._opening_delim_double_quote_re.match(line).group(0)
+        line = line[len(delim):]
+        end_delim_re = self._closing_delim_re_dict[delim]
+        return self._parse_line_quoted_string(line, delim, end_delim_re)
+
+
+    def _parse_line_quoted_string(self, line, delim, end_delim_re):
+        '''
+        Parse a quoted string, once the opening delim has been determined
+        and stripped, and a regex for the closing delim has been assembled.
+        '''
+        m = end_delim_re.search(line)
+        if m:
+            end_delim = m.group(0)
+            if len(end_delim) > len(delim):
+                raise erring.ParseError('A block string may not begin and end on the same line', self.source)
+            s = line[:m.start()]
+            line = line[m.end()+1:]
+        else:
+            s_lines = [line]
+            if self._at_line_start:
+                indent = self._current_indent
+            else:
+                indent = self._indent_level
+            while True:
+                line = self._parse_line_get_next()
+                if line is None:
+                    raise erring.ParseError('Text ended while scanning quoted string', self.source)
+                if not line.startswith(indent) and line.lstrip(self.whitespace_str):
+                    raise erring.ParseError('Indentation error within quoted string', self.source)
+                m = end_delim_re.search(line)
+                if not m:
+                    s_lines.append(line)
+                else:
+                    end_delim = m.group(0)
+                    s_lines.append(line[:m.start()])
+                    line = line[m.end()+1:]
+                    s = self._process_quoted_string(s_lines, indent, delim, end_delim)
+                    break
+        try:
+            s = self.string_parsers[self._next_type](s)
+            self._next_type = None
+        except KeyError:
+            raise erring.ParseError('Invalid explicit type "{0}" applied to string'.format(self._next_type), self.source)
+        except Exception as e:
+            raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(self._next_type, e), self.source)
+        self._ast_pos.append(s)
+        return line
+
+
+    def _process_quoted_string(self, s_lines, indent, delim, end_delim):
+        '''
+        Process list of raw text lines that make up a quoted string.  All
+        delimiters have been stripped at this point.  The string wraps over
+        multiple lines if it is an inline string.
+        '''
+        if len(delim) == len(end_delim):
+            # Make sure indentation is consistent and there are no empty lines
+            if len(s_lines) > 2:
+                for line in s_lines[1:-1]:
+                    if not line.lstrip(self.whitespace_str):
+                        raise erring.ParseError('Inline strings cannot contain empty lines', self.source)
+                indent = s_lines[1][:len(s_lines[1].lstrip(self.indents_str))]
+                len_indent = len(indent)
+                for n, line in enumerate(s_lines[1:]):
+                    if not line.startswith(indent) or line[len_indent:len_indent+1] in self.whitespace:
+                        raise erring.ParseError('Inconsistent Indentation within inline string', self.source)
+                    s_lines[n+1] = line[len_indent:]
+            else:
+                s_lines[1] = s_lines[1].lstrip(self.indents_str)
+            # Unwrap
+            s = self._unwrap_inline(s_lines)
+            # Take care of any leading/trailing spaces that separate delimiter
+            # characters from identical characters in string.
+            s_strip_spaces = s.strip(self.spaces_str)
+            if self.unicodefilter.fullwidth_to_ascii(delim[0]) == self.unicodefilter.fullwidth_to_ascii(s_strip_spaces[0]):
+                s = s[1:]
+            if self.unicodefilter.fullwidth_to_ascii(end_delim[0]) == self.unicodefilter.fullwidth_to_ascii(s_strip_spaces[-1]):
+                s = s[:-1]
+        else:
+            if s_lines[0].lstrip(self.whitespace_str):
+                raise erring.ParseError('Characters are not allowed immediately after the opening delimiter of a block string', self.source)
+            if s_lines[-1].lstrip(self.indents_str):
+                raise erring.ParseError('Characters are not allowed immediately before the closing delimiter of a block string', self.source)
+            indent = s_lines[-1]
+            len_indent = len(indent)
+            if self._at_line_start and self._current_indent != indent:
+                raise erring.ParseError('Opening and closing delimiters for block string do not have matching indentation', self.source)
+            for n, line in enumerate(s_lines[1:-1]):
+                if line.startswith(indent):
+                    s_lines[n+1] = line[len_indent:]
+                else:
+                    if not line.lstrip(self.whitespace_str):
+                        s_lines[n+1] = line[len_indent:]
+                    else:
+                        raise erring.ParseError('Inconsistent indent in block string', self.source)
+            if len(delim) == len(end_delim) - 2:
+                s_lines[-2] = s_lines[-2].rstrip(self.newline_chars_str)
+            s = ''.join(s_lines[1:-1])
+        return s
+
 
     def _parse_line_equals(self, line):
         pass
@@ -600,10 +782,33 @@ class BespONDecoder(object):
     def _parse_line_semicolon(self, line):
         pass
 
-    def _parse_line_whitespace(self, line):
+    def _parse_line_pipe(self, line):
         pass
 
+    def _parse_line_whitespace(self, line):
+        '''
+        Parse line segment beginning with whitespace.
+        '''
+        if line.lstrip(self.whitespace_str):
+            self._current_indent, line = self._split_line_on_indent(line)
+        else:
+            while True:
+                line = self._parse_line_goto_next()
+                if line is None:
+                    if self._ast_pos == self._ast and not self._ast:
+                        try:
+                            self._ast_pos.append(self.string_parsers[self._next_type](''))
+                            self._next_type = None
+                        except KeyError:
+                            raise erring.ParseError('Invalid explicit type "{0}" applied to string'.format(self._next_type), self.source)
+                    break
+                elif line.lstrip(self.whitespace_str):
+                    self._current_indent, line = self._split_line_on_indent(line)
+                    break
+        return line
 
+    def _parse_line_unquoted_string(self, line):
+        pass
 
 
 

@@ -331,6 +331,8 @@ class UnicodeFilter(object):
         if n < 256:
             e = '\\x{0:02x}'.format(n)
         elif n < 65536:
+            if 0xD800 <= n <= 0xDFFF:
+                raise erring.UnicodeSurrogateError('\\u'+hex(n)[2:], self.source)
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -345,6 +347,8 @@ class UnicodeFilter(object):
         '''
         n = ord(c)
         if n < 65536:
+            if 0xD800 <= n <= 0xDFFF:
+                raise erring.UnicodeSurrogateError('\\u'+hex(n)[2:], self.source)
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -378,9 +382,11 @@ class UnicodeFilter(object):
         (2-letter) escape sequences have already been filtered out.  Any
         remaining short escapes `\\<char>` at this point are unrecognized.
         '''
-        # Consider special treatment of surrogates 0xd800 to 0xdfff?
         try:
-            v = chr(int(s[2:], 16))
+            n = int(s[2:], 16)
+            if 0xD800 <= n <= 0xDFFF:
+                raise erring.UnicodeSurrogateError(s, self.source)
+            v = chr(n)
         except ValueError:
             # Need to make sure we have the pattern
             # `\\<spaces or ideographic spaces><newline>`

@@ -63,6 +63,18 @@ class UnknownEscapeError(BespONException):
         return self.source_traceback(msg, self.source)
 
 
+class UnicodeSurrogateError(BespONException):
+    '''
+    Unicode surrogate code point.
+    '''
+    def __init__(self, esc_sequence, source=None):
+        self.esc_sequence = esc_sequence
+        self.source = source
+    def __str__(self):
+        msg = 'Unicode surrogate code points are not allowed: "{0}"'.format(self.esc_sequence)
+        return self.source_traceback(msg, self.source)
+
+
 class BinaryError(BespONException):
     '''
     Base class for binary exceptions.
