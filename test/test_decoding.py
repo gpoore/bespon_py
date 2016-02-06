@@ -272,3 +272,13 @@ def test_decode_basic():
 
     dc.decode(' """\n  a\n  b\n """//\n')
     assert(dc._ast == [" a\n b"])
+
+    dc.decode('(dict)>\n')
+    assert(dc._ast == [[]])
+    dc.decode('(list)>\n')
+    assert(dc._ast == [[]])
+
+    dc.decode('"a"="b"')
+    assert(dc._ast == [[['a', 'b']]])
+    dc.decode('"a"="b"\n"c"="d"\n')
+    assert(dc._ast == [[['a', 'b'], ['c', 'd']]])
