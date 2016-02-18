@@ -116,7 +116,7 @@ class ParseError(BespONException):
     '''
     Error during parsing
     '''
-    def __init__(self, msg, source=None):
+    def __init__(self, msg, source):
         self.msg = msg
         self.source = source
     def __str__(self):

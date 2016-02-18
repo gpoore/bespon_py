@@ -75,13 +75,18 @@ import bespon.erring as err
 
 import pytest
 import unicodedata
-
+import re
 
 
 if not NARROW_BUILD:
-    unicode_cc = set([chr(n) for n in range(0, 0x10FFFF+1) if unicodedata.category(chr(n)) == 'Cc'])
+    MAX_CODE_POINT = 0x10FFFF+1
 else:
-    unicode_cc = set([chr(n) for n in range(0, 0x10000) if unicodedata.category(chr(n)) == 'Cc'])
+    MAX_CODE_POINT = 0x10000
+unicode_whitespace_re = re.compile('\s', re.UNICODE)
+unicode_cc = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(chr(n)) == 'Cc'])
+# Python's `re` package matches `\s` to the separator control characters; `regex` doesn't
+# U+180E (Mongolian Vowel Separator) isn't whitespace in Unicode 8.0, but was in Unicode in 4.0-6.3 apparently, which applies to Python 2.7's `re`
+unicode_whitespace = set([chr(n) for n in range(MAX_CODE_POINT) if unicode_whitespace_re.match(chr(n)) and n not in range(0x1C, 0x1F+1) and n != 0x180e])
 
 
 def test_string_constants():
@@ -98,7 +103,14 @@ def test_string_constants():
 
     assert(len(mdl.BESPON_DEFAULT_CC_LITERALS) == 3)
 
-    assert(len(mdl.BESPON_DEFAULT_NONLITERALS) == 65-3+2)
+    # Cc minus `\t`, `\r`, `\n`; plus newlines `\u2028` and `\u2029` (other
+    # newlines covered in Cc); plus bidi overrides
+    assert(len(mdl.BESPON_DEFAULT_NONLITERALS) == (65-3) + (7-3-2) + 2)
+
+    assert(len(mdl.UNICODE_ZS) == 17)
+    assert(len(mdl.UNICODE_WHITESPACE) == 17 + 7 + 1)
+    assert(len(mdl.UNICODE_WHITESPACE) == 25)  # Unicode 8.0
+    assert(mdl.UNICODE_WHITESPACE == unicode_whitespace)
 
     assert(len(mdl.BESPON_INDENTS) == 3)
     assert(len(mdl.BESPON_SPACES) == 2)
@@ -219,6 +231,8 @@ def test_UnicodeFilter_public_methods():
     fwhw = [('！', '!'), ('～', '~'), ('ａ', 'a'), ('Ａ', 'A'), ('＊', '*'), ('１', '1'), ('\u3000', '\x20')]
     assert(all(uf.fullwidth_to_ascii(fw) == hw for fw, hw in fwhw))
     assert(all(uf.ascii_to_fullwidth(hw) == fw for fw, hw in fwhw))
+    assert(all(uf.to_ascii_and_fullwidth(hw) == hw+fw for fw, hw in fwhw))
+    assert(all(uf.to_ascii_and_fullwidth(fw) == hw+fw for fw, hw in fwhw))
 
 
 def test_UnicodeFilter_errors():

@@ -56,8 +56,33 @@ UNICODE_CC = set(chr(c) for c in list(range(0x0000, 0x001F+1)) + [0x007F] + list
 BESPON_DEFAULT_CC_LITERALS = set(['\t', '\n', '\r'])
 
 
+# Bidi override characters can be a security concern in general, and are not
+# appropriate in a human-friendly, text-based format
+# Unicode Technical Report #36, UNICODE SECURITY CONSIDERATIONS
+# http://unicode.org/reports/tr36/
+UNICODE_BIDI_OVERRIDES = set(['\u202D', '\u202E'])
+
 # Default code points not allowed as literals
-BESPON_DEFAULT_NONLITERALS = (UNICODE_CC - BESPON_DEFAULT_CC_LITERALS) | (UNICODE_NEWLINES - BESPON_DEFAULT_NEWLINES)
+BESPON_DEFAULT_NONLITERALS = (UNICODE_CC - BESPON_DEFAULT_CC_LITERALS) | (UNICODE_NEWLINES - BESPON_DEFAULT_NEWLINES) | UNICODE_BIDI_OVERRIDES
+
+
+# Code points with Unicode category "Separator, Space" (Zs)
+# http://www.fileformat.info/info/unicode/category/Zs/index.htm
+UNICODE_ZS = set(['\x20',   '\xa0',   '\u1680', '\u2000', '\u2001', '\u2002',
+                  '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008',
+                  '\u2009', '\u200a', '\u202f', '\u205f', '\u3000'])
+
+
+# Unicode whitespace, equivalent to Unicode regex `\s`
+UNICODE_WHITESPACE = UNICODE_ZS | UNICODE_NEWLINE_CHARS | set('\t')
+
+
+# A few extra characters not in Zs, but that can look like spaces in many fonts.
+# These don't get any special handling by default, but it could be convenient
+# to treat them specially in some contexts.  Currently, this is just the
+# Hangul fillers.  They are valid in identifier names in some programming
+# languages.
+UNICODE_WHITESPACE_VISUALLY_CONFUSABLE = set(['\u115F', '\u1160', '\u3164', '\uFFA0'])
 
 
 BESPON_INDENTS = set(['\x20', '\t', '\u3000'])
@@ -168,6 +193,8 @@ class UnicodeFilter(object):
         self.whitespace = self.indents | self.newline_chars | self.spaces
         self.whitespace_str = ''.join(self.whitespace)
         self.remove_whitespace_dict = {ord(c): None for c in self.whitespace}
+        self.unicode_whitespace = UNICODE_WHITESPACE
+        self.unicode_whitespace_str = ''.join(self.unicode_whitespace)
 
 
         # Dicts that map code points to their escaped versions, and vice versa
@@ -568,3 +595,12 @@ class UnicodeFilter(object):
         corresponding fullwidth characters.
         '''
         return s.translate(self.ascii_to_fullwidth_dict)
+
+
+    def to_ascii_and_fullwidth(self, s):
+        '''
+        Create a string containing all characters in the original string,
+        plus their corresponding fullwidth forms.
+        '''
+        s = s.translate(self.fullwidth_to_ascii_dict)
+        return s + s.translate(self.ascii_to_fullwidth_dict)

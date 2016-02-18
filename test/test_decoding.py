@@ -229,30 +229,34 @@ def test_float_re():
 
 
 
-def test_decode_basic():
+def test_decode_raw_ast():
     dc = mdl.BespONDecoder()
+    dc._debug_raw_ast = True
 
-    dc.decode('')
-    assert(dc._ast == [])
+    with pytest.raises(err.ParseError):
+        dc.decode('')
+    with pytest.raises(err.ParseError):
+        dc.decode('\xEF\xBB\xBF')
+    with pytest.raises(err.ParseError):
+        dc.decode('%')
+    with pytest.raises(err.ParseError):
+        dc.decode('%\n')
+    with pytest.raises(err.ParseError):
+        dc.decode(' %\n')
 
-    dc.decode('\xEF\xBB\xBF')
-    assert(dc._ast == [])
-
-    dc.decode('%')
-    assert(dc._ast == [])
-    dc.decode('%\n')
-    assert(dc._ast == [])
     dc.decode('%\n\n')
     assert(dc._ast == [''])
     dc.decode('%\n ')
     assert(dc._ast == [''])
 
-    dc.decode('%\n%%% %%%/\n')
-    assert(dc._ast == [''])
-    dc.decode('%\n%%% %%%/')
-    assert(dc._ast == [''])
+    with pytest.raises(err.ParseError):
+        dc.decode('%\n%%% %%%/\n')
+    with pytest.raises(err.ParseError):
+        dc.decode('%\n%%% %%%/')
+    with pytest.raises(err.ParseError):
+        dc.decode('%\n%%%\n\n%%%/\n')
 
-    dc.decode('%\n%%%\n\n%%%/\n')
+    dc.decode('%\n%%%\n\n%%%/\n\n')
     assert(dc._ast == [''])
 
     dc.decode('(bin)>\n')
@@ -282,3 +286,44 @@ def test_decode_basic():
     assert(dc._ast == [[['a', 'b']]])
     dc.decode('"a"="b"\n"c"="d"\n')
     assert(dc._ast == [[['a', 'b'], ['c', 'd']]])
+    dc.decode('"a"=\n "b"=\n  "c"="d"\n')
+    assert(dc._ast == [ [['a', [['b', [['c', 'd']] ]] ]] ])
+
+    dc.decode(' """\n  ab\n  cd\n """/ = "efg" ')
+    assert(dc._ast == [ [[' ab\n cd\n', 'efg']] ])
+
+    dc.decode('(str.empty)> = "a"')
+    assert(dc._ast == [ [['', 'a']] ])
+    dc.decode('(bin.empty)> = "a"')
+    assert(dc._ast == [ [[b'', 'a']] ])
+
+    dc.decode('+ "a"\n+ "b"')
+    assert(dc._ast == [ ['a', 'b'] ])
+    dc.decode('+\n  + "a"')
+    assert(dc._ast == [ [ ['a'] ] ])
+
+    dc.decode('+ \n+ ')
+    assert(dc._ast == [ ['', ''] ])
+    dc.decode('=\n=')
+    assert(dc._ast == [ [['', ''], ['', '']] ])
+
+    dc.decode('"a"=\n "b"="c"\n"d"="e"')
+    assert(dc._ast == [ [ ['a', [['b', 'c']] ], ['d', 'e'] ] ])
+
+    with pytest.raises(err.ParseError):
+        dc.decode('"a"="b"\n "c"="d"')
+    with pytest.raises(err.ParseError):
+        dc.decode('+ "a"\n + "b"')
+
+
+
+
+def test_decode_indentation_syntax():
+    dc = mdl.BespONDecoder()
+
+    assert(dc.decode('"a"="b"') == {'a': 'b'})
+    assert(dc.decode('"a"=\n "b"=\n  "c"="d"') == {'a': {'b': {'c': 'd'} } })
+    assert(dc.decode('+ "a"\n+ "b"') == ['a', 'b'])
+    assert(dc.decode('+\n  + "a"\n  + "b"') == [['a', 'b']])
+
+    assert(dc.decode('a=b') == {'a': 'b'})
