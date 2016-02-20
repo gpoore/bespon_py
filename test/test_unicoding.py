@@ -97,23 +97,23 @@ def test_string_constants():
     assert(len(mdl.UNICODE_NEWLINES) == 8)
     assert(len(mdl.UNICODE_NEWLINE_CHARS) == 7)
 
-    assert(len(mdl.BESPON_DEFAULT_NEWLINES) == 3)
+    assert(len(mdl.BESPON_NEWLINES) == 3)
 
     assert(mdl.UNICODE_CC == unicode_cc)
 
-    assert(len(mdl.BESPON_DEFAULT_CC_LITERALS) == 3)
+    assert(len(mdl.BESPON_CC_LITERALS) == 3)
 
     # Cc minus `\t`, `\r`, `\n`; plus newlines `\u2028` and `\u2029` (other
     # newlines covered in Cc); plus bidi overrides
-    assert(len(mdl.BESPON_DEFAULT_NONLITERALS) == (65-3) + (7-3-2) + 2)
+    assert(len(mdl.BESPON_NONLITERALS) == (65-3) + (7-3-2) + 2)
 
     assert(len(mdl.UNICODE_ZS) == 17)
     assert(len(mdl.UNICODE_WHITESPACE) == 17 + 7 + 1)
     assert(len(mdl.UNICODE_WHITESPACE) == 25)  # Unicode 8.0
     assert(mdl.UNICODE_WHITESPACE == unicode_whitespace)
 
-    assert(len(mdl.BESPON_INDENTS) == 3)
-    assert(len(mdl.BESPON_SPACES) == 2)
+    assert(len(mdl.BESPON_INDENTS) == 2)
+    assert(len(mdl.BESPON_SPACES) == 1)
 
     assert(len(mdl.BESPON_SHORT_UNESCAPES)-2 == len(mdl.BESPON_SHORT_ESCAPES))
     assert(all(k.startswith('\\') and len(k) == 2 and ord(k[1]) < 128 for k in mdl.BESPON_SHORT_UNESCAPES))
@@ -144,17 +144,17 @@ def test_UnicodeFilter_defaults():
     # keydefaultdicts, so any assertions about their lengths must be made
     # before they are ever used; using the dicts will add elements
     uf = mdl.UnicodeFilter()
-    assert(uf.nonliterals == mdl.BESPON_DEFAULT_NONLITERALS)
+    assert(uf.nonliterals == mdl.BESPON_NONLITERALS)
     assert('\r\n' not in uf.nonliterals)
 
-    assert(uf.newlines == mdl.BESPON_DEFAULT_NEWLINES)
-    assert(uf.newline_chars == set(''.join(mdl.BESPON_DEFAULT_NEWLINES)))
-    assert(len(uf.newline_chars) == len(mdl.BESPON_DEFAULT_NEWLINES) - 1)
+    assert(uf.newlines == mdl.BESPON_NEWLINES)
+    assert(uf.newline_chars == set(''.join(mdl.BESPON_NEWLINES)))
+    assert(len(uf.newline_chars) == len(mdl.BESPON_NEWLINES) - 1)
     assert(len(uf.newline_chars_str) == len(uf.newline_chars) and all(x in uf.newline_chars for x in uf.newline_chars_str))
 
-    assert(len(uf.filter_nonliterals_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS))
-    assert(len(uf.filter_literalslessnewlines_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])))
-    assert(set(''.join(unicode_cc).translate(uf.filter_nonliterals_dict)) == mdl.BESPON_DEFAULT_CC_LITERALS)
+    assert(len(uf.filter_nonliterals_dict) == len(mdl.BESPON_NONLITERALS))
+    assert(len(uf.filter_literalslessnewlines_dict) == len(mdl.BESPON_NONLITERALS) + len(mdl.BESPON_NEWLINES-set(['\r\n'])))
+    assert(set(''.join(unicode_cc).translate(uf.filter_nonliterals_dict)) == mdl.BESPON_CC_LITERALS)
     assert(set(''.join(unicode_cc).translate(uf.filter_literalslessnewlines_dict)) == unicode_cc - set('\t'))
 
     assert(uf.shortescapes == mdl.BESPON_SHORT_ESCAPES)
@@ -162,8 +162,8 @@ def test_UnicodeFilter_defaults():
     # make sure defaults don't trigger any errors during sanity checks for escapes
     uf_custom = mdl.UnicodeFilter(shortescapes=mdl.BESPON_SHORT_ESCAPES, shortunescapes=mdl.BESPON_SHORT_UNESCAPES)
 
-    assert(len(uf.escape_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + 1)  # All nonliterals + backlash
-    assert(len(uf.escape_to_inline_dict) == len(mdl.BESPON_DEFAULT_NONLITERALS) + len(mdl.BESPON_DEFAULT_NEWLINES-set(['\r\n'])) + 2)  # Nonliterals, slash, tab
+    assert(len(uf.escape_dict) == len(mdl.BESPON_NONLITERALS) + 1)  # All nonliterals + backlash
+    assert(len(uf.escape_to_inline_dict) == len(mdl.BESPON_NONLITERALS) + len(mdl.BESPON_NEWLINES-set(['\r\n'])) + 2)  # Nonliterals, slash, tab
     assert(len(uf.unescape_dict) == len(mdl.BESPON_SHORT_UNESCAPES))
 
 
