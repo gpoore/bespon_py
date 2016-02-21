@@ -103,9 +103,14 @@ def test_string_constants():
 
     assert(len(mdl.BESPON_CC_LITERALS) == 3)
 
+    assert(len(mdl.UNICODE_BIDI_OVERRIDES) == 2)
+
+    assert(len(mdl.UNICODE_SURROGATES) == 2048)
+
     # Cc minus `\t`, `\r`, `\n`; plus newlines `\u2028` and `\u2029` (other
-    # newlines covered in Cc); plus bidi overrides
-    assert(len(mdl.BESPON_NONLITERALS) == (65-3) + (7-3-2) + 2)
+    # newlines covered in Cc); plus bidi overrides and surrogates
+    assert(len(mdl.BESPON_NONLITERALS_LESS_SURROGATES) == (65-3) + (7-3-2) + 2)
+    assert(len(mdl.BESPON_NONLITERALS) == (65-3) + (7-3-2) + 2 + 2048)
 
     assert(len(mdl.UNICODE_ZS) == 17)
     assert(len(mdl.UNICODE_WHITESPACE) == 17 + 7 + 1)
@@ -116,8 +121,7 @@ def test_string_constants():
     assert(len(mdl.BESPON_SPACES) == 1)
 
     assert(len(mdl.BESPON_SHORT_UNESCAPES)-2 == len(mdl.BESPON_SHORT_ESCAPES))
-    assert(all(k.startswith('\\') and len(k) == 2 and ord(k[1]) < 128 for k in mdl.BESPON_SHORT_UNESCAPES))
-    assert(all(len(k) == 1 for k in mdl.BESPON_SHORT_ESCAPES))
+    assert(all(k.startswith('\\') and len(k) == 2 and 0x21 <= ord(k[1]) < 0x7E and ord(v) < 128 for k, v in mdl.BESPON_SHORT_UNESCAPES.items()))
 
 
 def test_NonliteralTrace():
@@ -152,39 +156,36 @@ def test_UnicodeFilter_defaults():
     assert(len(uf.newline_chars) == len(mdl.BESPON_NEWLINES) - 1)
     assert(len(uf.newline_chars_str) == len(uf.newline_chars) and all(x in uf.newline_chars for x in uf.newline_chars_str))
 
-    assert(len(uf.filter_nonliterals_dict) == len(mdl.BESPON_NONLITERALS))
-    assert(len(uf.filter_literalslessnewlines_dict) == len(mdl.BESPON_NONLITERALS) + len(mdl.BESPON_NEWLINES-set(['\r\n'])))
-    assert(set(''.join(unicode_cc).translate(uf.filter_nonliterals_dict)) == mdl.BESPON_CC_LITERALS)
-    assert(set(''.join(unicode_cc).translate(uf.filter_literalslessnewlines_dict)) == unicode_cc - set('\t'))
-
-    assert(uf.shortescapes == mdl.BESPON_SHORT_ESCAPES)
-    assert(uf.shortunescapes == mdl.BESPON_SHORT_UNESCAPES)
+    assert(uf.short_escapes == mdl.BESPON_SHORT_ESCAPES)
+    assert(uf.short_unescapes == mdl.BESPON_SHORT_UNESCAPES)
     # make sure defaults don't trigger any errors during sanity checks for escapes
-    uf_custom = mdl.UnicodeFilter(shortescapes=mdl.BESPON_SHORT_ESCAPES, shortunescapes=mdl.BESPON_SHORT_UNESCAPES)
-
-    assert(len(uf.escape_dict) == len(mdl.BESPON_NONLITERALS) + 1)  # All nonliterals + backlash
-    assert(len(uf.escape_to_inline_dict) == len(mdl.BESPON_NONLITERALS) + len(mdl.BESPON_NEWLINES-set(['\r\n'])) + 2)  # Nonliterals, slash, tab
-    assert(len(uf.unescape_dict) == len(mdl.BESPON_SHORT_UNESCAPES))
+    uf_custom = mdl.UnicodeFilter(short_escapes=mdl.BESPON_SHORT_ESCAPES, short_unescapes=mdl.BESPON_SHORT_UNESCAPES)
 
 
 def test_UnicodeFilter_private_methods():
     uf = mdl.UnicodeFilter()
-    xtest_sequence = [('\x01', '\\x01'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
-    utest_sequence = [('\u0001', '\\u0001'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
+    brace_test_sequence = [('\x01', '\\u{1}'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}')]
+    xbrace_test_sequence = [('\x01', '\\x01'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}')]
+    xuU_test_sequence = [('\x01', '\\x01'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
+    uU_test_sequence = [('\u0001', '\\u0001'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
     if NARROW_BUILD:
-        xtest_sequence = xtest_sequence[:-1]
-        utest_sequence = utest_sequence[:-1]
-    assert(all(uf._escape_unicode_char(c) == e for c, e in xtest_sequence))
-    assert(all(uf._escape_unicode_char_xuU(c) == e for c, e in xtest_sequence))
-    assert(all(uf._escape_unicode_char_uU(c) == e for c, e in utest_sequence))
-    assert(all(chr(n) == uf._unicode_ord_to_escaped_ascii_factory(n) for n in range(0, 512) if n < 128))
-    assert(all(uf._escape_unicode_char(chr(n)) == uf._unicode_ord_to_escaped_ascii_factory(n) for n in range(0, 512) if n >= 128))
-    assert(all(uf._unicode_escaped_hex_to_char_factory(e) == c for c, e in xtest_sequence))
-    assert(all(uf._bin_escaped_hex_to_bytes_factory(e) == c for c, e in [(b'\x01', b'\\x01'), (b'\xaf', b'\\xaf'), (b'\x13', b'\\x13')]))
+        brace_test_sequence = brace_test_sequence[:-1]
+        xbrace_test_sequence = xbrace_test_sequence[:-1]
+        xuU_test_sequence = xuU_test_sequence[:-1]
+        uU_test_sequence = uU_test_sequence[:-1]
+    assert(all(uf._escape_unicode_char(c) == e for c, e in xbrace_test_sequence))
+    assert(all(uf._escape_unicode_char_ubrace(c) == e for c, e in brace_test_sequence))
+    assert(all(uf._escape_unicode_char_xubrace(c) == e for c, e in xbrace_test_sequence))
+    assert(all(uf._escape_unicode_char_xuU(c) == e for c, e in xuU_test_sequence))
+    assert(all(uf._escape_unicode_char_uU(c) == e for c, e in uU_test_sequence))
+    assert(all(chr(n) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n < 128))
+    assert(all(uf._escape_unicode_char(chr(n)) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n >= 128))
+    assert(all(uf._unicode_escaped_hex_to_char_factory(e) == c for c, e in xbrace_test_sequence))
+    assert(all(uf._latin1_bin_escaped_hex_to_char_factory(e.decode('latin1')).encode('latin1') == c for c, e in [(b'\x01', b'\\x01'), (b'\xaf', b'\\xaf'), (b'\x13', b'\\x13')]))
 
 
 def test_UnicodeFilter_public_methods():
-    uf = mdl.UnicodeFilter()
+    uf = mdl.UnicodeFilter(brace_escapes=False)
     if not NARROW_BUILD:
         s_raw = '\\ \'\"\a\b\x1b\f\n\r\t\v/\u2028\u2029\u0101\U00100101'
         s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\u2028\\u2029\u0101\U00100101'
@@ -193,8 +194,9 @@ def test_UnicodeFilter_public_methods():
         s_raw = '\\ \'\"\a\b\x1b\f\n\r\t\v/\u2028\u2029\u0101'
         s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\u2028\\u2029\u0101'
         s_esc_inline = '\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\u2028\\u2029\u0101'
+    assert(uf.escape('\\') == '\\\\')
     assert(uf.escape(s_raw) == s_esc)
-    assert(uf.escape_to_inline(s_raw) == s_esc_inline)
+    assert(uf.escape(s_raw, inline=True) == s_esc_inline)
     assert(uf.unescape(s_esc) == s_raw)
     assert(uf.unescape(s_esc_inline) == s_raw)
     assert(all(uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals))
@@ -202,16 +204,13 @@ def test_UnicodeFilter_public_methods():
 
     assert(all(uf.unescape('\\'+eol) == '' for eol in uf.newlines))
     assert(all(uf.unescape('\\ '+eol) == '' for eol in uf.newlines))
-    assert(all(uf.unescape('\\\u3000'+eol) == '' for eol in uf.newlines))
-    assert(all(uf.unescape('\\ \u3000 \u3000'+eol) == '' for eol in uf.newlines))
 
     b_raw = b'\\ \'\"\a\b\x1b\f\n\r\t\v/\x13\xaf\xff'
     b_esc = b'\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\x13\\xaf\\xff'
     b_esc_inline = b'\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\x13\\xaf\\xff'
-    assert(uf.unescape_bin(b_esc) == b_raw)
-    assert(uf.unescape_bin(b_esc_inline) == b_raw)
-    assert(uf.escape_bin(b_raw) == b_esc)
-    assert(uf.escape_to_inline_bin(b_raw) == b_esc_inline)
+    assert(uf.unescape_latin1_bin(b_esc.decode('latin1')).encode('latin1') == b_raw)
+    assert(uf.unescape_latin1_bin(b_esc_inline.decode('latin1')).encode('latin1') == b_raw)
+    assert(uf.escape_latin1_bin(b_raw.decode('latin1')).encode('latin1') == b_esc)
 
     s_with_nonliterals = '''\
     literals
@@ -225,14 +224,6 @@ def test_UnicodeFilter_public_methods():
     assert(uf.trace_nonliterals(s_with_nonliterals) == trace)
 
     uf = mdl.UnicodeFilter(literals='\u0085\u2028\u2029')
-    assert(uf.unicode_to_bin_newlines('\r\r\n\n\u0085\u2028\u2029\v\f') == '\r\r\n\n\n\n\n\v\f')
-    assert(uf.remove_whitespace('\x20\u3000\t\r\n') == '')
-
-    fwhw = [('！', '!'), ('～', '~'), ('ａ', 'a'), ('Ａ', 'A'), ('＊', '*'), ('１', '1'), ('\u3000', '\x20')]
-    assert(all(uf.fullwidth_to_ascii(fw) == hw for fw, hw in fwhw))
-    assert(all(uf.ascii_to_fullwidth(hw) == fw for fw, hw in fwhw))
-    assert(all(uf.to_ascii_and_fullwidth(hw) == hw+fw for fw, hw in fwhw))
-    assert(all(uf.to_ascii_and_fullwidth(fw) == hw+fw for fw, hw in fwhw))
 
 
 def test_UnicodeFilter_errors():
@@ -251,25 +242,23 @@ def test_UnicodeFilter_errors():
         uf = mdl.UnicodeFilter(nonliterals=[' '])
     with pytest.raises(err.ConfigError):
         uf = mdl.UnicodeFilter(nonliterals=['\t'])
-    with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(nonliterals=['\u3000'])
 
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortescapes={'\\': '\\\\', '\\a': 'ab'})
+        uf = mdl.UnicodeFilter(short_escapes={'\\': '\\\\', '\\a': 'ab'})
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortescapes={'\a': '\\a'})
+        uf = mdl.UnicodeFilter(short_escapes={'\a': '\\a'})
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortescapes={'\\': '\\\\', 'a': '\\\xff'})
+        uf = mdl.UnicodeFilter(short_escapes={'\\': '\\\\', 'a': '\\\xff'})
 
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortunescapes={'\\a': '\a'})
+        uf = mdl.UnicodeFilter(short_unescapes={'\\a': '\a'})
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', '\\\xff': 'a'})
+        uf = mdl.UnicodeFilter(short_unescapes={'\\\\': '\\', '\\\xff': 'a'})
     with pytest.raises(err.ConfigError):
-        uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', '\\a': 'aa'})
+        uf = mdl.UnicodeFilter(short_unescapes={'\\\\': '\\', '\\a': 'aa'})
     for esc in ('\\x', '\\X', '\\u', '\\U', '\\o', '\\O'):
         with pytest.raises(err.ConfigError):
-            uf = mdl.UnicodeFilter(shortunescapes={'\\\\': '\\', esc: 'a'})
+            uf = mdl.UnicodeFilter(short_unescapes={'\\\\': '\\', esc: 'a'})
 
     for esc in mdl.BESPON_SHORT_UNESCAPES:
         with pytest.raises(err.UnknownEscapeError):
