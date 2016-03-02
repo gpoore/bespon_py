@@ -59,8 +59,8 @@ class AstObj(list):
                         `dict` (dict-like; dict, ordered dict, or other
                         mapping), or `kvpair` (key-value pair; what an object
                         with category `dict` must contain).
-      +  compact      = Whether the object was opened in compact syntax.
       +  indent       = Indentation of object.
+      +  inline      = Whether the object was opened in inline syntax.
       +  nodetype     = The type of the object, if the object is explicitly
                         typed via `(type)>` syntax.  Otherwise, type is
                         inherited from `cat`.
@@ -69,7 +69,7 @@ class AstObj(list):
                         providing line error information for instances that
                         were never closed.
     '''
-    __slots__ = ['ast', 'cat', 'check_append', 'compact', 'indent', 'index', 'nodetype', 'open', 'parent', 'start_lineno']
+    __slots__ = ['ast', 'cat', 'check_append', 'indent', 'inline', 'index', 'nodetype', 'open', 'parent', 'start_lineno']
 
     def __init__(self, cat, decoder, ast=None):
         # `decoder._ast` doesn't exist yet when creating root
@@ -79,7 +79,7 @@ class AstObj(list):
             self.ast = ast
         self.cat = cat
         if cat != 'root':
-            self.compact = decoder._compact
+            self.inline = decoder._inline
             self.indent = decoder._indent
             self.index = len(self.ast.pos)
             self.nodetype = decoder._next_type
@@ -87,7 +87,7 @@ class AstObj(list):
             self.parent = self.ast.pos
             self.start_lineno = decoder.source.start_lineno
         else:
-            self.compact = None
+            self.inline = None
             self.indent = None
             self.index = None
             self.nodetype = 'root'
@@ -234,7 +234,7 @@ class BespONDecoder(object):
         # instance is created at the beginning of decoding.
         self.source = None
 
-        # Whether to keep raw Abstract Syntax Tree for debugging, or go ahead
+        # Whether to keep raw abstract syntax tree for debugging, or go ahead
         # and convert it into full Python objects
         self._debug_raw_ast = False
 
@@ -250,32 +250,28 @@ class BespONDecoder(object):
 
         # Defaults
         self.default_dict_parsers = {'dict':  dict,
-                                     'odict': collections.OrderedDict,
-                                     None:    dict}
+                                     'odict': collections.OrderedDict}
 
         self.default_list_parsers = {'list':  list,
                                      'set':   set,
-                                     'tuple': tuple,
-                                     None:    list}
+                                     'tuple': tuple}
 
         self.default_string_parsers = {'int':        int,
                                        'float':      float,
                                        'str':        str,
-                                       'str.empty':  self.parse_str_empty,
-                                       'str.esc':    self.parse_str_esc,
-                                       'bin':        self.parse_bin,
-                                       'bin.empty':  self.parse_bin_empty,
-                                       'bin.esc':    self.parse_bin_esc,
-                                       'bin.base16': self.parse_bin_base16,
-                                       'bin.base64': self.parse_bin_base64,
-                                       None:         str}
+                                       'bytes':        bytes,
+                                       'bytes.base16': base64.b16decode,
+                                       'bytes.base64': base64.b64decode}
 
-        self.default_reserved_words = {'true': True, 'false': False, 'null': None,
-                                       'inf': float('inf'), '-inf': float('-inf'), '+inf': float('+inf'),
-                                       'nan': float('nan')}
+        self.default_reserved_words = {'true': True, 'TRUE': True, 'True': True,
+                                       'false': False, 'FALSE': False, 'False': False,
+                                       'null': None, 'NULL': None, 'Null': None,
+                                       'inf': float('inf'), 'INF': float('inf'), 'Inf': float('inf'),
+                                       '-inf': float('-inf'), '-INF': float('-inf'), '-Inf': float('-inf'),
+                                       '+inf': float('+inf'), '+INF': float('+inf'), '+Inf': float('+inf'),
+                                       'nan': float('nan'), 'NAN': float('nan'), 'NaN': float('nan')}
 
-        self.default_aliases = {'esc': 'str.esc', 'bin.b64': 'bin.base64',
-                                'bin.b16': 'bin.base16', 'bin.hex': 'bin.base16'}
+        self.default_aliases = {'b': 'bytes', 'b16': 'bytes.base16', 'b64': 'bytes.base64'}
 
 
         # Create actual dicts that are used
@@ -291,7 +287,10 @@ class BespONDecoder(object):
         if string_parsers:
             self.string_parsers.update(string_parsers)
 
-        if (set(self.dict_parsers) & set(self.list_parsers) & set(self.string_parsers)) - set([None]):
+        bytes_parser_re = re.compile(r'(?:^|[^:]+:)bytes(?:$|\.[^.]+)')
+        self._bytes_parsers = set([p for p in self.string_parsers if bytes_parser_re.search(p)])
+
+        if (set(self.dict_parsers) & set(self.list_parsers) & set(self.string_parsers)):
             raise erring.ConfigError('Overlap between dict, list, and string parsers is not supported')
 
         self.parsers = {'dict': self.dict_parsers,
@@ -305,19 +304,26 @@ class BespONDecoder(object):
         self.aliases = self.default_aliases.copy()
         if aliases:
             self.aliases.update(aliases)
-            for k, v in aliases.items():
-                found = False
-                if v in self.dict_parsers:
-                    self.dict_parsers[k] = self.dict_parsers[v]
-                    found = True
-                if v in self.list_parsers:
-                    self.list_parsers[k] = self.list_parsers[v]
-                    found = True
-                if v in self.string_parsers:
-                    self.string_parsers[k] = self.string_parsers[v]
-                    found = True
-                if not found:
-                    raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
+        for k, v in self.aliases.items():
+            found = False
+            if v in self.dict_parsers:
+                self.dict_parsers[k] = self.dict_parsers[v]
+                found = True
+            elif v in self.list_parsers:
+                self.list_parsers[k] = self.list_parsers[v]
+                found = True
+            elif v in self.string_parsers:
+                self.string_parsers[k] = self.string_parsers[v]
+                if bytes_parser_re.search(v):
+                    self._bytes_parsers.update(k)
+                found = True
+            if not found:
+                raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
+
+        # Set default parsers in each category
+        self.dict_parsers[None] = self.dict_parsers['dict']
+        self.list_parsers[None] = self.list_parsers['list']
+        self.string_parsers[None] = self.string_parsers['str']
 
 
         # Create a UnicodeFilter instance
@@ -335,28 +341,163 @@ class BespONDecoder(object):
         self.unicode_whitespace = self.unicodefilter.unicode_whitespace
         self.unicode_whitespace_str = self.unicodefilter.unicode_whitespace_str
 
-        # Create dicts used in parsing
-        # It's convenient to define these next to the definition of the
-        # functions they contain
-        self._build_parsing_dicts_and_re()
+
+        # Characters that can't appear in normal unquoted strings.
+        # `+` is only special in non-compact syntax, at the beginning of a
+        # line, when followed by an indentation character (or Unicode
+        # whitespace).  `|` is only special when followed by three or more
+        # quotation marks or by a space (or Unicode whitespace).  Given the
+        # limited context in which `+` and `|` are special, they are generally
+        # allowed within unquoted strings.  All necessary conditions for when
+        # they appear at the beginning of string are imposed in the
+        # corresponding parsing functions.
+        self.not_unquoted_str = '%()[]{}\'"=;'
+        self.not_unquoted = set(self.not_unquoted_str)
+
+        # Dict of functions for proceding with parsing, based on the next
+        # character.
+        _parse_line = {'%':  self._parse_line_percent,
+                       '(':  self._parse_line_open_paren,
+                       ')':  self._parse_line_close_paren,
+                       '[':  self._parse_line_open_bracket,
+                       ']':  self._parse_line_close_bracket,
+                       '{':  self._parse_line_open_brace,
+                       '}':  self._parse_line_close_brace,
+                       "'":  self._parse_line_single_quote,
+                       '"':  self._parse_line_double_quote,
+                       '=':  self._parse_line_equals,
+                       ';':  self._parse_line_semicolon,
+                       '+':  self._parse_line_plus,
+                       '|':  self._parse_line_pipe,
+                       '':  self._parse_line_whitespace
+                      }
+        for c in self.whitespace:
+            _parse_line[c] = self._parse_line_whitespace
+        self._parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string, _parse_line)
+
+        # Regex for matching explicit type declarations.  Don't need to filter
+        # out all code points not allowed in type name; will attempt type
+        # lookup and raise error upon failure.
+        pattern_type = r'\([^{ws}{na}]+\)>'.format(ws=re.escape(self.unicode_whitespace_str), na=re.escape(self.not_unquoted_str.replace('=', '')))
+        self._explicit_type_re = re.compile(pattern_type)
+
+        # Regexes for identifying opening delimiters that may contains
+        # multiple identical characters.
+        def gen_opening_delim_regex(c):
+            if c == '|':
+                p = r'\|(?:\'+|\"+)'
+            else:
+                p = r'{c}{c}{c}+|{c}'.format(c=re.escape(c))
+            return re.compile(p)
+        self._opening_delim_percent_re = gen_opening_delim_regex('%')
+        self._opening_delim_single_quote_re = gen_opening_delim_regex("'")
+        self._opening_delim_double_quote_re = gen_opening_delim_regex('"')
+        self._opening_delim_equals_re = gen_opening_delim_regex('=')
+        self._opening_delim_pipe_re = gen_opening_delim_regex('|')
+
+        # Dict of regexes for identifying closing delimiters.  Automatically
+        # generate needed regex on the fly.
+        def gen_closing_delim_regex(delim):
+            c = delim[0]
+            if c == '"':
+                if delim == '"':
+                    p = r'(?:\\.|[^"])*(")'.format(c=re.escape(c), n=len(delim))
+                else:
+                    p = r'(?:\\.|[^"])*({c}{{{n}}}(?!{c})/*)'.format(c=re.escape(c), n=len(delim))
+            elif delim == "'":
+                p = "'"
+            elif c == '|':
+                p = r'{c}{f}{{{n}}}(?!{f})/*'.format(c=re.escape(c), f=re.escape(delim[-1]), n=len(delim)-1)
+            else:
+                p = r'(?<!{c}){c}{{{n}}}(?!{c})/*'.format(c=re.escape(c), n=len(delim))
+            return re.compile(p)
+        self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
+
+        # Regex for integers, including hex, octal, and binary.
+        pattern_int = r'''
+                       [+-]? (?: [1-9](?:_(?=[0-9])|[0-9])* |
+                                 0x [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* |
+                                 0o [0-7](?:_(?=[0-7])|[0-7])* |
+                                 0b [01](?:_(?=[01])|[01])* |
+                                 0
+                             )
+                       $
+                       '''
+        self._int_re = re.compile(pattern_int, re.VERBOSE)
+
+        # Regex for floats, including hex.
+        pattern_float = r'''
+                         [+-]? (?: (?: \. [0-9](?:_(?=[0-9])|[0-9])* (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
+                                       (?:[1-9](?:_(?=[0-9])|[0-9])*|0)
+                                          (?: \. (?:[0-9](?:_(?=[0-9])|[0-9])*)? (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
+                                              [eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*
+                                          )
+                                   ) |
+                                   0x (?: \.[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* (:? [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
+                                          [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])*
+                                             (?: \. (?:[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])*)? (:? [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
+                                                 [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*
+                                             )
+                                      )
+                               )
+                         $
+                         '''
+        self._float_re = re.compile(pattern_float, re.VERBOSE)
+
+        # There are multiple regexes for unquoted keys.  Plain unquoted keys
+        # need to be distinguished from keys describing key paths.
+        pattern_unquoted_key = r'[^{uws}{na}]+'.format(uws=re.escape(self.unicode_whitespace_str),
+                                                       na=re.escape(self.not_unquoted_str))
+        pattern_unquoted_key_eq_noninline = r'({key})[{ind}]*='.format(key=pattern_unquoted_key,
+                                                                       ind=re.escape(self.indents_str))
+        self._unquoted_key_eq_noninline_re = re.compile(pattern_unquoted_key_eq_noninline)
+        pattern_unquoted_key_eq_inline = r'({key})[{ind}]*(=|{nl})'.format(key=pattern_unquoted_key,
+                                                                           ind=re.escape(self.indents_str),
+                                                                           nl='|'.join(re.escape(x) for x in sorted(self.newlines, reverse=True)))
+        self._unquoted_key_eq_inline_re = re.compile(pattern_unquoted_key_eq_inline)
+
+        pattern_keypath_element = r'''
+                                   [^\.{uws}{na}\d][^\.{uws}{na}]* |  # Identifier-style
+                                   \[ (?: \+ | [+-]?[0-9]+) \] |  # Bracket-enclosed list index
+                                   \{{ (?: [^{uws}{na}]+ | '[^']*' | "(?:\\.|[^"])*" ) \}}  # Brace-enclosed unquoted string, or once-quoted inline string
+                                   '''
+        pattern_keypath_element = pattern_keypath_element.format(uws=re.escape(self.unicode_whitespace_str),
+                                                                 na=re.escape(self.not_unquoted_str))
+        self._keypath_element_re = re.compile(pattern_keypath_element, re.VERBOSE)
+
+        pattern_unquoted_keypath = r'''
+                                    (?:{kpe})
+                                    (?:\. (?:{kpe}) )*
+                                    '''
+        pattern_unquoted_keypath = pattern_unquoted_keypath.format(kpe=pattern_keypath_element)
+
+        pattern_unquoted_keypath_eq_noninline = r'({keypath})[{ind}]*='.format(keypath=pattern_unquoted_keypath,
+                                                                               ind=re.escape(self.indents_str))
+        self._unquoted_keypath_eq_noninline_re = re.compile(pattern_unquoted_keypath_eq_noninline, re.VERBOSE)
+        pattern_unquoted_keypath_eq_inline = r'({keypath})[{ind}]*(=|{nl})'.format(keypath=pattern_unquoted_keypath,
+                                                                                   ind=re.escape(self.indents_str),
+                                                                                   nl='|'.join(re.escape(x) for x in sorted(self.newlines, reverse=True)))
+        self._unquoted_keypath_eq_inline_re = re.compile(pattern_unquoted_keypath_eq_inline, re.VERBOSE)
+
+        self._unquoted_string_fragment_re = re.compile(r'[^{0}]'.format(re.escape(self.not_unquoted_str)))
 
 
     def _unwrap_inline(self, s_list):
         '''
         Unwrap an inline string.
 
-        Any line that ends with a newline preceded by spaces (space or
-        ideographic space) has the newline stripped.  Otherwise, a trailing
-        newline is replace by a space.  The last line will not have a newline,
-        and any trailing whitespace it has will already have been dealt with
-        during parsing, so it is passed through unmodified.
+        Any line that ends with a newline preceded by spaces has the newline
+        stripped.  Otherwise, a trailing newline is replace by a space.  The
+        last line will not have a newline, and any trailing whitespace it has
+        will already have been dealt with during parsing, so it is passed
+        through unmodified.
         '''
         s_list_inline = []
         newline_chars_str = self.newline_chars_str
-        spaces_str = self.spaces_str
+        unicode_whitespace = self.unicode_whitespace
         for line in s_list[:-1]:
             line_strip_nl = line.rstrip(newline_chars_str)
-            if line_strip_nl.rstrip(spaces_str) != line_strip_nl:
+            if line_strip_nl[-1] in unicode_whitespace:
                 s_list_inline.append(line_strip_nl)
             else:
                 s_list_inline.append(line_strip_nl + '\x20')
@@ -364,102 +505,16 @@ class BespONDecoder(object):
         return ''.join(s_list_inline)
 
 
-    def parse_str(self, s_list, inline=False):
+    def _unicode_to_bytes(self, s):
         '''
-        Return a formatted string.
-
-        Receives a list of strings, including newlines, and returns a string.
-
-        Note that this function receives the raw result of parsing.  Any
-        non-string indentation has already been stripped.  For unquoted
-        strings, any leading/trailing indentation characters and newlines
-        have also been stripped/handled.  All other newlines have not been
-        handled; any unwrapping for inline strings remains to be done.
+        Encode a Unicode string to bytes.
         '''
-        if inline:
-            s = self._unwrap_inline(s_list)
-        else:
-            s = ''.join(s_list)
-        return s
-
-
-    def parse_str_empty(self, s_list, inline=False):
-        '''
-        Return an empty string.
-        '''
-        s = self.parse_str(s_list, inline)
-        if s:
-            raise erring.ParseError('Explicitly typed empty string is not really empty', self.source)
-        return s
-
-
-
-    def parse_str_esc(self, s_list, inline=False):
-        '''
-        Return an unescaped version of a string.
-        '''
-        return self.unicodefilter.unescape(self.parse_str(s_list, inline))
-
-
-    def parse_bin(self, s_list, inline=False):
-        '''
-        Return a binary string.
-        '''
-        if inline:
-            s = self._unwrap_inline(s_list)
-        else:
-            s = ''.join(s_list)
-        # If there are Unicode newline characters, convert them to `\n`
-        s = self.unicodefilter.unicode_to_bin_newlines(s)
+        s = self.unicodefilter.unicode_to_ascii_newlines(s)
         try:
-            b = s.encode('ascii')
+            s_bytes = s.encode('ascii')
         except UnicodeEncodeError as e:
             raise erring.BinaryStringEncodeError(s, e, self.source)
-        return b
-
-
-    def parse_bin_empty(self, s_list, inline=False):
-        '''
-        Return an empty string.
-        '''
-        b = self.parse_bin(s_list, inline)
-        if b:
-            raise erring.ParseError('Explicitly typed empty binary string is not really empty', self.source)
-        return b
-
-
-    def parse_bin_esc(self, s_list, inline=False):
-        '''
-        Return an unescaped version of a binary string.
-        '''
-        b = self.parse_bin(s_list, inline)
-        return self.unicodefilter.unescape_bin(b)
-
-
-    def parse_bin_base64(self, s_list, inline=False):
-        '''
-        Return a base64-decoded byte string.
-        '''
-        s = ''.join(s_list)
-        s = self.unicodefilter.remove_whitespace(s)
-        try:
-            b = base64.b64decode(s)
-        except  (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
-            raise erring.BinaryBase64DecodeError(s, e, self.source)
-        return b
-
-
-    def parse_bin_base16(self, s_list, inline=False):
-        '''
-        Return a byte string from hex decoding.
-        '''
-        s = ''.join(s_list)
-        s = self.unicodefilter.remove_whitespace(s)
-        try:
-            b = base64.b16decode(s)
-        except (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
-            raise erring.BinaryBase16DecodeError(s, e, self.source)
-        return b
+        return s_bytes
 
 
     def decode(self, s):
@@ -475,57 +530,43 @@ class BespONDecoder(object):
             msg = '\n' + self.unicodefilter.format_nonliterals_trace(trace)
             raise erring.InvalidLiteralCharacterError(msg)
 
-        # Create a Source() instance for tracking parsing location and
-        # providing informative error messages.  Pass it to UnicodeFilter()
-        # instance so that it can use it as well.
-        self.source = Source()
-        self.unicodefilter.source = self.source
-
         # Create a generator for lines from the source, keeping newlines
         # Then parse to AST, and convert AST to Python objects
         self._line_gen = (line for line in s.splitlines(True))
-        r = self._parse_lines_to_py_obj()
-
-        # Clean up Source() instance.  Don't want it hanging around in case
-        # the decoder instance or its methods are used again.
-        self.source = None
-        self.unicodefilter.source = None
-
-        return r
+        return self._parse_lines_to_py_obj()
 
 
     def _parse_lines_to_py_obj(self):
         '''
-        Process lines from source into abstract syntax tree (AST).
-
-        All collection types, and key-value pairs, are represented as `AstObj`
-        instances.  These will later be processed into actual dicts, lists, etc.
-
-        All other other objects appear in the AST as literals (null, bool,
-        string, binary, int, float, etc.).  They are processed into final form
-        during this stage of the parsing.
+        Process lines from source into abstract syntax tree (AST).  All
+        collection types, and key-value pairs, are initially represented as
+        `AstObj` instances.  At the end, these are processed into actual dicts,
+        lists, etc.  All other other objects appear in the AST as literals that
+        do not require final parsing (null, bool, string, binary, int, float,
+        etc.)
 
         Note that the root node of the AST is a `RootAstObj` instance.  This
         is an `AstObj` subclass that may only contain a single object.  At
         the root level, a BespON file may only contain a single scalar, or a
         single collection type.
         '''
+        self.source = Source()
+        self.unicodefilter.source = self.source
+
         self._ast = Ast(self)
+        self._indent = None
         self._next_type = None
         self._next_type_indent = None
-        self._indent = None
-        self._compact = None
+        self._inline = None
+        self._inline_indent = None
 
-        # Get things started by extracting the first line (if any), stripping
-        # any BOM, and setting the line to `None` if it would have been `None`
-        # had the BOM been removed before this stage.  Essentially, a file
-        # will be treated as empty (producing no output) unless it contains
-        # at least newlines.
+        # Start by extracting the first line and stripping any BOM
         line = self._parse_line_goto_next()
-        if line is not None:
-            line = self._drop_bom(line)
-            if not line:
-                line = None
+        if line:
+            if line[0] == '\uFEFF':
+                line = line[1:]
+            elif line[0] == '\uFFFE':
+                raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.source)
 
         while line is not None:
             line = self._parse_line[line[:1]](line)
@@ -535,41 +576,14 @@ class BespONDecoder(object):
         if not self._ast:
             raise erring.ParseError('There was no data to load', self.source)
 
-        if not self._debug_raw_ast:
+        self.source = None
+        self.unicodefilter.source = None
+
+        if self._debug_raw_ast:
+            return
+        else:
             self._ast.pythonize()
             return self._ast.root[0]
-
-
-
-    def _drop_bom(self, s):
-        '''
-        Handle any BOMs.
-
-        Note that at this point, after the string is already in memory, we
-        can't do anything general about the possibility of UTF-32 BOMs.
-        UTF-32BE is `\\U0000FEFF`, which at this point can't be distinguished
-        from UTF-16BE.  `\\uFEFF` is dropped, so both cases are handled.  If
-        the UTF-32BE case is read incorrectly as UTF-16BE, then there will be
-        null bytes, which are not allowed as literals by default.  Python
-        won't allow `\\UFFFE0000`, which is the UTF-32LE BOM, so that case
-        isn't an issue either.
-        '''
-        BOM = {'UTF-8': '\xEF\xBB\xBF',
-               'UTF-16BE/UTF-32BE': '\uFEFF',
-               'UTF-16LE': '\uFFFE'}
-        encs = []
-        for enc, chars in BOM.items():
-            if s.startswith(chars):
-                s = s[len(chars):]
-                encs.append(enc)
-        # Check for double BOMs just for fun
-        for enc, chars in BOM.items():
-            if s.startswith(chars):
-                s = s[len(chars):]
-                encs.append(enc)
-        if len(encs) > 1:
-            raise ValueError('Encountered BOM for multiple encodings {0}'.format(', '.join(e for e in encs)))
-        return s
 
 
     def _split_line_on_indent(self, line):
@@ -579,159 +593,6 @@ class BespONDecoder(object):
         rest = line.lstrip(self.indents_str)
         indent = line[:len(line)-len(rest)]
         return (indent, rest)
-
-
-    def _build_parsing_dicts_and_re(self):
-        '''
-        Assemble dicts of functions and regular expressions that are used in
-        actual parsing.
-
-        This is done here, rather than in `__init__()`, so as to be closer to
-        where it is actually used, and to keep `__init__()` more concise.
-        '''
-        # Characters that can't appear in normal unquoted strings.
-        # `+` is only special in non-compact syntax, at the beginning of a
-        # line, when followed by an indentation character (or Unicode
-        # whitespace).  `|` is only special when followed by three or more
-        # quotation marks or by a space (or Unicode whitespace).  Given the
-        # limited context in which `+` and `|` are special, they are generally
-        # allowed within unquoted strings.  All necessary conditions for when
-        # they appear at the beginning of string are imposed in the
-        # corresponding parsing functions.
-        self._not_unquoted_ascii_str = '%()[]{}\'"=;'
-        self._not_unquoted_ascii = set(self._not_unquoted_ascii_str)
-        self._not_unquoted_str = self.unicodefilter.to_ascii_and_fullwidth(self._not_unquoted_ascii_str)
-        self._not_unquoted = set(self._not_unquoted_str)
-
-        self._equals = set([c for c in self.unicodefilter.to_ascii_and_fullwidth('=')])
-        self._semicolons = set([c for c in self.unicodefilter.to_ascii_and_fullwidth(';')])
-        self._ending_delims = set([c for c in self.unicodefilter.to_ascii_and_fullwidth(')]}')])
-        self._open_brackets = set([c for c in self.unicodefilter.to_ascii_and_fullwidth('[')])
-        self._open_braces = set([c for c in self.unicodefilter.to_ascii_and_fullwidth('{')])
-        self._quotes = set([c for c in self.unicodefilter.to_ascii_and_fullwidth('"\'')])
-
-        # Dict of functions for proceding with parsing, based on the next
-        # character.  Needs to handle both ASCII and fullwidth equivalents.
-        _parse_line = {'%':  self._parse_line_percent,
-                       '(':  self._parse_line_open_paren,
-                       ')':  self._parse_line_close_paren,
-                       '[':  self._parse_line_open_bracket,
-                       ']':  self._parse_line_close_bracket,
-                       '{':  self._parse_line_open_brace,
-                       '}':  self._parse_line_close_brace,
-                       "'":  self._parse_line_single_quote,
-                       '"':  self._parse_line_double_quote,
-                       '=':  self._parse_line_equals,
-                       ';':  self._parse_line_semicolon,
-                       '+':  self._parse_line_plus,
-                       '|':  self._parse_line_pipe
-                      }
-        for k, v in list(_parse_line.items()):
-            _parse_line[self.unicodefilter.ascii_to_fullwidth(k)] = v
-        _parse_line[''] = self._parse_line_whitespace
-        for c in self.whitespace:
-            _parse_line[c] = self._parse_line_whitespace
-        self._parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string, _parse_line)
-
-        # Regex for matching explicit type declarations.  Don't need to filter
-        # out all code points not allowed in type name; will attempt type
-        # lookup and raise error upon failure.
-        not_allowed_type = self.unicodefilter.to_ascii_and_fullwidth(self._not_unquoted_ascii_str.replace('=', ''))
-        pattern_type = r'''[\(\uFF08]  # Opening parenthesis
-                           [^{ws}{na}]+?  # Contents
-                           [\)\uFF09]  # Closing parenthesis
-                           [>\uFF1E]  # Greater-than sign
-                        '''
-        pattern_type = pattern_type.format(ws=re.escape(self.unicode_whitespace_str), na=re.escape(not_allowed_type))
-        self._explicit_type_re = re.compile(pattern_type, re.VERBOSE)
-
-        # Regexes for identifying opening delimiters that may contains
-        # multiple identical characters.  Treat ASCII and fullwidth
-        # equivalents as identical.
-        def gen_opening_delim_regex(c, fullwidth_to_ascii=self.unicodefilter.fullwidth_to_ascii, ascii_to_fullwidth=self.unicodefilter.ascii_to_fullwidth):
-            c = fullwidth_to_ascii(c)
-            cw = ascii_to_fullwidth(c)
-            if c == '|':
-                p = '[{0}{1}](?:[{2}{3}]+|[{4}{5}]+)'.format(c, cw, "'", ascii_to_fullwidth("'"), '"', ascii_to_fullwidth('"'))
-            else:
-                p = '[{0}{1}]+'.format(c, cw)
-            return re.compile(p)
-        self._opening_delim_percent_re = gen_opening_delim_regex('%')
-        self._opening_delim_single_quote_re = gen_opening_delim_regex("'")
-        self._opening_delim_double_quote_re = gen_opening_delim_regex('"')
-        self._opening_delim_equals_re = gen_opening_delim_regex('=')
-        self._opening_delim_pipe_re = gen_opening_delim_regex('|')
-        self._opening_delim_plus_re = gen_opening_delim_regex('+')
-
-        # Dict of regexes for identifying closing delimiters.  Automatically
-        # generate needed regex on the fly.
-        def gen_closing_delim_regex(delim, fullwidth_to_ascii=self.unicodefilter.fullwidth_to_ascii, ascii_to_fullwidth=self.unicodefilter.ascii_to_fullwidth):
-            c = fullwidth_to_ascii(delim[0])
-            cw = ascii_to_fullwidth(c)
-            if c == '%':
-                p = '(?<![{0}{1}])[{0}{1}]{{{2}}}(?![{0}{1}])[/\uFF0F]'.format(c, cw, len(delim))
-            elif c == '|':
-                c_follow = fullwidth_to_ascii(delim[1])
-                cw_follow = ascii_to_fullwidth(c_follow)
-                p = '(?<![{0}{1}])[{0}{1}][{2}{3}]{{{4}}}[/\uFF0F]{{1,2}}'.format(c, cw, c_follow, cw_follow, len(delim)-1)
-            else:
-                p = '(?<![{0}{1}])[{0}{1}]{{{2}}}(?![{0}{1}])[/\uFF0F]{{0,2}}'.format(c, cw, len(delim))
-            return re.compile(p)
-        self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
-
-        # Regex for integers, including hex, octal, and binary.
-        # Matches only ASCII; text containing fullwidth equivalents is
-        # translated before regex matching is attempted.
-        pattern_int = '''
-                      [+-]? (?: [1-9](?:_(?=[0-9])|[0-9])* |
-                                0x [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* |
-                                0o [0-7](?:_(?=[0-7])|[0-7])* |
-                                0b [01](?:_(?=[01])|[01])* |
-                                0
-                            )
-                      $
-                      '''
-        self._int_re = re.compile(pattern_int, re.VERBOSE)
-
-        # Regex for floats, including hex.
-        pattern_float = '''
-                        [+-]? (?: (?: \. [0-9](?:_(?=[0-9])|[0-9])* (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                      (?:[1-9](?:_(?=[0-9])|[0-9])*|0) (?: \. (?:[0-9](?:_(?=[0-9])|[0-9])*)? (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                                                           [eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)
-                                  ) |
-                                  0x (?: \.[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* |
-                                         [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* (?: \. (?:[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])*)? )?
-                                     ) [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*
-                              )
-                        $
-                        '''
-        self._float_re = re.compile(pattern_float, re.VERBOSE)
-
-        # There are multiple regexes for unquoted keys.  Plain unquoted keys
-        # need to be distinguished from keys describing key paths.
-        pattern_unquoted_key = r'[^{0}{1}]+'.format(re.escape(self.unicode_whitespace_str), re.escape(self._not_unquoted_str))
-        self._unquoted_key_re = re.compile(pattern_unquoted_key)
-
-        pattern_unquoted_keypath = r'''
-                                    (?:  # First element
-                                       (?:[^{ws}{na}\d][^{ws}{na}]*) |  # Identifier-style
-                                       (?:[\[\uFF3B] (?:[+\uFF0B]|[+\uFF0B-\uFF0D]?[0-9\uFF10-\uFF19]+) [\]\uFF3D]) |  # Bracket-enclosed list index
-                                       (?:[\{{\uFF5B] (?:[{numberish}] | ['\uFF07][{numberish}]['\uFF07] | ["\uFF02][{numberish}]["\uFF02]) [\}}\uFF5D])  # Brace-enclosed number
-                                    )
-                                    (?:[.\uFF0E]  # Separating period, then subsequent element
-                                       (?:
-                                          (?:[^{ws}{na}\d][^{ws}{na}]*) |  # Identifier-style
-                                          (?:[\[\uFF3B] (?:[+\uFF0B]|[+\uFF0B-\uFF0D]?[0-9\uFF10-\uFF19]+) [\]\uFF3D]) |  # Bracket-enclosed list index
-                                          (?:[\{{\uFF5B] (?:[{numberish}] | ['\uFF07][{numberish}]['\uFF07] | ["\uFF02][{numberish}]["\uFF02]) [\}}\uFF5D])  # Brace-enclosed number
-                                       )
-                                    )*
-                                    '''
-        not_allowed_unquoted_keypath = self.unicodefilter.to_ascii_and_fullwidth(self._not_unquoted_ascii_str + '.')
-        pattern_numberish = r'[0-9\uFF10-\uFF19a-z\uFF41-\uFF5AA-Z\uFF21-\uFF3A]'
-        pattern_unquoted_keypath = pattern_unquoted_keypath.format(ws=re.escape(self.unicode_whitespace_str), na=re.escape(not_allowed_unquoted_keypath), numberish=pattern_numberish)
-        self._unquoted_keypath_re = re.compile(pattern_unquoted_keypath, re.VERBOSE)
-
-        self._unquoted_string_piece_re = re.compile(r'[^{0}]'.format(re.escape(self._not_unquoted_str)))
 
 
     def _parse_line_get_next(self, line=None):
@@ -752,6 +613,8 @@ class BespONDecoder(object):
         equivalent to using `_parse_line_goto_next()`.  Useful when
         `_parse_line_get_next()` is used for lookahead, but nothing is consumed.
         '''
+        if line is not None:
+            self._indent, line = self._split_line_on_indent(line)
         self.source.start_lineno = self.source.end_lineno
         self._at_line_start = True
         return line
@@ -788,17 +651,13 @@ class BespONDecoder(object):
         '''
         delim = self._opening_delim_percent_re.match(line).group(0)
         if len(delim) < 3:
-            if len(delim) == 1 and line[1:2] in ('!', '\uFF01'):
-                line_ascii = self.unicodefilter.fullwidth_to_ascii(line)
-                if line_ascii.startswith('%!bespon'):
-                    if self.source.start_lineno != 1:
-                        raise erring.ParseError('Encountered "%!bespon", but not on first line', self.source)
-                    elif not self._at_line_start:
-                        raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.source)
-                    elif line_ascii[len('%!bespon'):].rstrip(self.whitespace_str):
-                        raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line_ascii.rstrip(self.newline_chars_str)), self.source)
-                    else:
-                        line = self._parse_line_goto_next()
+            if line.startswith('%!bespon'):
+                if self.source.start_lineno != 1:
+                    raise erring.ParseError('Encountered "%!bespon", but not on first line', self.source)
+                elif not self._at_line_start:
+                    raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.source)
+                elif line[len('%!bespon'):].rstrip(self.whitespace_str):
+                    raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line.rstrip(self.newline_chars_str)), self.source)
                 else:
                     line = self._parse_line_goto_next()
             else:
@@ -807,19 +666,21 @@ class BespONDecoder(object):
             line = line[len(delim):]
             self._at_line_start = False
             end_delim_re = self._closing_delim_re_dict[delim]
-            m = end_delim_re.search(line)
-            if m is not None:
-                line = line[m.end():]
-            else:
-                while m is None:
-                    line = self._parse_line_get_next()
-                    if line is None:
-                        raise erring.ParseError('Never found end of multi-line comment', self.source)
-                    m = end_delim_re.match(line)
-                line = line[m.end():]
-                self._parse_line_continue_next()
-            if not line.lstrip(self.whitespace_str):
-                line = self._parse_line_goto_next()
+            while True:
+                if delim in line:
+                    m = end_delim_re.search(line)
+                    if m:
+                        if len(m.group(0)) != len(delim) + 1:
+                            raise erring.ParseError('Found incorrect closing delimiter for multi-line comment', self.source)
+                        line = line[m.end():]
+                        if line.lstrip(self.whitespace_str):
+                            self._parse_line_continue_next()
+                        else:
+                            line = self._parse_line_goto_next()
+                        break
+                line = self._parse_line_get_next()
+                if line is None:
+                    raise erring.ParseError('Never found end of multi-line comment', self.source)
         return line
 
 
@@ -828,41 +689,50 @@ class BespONDecoder(object):
         Parse explicit typing.
         '''
         if self._next_type is not None:
-            raise erring.ParseError('Duplicate or unused explicit type declarations', self.source)
+            raise erring.ParseError('Duplicate or unused explicit type declaration', self.source)
         m = self._explicit_type_re.match(line)
         if not m:
+            # Due to regex, any match is guaranteed to be a type name
+            # consisting of at least one code point
             raise erring.ParseError('Could not parse explicit type declaration', self.source)
         self._next_type = m.group(0)[1:-2]
         line = line[m.end():].lstrip(self.whitespace_str)
-        if self._next_type and not self._compact:
-            if self._next_type in ('str.empty', 'bin.empty'):
-                # Go ahead and deal with empty strings and binary strings
-                # These must be on the same line as the type declaration
-                if not line:
-                    self._ast.append(self.string_parsers[self._next_type](''))
-                    self._next_type = None
-                    self._at_line_start = False
-                else:
-                    m = self._opening_delim_equals_re.match(line)
-                    if self._at_line_start and m and len(m.group(0)):
-                        line = line[1:]
-                        self._ast.append(AstObj('kvpair', self))
-                        self._ast.append(self.string_parsers[self._next_type](''))
-                        self._next_type = None
-                        self._at_line_start = False
-                    else:
-                        raise erring.ParseError('Could not resolve empty type "{0}"'.format(self._next_type), self.source)
-            elif self._at_line_start:
-                if not line and self._next_type in self.dict_parsers:
+        if not self._inline and not line:
+            # In inline syntax, will always have a brace or bracket to open
+            # collection types, so there is no "implicit" collection creation.
+            # In non-inline syntax, need to create a collection type unless
+            # it appears that a transition to inline syntax is coming.  The
+            # AST will make sure that everything conforms to the appropriate
+            # rules beyond this point.  Also need to store the current
+            # indentation in the event that the type declaration and its
+            # object aren't on the same line, in which case its object is
+            # allowed to have a greater indentation.
+            if self._next_type in self.dict_parsers:
+                line = self._parse_line_get_next()
+                line_lstrip_ws = line.lstrip(self.whitespace_str)
+                if line_lstrip_ws[:1] == '{' and not self._unquoted_keypath_eq_noninline_re.match(line_lstrip_ws):
+                    self._next_type_indent = self._indent
+                    line = self._parse_line_start_next(line)
+                elif self._at_line_start:
                     self._ast.append(AstObj('dict', self))
                     self._next_type = None
-                    line = self._parse_line_goto_next()
-                elif not line and self._next_type in self.list_parsers:
+                    line = self._parse_line_start_next(line)
+                else:
+                    raise erring.ParseError('Invalid explicit type declaration for dict-like object', self.source)
+            elif self._next_type in self.list_parsers:
+                line = self._parse_line_get_next()
+                line_lstrip_ws = line.lstrip(self.whitespace_str)
+                if line_lstrip_ws[:1] == '[' and not self._unquoted_keypath_eq_noninline_re.match(line_lstrip_ws):
+                    self._next_type_indent = self._indent
+                    line = self._parse_line_start_next(line)
+                elif self._at_line_start:
                     self._ast.append(AstObj('list', self))
                     self._next_type = None
-                    line = self._parse_line_goto_next()
+                    line = self._parse_line_start_next(line)
                 else:
-                    self._next_type_indent = self._indent
+                    raise erring.ParseError('Invalid explicit type declaration for list-like object', self.source)
+            elif self._at_line_start:
+                self._next_type_indent = self._indent
         return line
 
 
@@ -912,11 +782,18 @@ class BespONDecoder(object):
         '''
         m = end_delim_re.search(line)
         if m:
-            end_delim = m.group(0)
+            if delim[0] == "'":
+                end_delim = m.group(0)
+            else:
+                end_delim = m.group(1)
             if len(end_delim) > len(delim):
                 raise erring.ParseError('A block string may not begin and end on the same line', self.source)
-            s = line[:m.start()]
-            line = line[m.end():]
+            if delim[0] == "'":
+                s = line[:m.start()]
+                line = line[m.end():]
+            else:
+                s = line[:m.start(1)]
+                line = line[m.end(1):]
         else:
             s_lines = [line]
             if self._at_line_start:
@@ -933,20 +810,27 @@ class BespONDecoder(object):
                 if not m:
                     s_lines.append(line)
                 else:
-                    end_delim = m.group(0)
-                    s_lines.append(line[:m.start()])
-                    line = line[m.end():]
+                    if delim[0] == "'":
+                        end_delim = m.group(0)
+                        s_lines.append(line[:m.start()])
+                        line = line[m.end():]
+                    else:
+                        end_delim = m.group(1)
+                        s_lines.append(line[:m.start(1)])
+                        line = line[m.end(1):]
                     s = self._process_quoted_string(s_lines, delim, end_delim)
                     break
+        if self._next_type in self._bytes_parsers:
+            s = self._unicode_to_bytes(s)
         try:
             s = self.string_parsers[self._next_type](s)
         except KeyError:
-            raise erring.ParseError('Invalid explicit type "{0}" applied to string'.format(self._next_type), self.source)
+            raise erring.ParseError('Unknown explicit type "{0}" applied to string'.format(self._next_type), self.source)
         except Exception as e:
             raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(self._next_type, e), self.source)
         if self._next_type_indent:
             self._indent = self._next_type_indent
-        if self._at_line_start and not self._compact:
+        if self._at_line_start and not self._inline:
             line = line.lstrip(self.whitespace_str)
             m = self._opening_delim_equals_re.match(line)
             if m:
@@ -957,7 +841,7 @@ class BespONDecoder(object):
                 self._ast.append(s)
             else:
                 self._ast.append(s)
-        elif not self._compact:
+        elif not self._inline:
             self._ast.append(s)
         else:
             raise erring.ParseError('Unfinished parsing path')
@@ -991,9 +875,9 @@ class BespONDecoder(object):
             # Take care of any leading/trailing spaces that separate delimiter
             # characters from identical characters in string.
             s_strip_spaces = s.strip(self.spaces_str)
-            if self.unicodefilter.fullwidth_to_ascii(delim[0]) == self.unicodefilter.fullwidth_to_ascii(s_strip_spaces[0]):
+            if delim[0] == s_strip_spaces[0]:
                 s = s[1:]
-            if self.unicodefilter.fullwidth_to_ascii(end_delim[0]) == self.unicodefilter.fullwidth_to_ascii(s_strip_spaces[-1]):
+            if end_delim[0] == s_strip_spaces[-1]:
                 s = s[:-1]
         else:
             if s_lines[0].lstrip(self.whitespace_str):
@@ -1072,21 +956,23 @@ class BespONDecoder(object):
         '''
         Parse line segment beginning with whitespace.
         '''
-        if self._at_line_start and line.lstrip(self.whitespace_str):
-            self._indent, line = self._split_line_on_indent(line)
-        elif line.lstrip(self.whitespace_str):
-            line = line.lstrip(self.whitespace_str)
+        line_lstrip_ws = line.lstrip(self.whitespace_str)
+        if self._at_line_start and line_lstrip_ws:
+            ########################################## VALID TO ASSUME at line start?
+            self._indent = line[:len(line)-len(line_lstrip_ws)]
+            line = line_lstrip_ws
+        elif line_lstrip_ws:
+            line = line_lstrip_ws
         else:
             while True:
                 line = self._parse_line_goto_next()
                 if line is None:
-                    if self._ast.pos == self._ast.root and not self._ast.root:
-                        try:
-                            self._ast.append(self.string_parsers[self._next_type](''))
-                        except KeyError:
-                            raise erring.ParseError('Invalid explicit type "{0}" applied to string'.format(self._next_type), self.source)
                     break
-                elif line.lstrip(self.whitespace_str):
+                line_lstrip_ws = line.lstrip(self.whitespace_str)
+                if line_lstrip_ws:
+                    self._at_line_start = True
+                    self._indent = line[:len(line)-len(line_lstrip_ws)]
+                    line = line_lstrip_ws
                     break
         return line
 
@@ -1161,3 +1047,61 @@ class BespONDecoder(object):
 
 
 # Fix _next_type_indent
+"""
+    def parse_bin(self, s_list, inline=False):
+        '''
+        Return a binary string.
+        '''
+        if inline:
+            s = self._unwrap_inline(s_list)
+        else:
+            s = ''.join(s_list)
+        # If there are Unicode newline characters, convert them to `\n`
+        s = self.unicodefilter.unicode_to_bin_newlines(s)
+
+        return b
+
+
+    def parse_bin_empty(self, s_list, inline=False):
+        '''
+        Return an empty string.
+        '''
+        b = self.parse_bin(s_list, inline)
+        if b:
+            raise erring.ParseError('Explicitly typed empty binary string is not really empty', self.source)
+        return b
+
+
+    def parse_bin_esc(self, s_list, inline=False):
+        '''
+        Return an unescaped version of a binary string.
+        '''
+        b = self.parse_bin(s_list, inline)
+        return self.unicodefilter.unescape_bin(b)
+
+
+    def parse_bin_base64(self, s_list, inline=False):
+        '''
+        Return a base64-decoded byte string.
+        '''
+        s = ''.join(s_list)
+        s = self.unicodefilter.remove_whitespace(s)
+        try:
+            b = base64.b64decode(s)
+        except  (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
+            raise erring.BinaryBase64DecodeError(s, e, self.source)
+        return b
+
+
+    def parse_bin_base16(self, s_list, inline=False):
+        '''
+        Return a byte string from hex decoding.
+        '''
+        s = ''.join(s_list)
+        s = self.unicodefilter.remove_whitespace(s)
+        try:
+            b = base64.b16decode(s)
+        except (ValueError, TypeError, UnicodeEncodeError, binascii.Error) as e:
+            raise erring.BinaryBase16DecodeError(s, e, self.source)
+        return b
+"""

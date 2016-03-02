@@ -42,100 +42,9 @@ def test__unwrap_inline():
     assert(dc._unwrap_inline(v.splitlines(True)) == v.replace('\n', ''))
 
 
-def test_parse_str():
-    dc = mdl.BespONDecoder()
-    s = 'first \nsecond \nthird'
-    assert(dc.parse_str(s.splitlines(True)) == s)
-    assert(dc.parse_str(s.splitlines(True), inline=True) == s.replace('\n', ''))
-
-
-def test_parse_str_empty():
-    dc = mdl.BespONDecoder()
-    assert(dc.parse_str_empty(['']) == '')
-    assert(dc.parse_str_empty(['', '']) == '')
-    with pytest.raises(err.ParseError):
-        dc.parse_str_empty(['\n'])
-
-
-def test_parse_str_esc():
-    dc = mdl.BespONDecoder()
-    s = '\\a\\b\\v\\f\\n\\r\\t\\u1234\\x01ABCD'
-    s_after = '\a\b\v\f\n\r\t\u1234\x01ABCD'
-    assert(dc.parse_str_esc(s.splitlines(True)) == s_after)
-
-
-def test_parse_bin():
-    dc = mdl.BespONDecoder()
-    s = 'ABCDEFG\a\b\f\v'
-    assert(dc.parse_bin(s.splitlines(True)) == s.encode('ascii'))
-
-    with pytest.raises(err.BinaryStringEncodeError):
-        t = 'ABCDEFG\a\b\f\v\u00ff'
-        dc.parse_bin(t.splitlines(True))
-
-    with pytest.raises(err.BinaryStringEncodeError):
-        t = 'ABCDEFG\a\b\f\v\xff'
-        dc.parse_bin(t.splitlines(True))
-
-
-def test_parse_bin_empty():
-    dc = mdl.BespONDecoder()
-    assert(dc.parse_bin_empty(['']) == b'')
-    assert(dc.parse_bin_empty(['', '']) == b'')
-    with pytest.raises(err.ParseError):
-        dc.parse_bin_empty(['\n'])
-
-
-def test_parse_bin_esc():
-    dc = mdl.BespONDecoder()
-    s = 'ABCDEFG\\a\\b\\f\\v\\x01\\xff'
-    b_esc = b'ABCDEFG\a\b\f\v\x01\xff'
-    assert(dc.parse_bin_esc(s.splitlines(True)) == b_esc)
-
-    with pytest.raises(err.UnknownEscapeError):
-        t = 'ABCDEFG\\a\\b\\f\\v\\x01\\xff\\uffff'
-        dc.parse_bin_esc(t.splitlines(True))
-
-
-def test_parse_bin_base64():
-    dc = mdl.BespONDecoder()
-    s = 'AQIECBav/w=='
-    b = b'\x01\x02\x04\x08\x16\xaf\xff'
-    assert(dc.parse_bin_base64(s.splitlines(True)) == b)
-
-    with pytest.raises(err.BinaryBase64DecodeError):
-        s = '\u2028AQIECBav/w=='
-        dc.parse_bin_base64(s.splitlines(True))
-
-
-def test_parse_bin_hex():
-    dc = mdl.BespONDecoder()
-    s = '0102040816AFFF'
-    b = b'\x01\x02\x04\x08\x16\xaf\xff'
-    assert(dc.parse_bin_base16(s.splitlines(True)) == b)
-
-    with pytest.raises(err.BinaryBase16DecodeError):
-        s = '\u20280102040816AFFF'
-        dc.parse_bin_base16(s.splitlines(True))
-
-
-def test__drop_bom():
-    dc = mdl.BespONDecoder()
-    s = '\xEF\xBB\xBF\uFEFF'
-    with pytest.raises(ValueError):
-        dc._drop_bom(s)
-
-    s = '\uFFFE\xEF\xBB\xBF'
-    with pytest.raises(ValueError):
-        dc._drop_bom(s)
-
-    s = '\xEF\xBB\xBF%!bespon \r\n'
-    assert(dc._drop_bom(s) == '%!bespon \r\n')
-
-
 def test__split_line_on_indent():
     dc = mdl.BespONDecoder()
-    s = '\x20\u3000\t\x20\t\t\x20\u3000\r\n'
+    s = '\x20\t\x20\t\t\x20\r\n'
     assert(dc._split_line_on_indent(s) == (s[:-2], '\r\n'))
 
 
@@ -236,7 +145,7 @@ def test_decode_raw_ast():
     with pytest.raises(err.ParseError):
         dc.decode('')
     with pytest.raises(err.ParseError):
-        dc.decode('\xEF\xBB\xBF')
+        dc.decode(b'\xEF\xBB\xBF'.decode('utf-8'))
     with pytest.raises(err.ParseError):
         dc.decode('%')
     with pytest.raises(err.ParseError):
@@ -244,9 +153,9 @@ def test_decode_raw_ast():
     with pytest.raises(err.ParseError):
         dc.decode(' %\n')
 
-    dc.decode('%\n\n')
+    dc.decode('%\n\n""')
     assert(dc._ast == [''])
-    dc.decode('%\n ')
+    dc.decode('%\n ""')
     assert(dc._ast == [''])
 
     with pytest.raises(err.ParseError):
@@ -256,10 +165,12 @@ def test_decode_raw_ast():
     with pytest.raises(err.ParseError):
         dc.decode('%\n%%%\n\n%%%/\n')
 
-    dc.decode('%\n%%%\n\n%%%/\n\n')
+    dc.decode('%\n%%%\n\n%%%/\n""\n')
     assert(dc._ast == [''])
 
-    dc.decode('(bin)>\n')
+    dc.decode('(bytes)> ""\n')
+    assert(dc._ast == [b''])
+    dc.decode('(b)> ""\n')
     assert(dc._ast == [b''])
 
     dc.decode('"a"\n')
@@ -276,19 +187,19 @@ def test_decode_raw_ast():
 
     dc.decode(' """\n  a\n  b\n """//\n')
     assert(dc._ast == [" a\n b"])
-
+    '''
     dc.decode('(dict)>\n')
     assert(dc._ast == [[]])
     dc.decode('(list)>\n')
     assert(dc._ast == [[]])
-
+    '''
     dc.decode('"a"="b"')
     assert(dc._ast == [[['a', 'b']]])
     dc.decode('"a"="b"\n"c"="d"\n')
     assert(dc._ast == [[['a', 'b'], ['c', 'd']]])
     dc.decode('"a"=\n "b"=\n  "c"="d"\n')
     assert(dc._ast == [ [['a', [['b', [['c', 'd']] ]] ]] ])
-
+'''
     dc.decode(' """\n  ab\n  cd\n """/ = "efg" ')
     assert(dc._ast == [ [[' ab\n cd\n', 'efg']] ])
 
@@ -314,10 +225,10 @@ def test_decode_raw_ast():
         dc.decode('"a"="b"\n "c"="d"')
     with pytest.raises(err.ParseError):
         dc.decode('+ "a"\n + "b"')
+'''
 
 
-
-
+"""
 def test_decode_indentation_syntax():
     dc = mdl.BespONDecoder()
 
@@ -327,3 +238,66 @@ def test_decode_indentation_syntax():
     assert(dc.decode('+\n  + "a"\n  + "b"') == [['a', 'b']])
 
     assert(dc.decode('a=b') == {'a': 'b'})
+"""
+
+
+
+
+
+
+
+
+
+"""
+def test_parse_str_esc():
+    dc = mdl.BespONDecoder()
+    s = '\\a\\b\\v\\f\\n\\r\\t\\u1234\\x01ABCD'
+    s_after = '\a\b\v\f\n\r\t\u1234\x01ABCD'
+    assert(dc.parse_str_esc(s.splitlines(True)) == s_after)
+
+
+def test_parse_bin():
+    dc = mdl.BespONDecoder()
+    s = 'ABCDEFG\a\b\f\v'
+    assert(dc.parse_bin(s.splitlines(True)) == s.encode('ascii'))
+
+    with pytest.raises(err.BinaryStringEncodeError):
+        t = 'ABCDEFG\a\b\f\v\u00ff'
+        dc.parse_bin(t.splitlines(True))
+
+    with pytest.raises(err.BinaryStringEncodeError):
+        t = 'ABCDEFG\a\b\f\v\xff'
+        dc.parse_bin(t.splitlines(True))
+
+def test_parse_bin_esc():
+    dc = mdl.BespONDecoder()
+    s = 'ABCDEFG\\a\\b\\f\\v\\x01\\xff'
+    b_esc = b'ABCDEFG\a\b\f\v\x01\xff'
+    assert(dc.parse_bin_esc(s.splitlines(True)) == b_esc)
+
+    with pytest.raises(err.UnknownEscapeError):
+        t = 'ABCDEFG\\a\\b\\f\\v\\x01\\xff\\uffff'
+        dc.parse_bin_esc(t.splitlines(True))
+
+
+def test_parse_bin_base64():
+    dc = mdl.BespONDecoder()
+    s = 'AQIECBav/w=='
+    b = b'\x01\x02\x04\x08\x16\xaf\xff'
+    assert(dc.parse_bin_base64(s.splitlines(True)) == b)
+
+    with pytest.raises(err.BinaryBase64DecodeError):
+        s = '\u2028AQIECBav/w=='
+        dc.parse_bin_base64(s.splitlines(True))
+
+
+def test_parse_bin_hex():
+    dc = mdl.BespONDecoder()
+    s = '0102040816AFFF'
+    b = b'\x01\x02\x04\x08\x16\xaf\xff'
+    assert(dc.parse_bin_base16(s.splitlines(True)) == b)
+
+    with pytest.raises(err.BinaryBase16DecodeError):
+        s = '\u20280102040816AFFF'
+        dc.parse_bin_base16(s.splitlines(True))
+"""
