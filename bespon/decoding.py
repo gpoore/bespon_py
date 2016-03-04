@@ -654,7 +654,7 @@ class BespONDecoder(object):
             if line.startswith('%!bespon'):
                 if self.source.start_lineno != 1:
                     raise erring.ParseError('Encountered "%!bespon", but not on first line', self.source)
-                elif not self._at_line_start:
+                elif not self._at_line_start or self._indent:
                     raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.source)
                 elif line[len('%!bespon'):].rstrip(self.whitespace_str):
                     raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line.rstrip(self.newline_chars_str)), self.source)
@@ -697,42 +697,18 @@ class BespONDecoder(object):
             raise erring.ParseError('Could not parse explicit type declaration', self.source)
         self._next_type = m.group(0)[1:-2]
         line = line[m.end():].lstrip(self.whitespace_str)
-        if not self._inline and not line:
-            # In inline syntax, will always have a brace or bracket to open
-            # collection types, so there is no "implicit" collection creation.
-            # In non-inline syntax, need to create a collection type unless
-            # it appears that a transition to inline syntax is coming.  The
-            # AST will make sure that everything conforms to the appropriate
-            # rules beyond this point.  Also need to store the current
-            # indentation in the event that the type declaration and its
-            # object aren't on the same line, in which case its object is
-            # allowed to have a greater indentation.
-            if self._next_type in self.dict_parsers:
-                line = self._parse_line_get_next()
-                line_lstrip_ws = line.lstrip(self.whitespace_str)
-                if line_lstrip_ws[:1] == '{' and not self._unquoted_keypath_eq_noninline_re.match(line_lstrip_ws):
-                    self._next_type_indent = self._indent
-                    line = self._parse_line_start_next(line)
-                elif self._at_line_start:
-                    self._ast.append(AstObj('dict', self))
-                    self._next_type = None
-                    line = self._parse_line_start_next(line)
-                else:
-                    raise erring.ParseError('Invalid explicit type declaration for dict-like object', self.source)
-            elif self._next_type in self.list_parsers:
-                line = self._parse_line_get_next()
-                line_lstrip_ws = line.lstrip(self.whitespace_str)
-                if line_lstrip_ws[:1] == '[' and not self._unquoted_keypath_eq_noninline_re.match(line_lstrip_ws):
-                    self._next_type_indent = self._indent
-                    line = self._parse_line_start_next(line)
-                elif self._at_line_start:
-                    self._ast.append(AstObj('list', self))
-                    self._next_type = None
-                    line = self._parse_line_start_next(line)
-                else:
-                    raise erring.ParseError('Invalid explicit type declaration for list-like object', self.source)
-            elif self._at_line_start:
-                self._next_type_indent = self._indent
+        if self._next_type in self.dict_parsers:
+            self._at_line_start = False
+            self._ast.append(AstObj('dict', self))
+            self._next_type = None
+        elif self._next_type in self.list_parsers:
+            self._at_line_start = False
+            self._ast.append(AstObj('list', self))
+            self._next_type = None
+        elif self._at_line_start:
+            self._next_type_indent = self._indent
+        if not line:
+            line = self._parse_line_goto_next()
         return line
 
 
@@ -744,15 +720,27 @@ class BespONDecoder(object):
 
 
     def _parse_line_open_bracket(self, line):
+        '''
+        Parse line segment beginning with opening square bracket.
+        '''
         pass
 
     def _parse_line_close_bracket(self, line):
+        '''
+        Parse line segment beginning with closing square bracket.
+        '''
         pass
 
     def _parse_line_open_brace(self, line):
+        '''
+        Parse line segment beginning with opening curly brace.
+        '''
         pass
 
     def _parse_line_close_brace(self, line):
+        '''
+        Parse line segment beginning with closing curly brace.
+        '''
         pass
 
     def _parse_line_single_quote(self, line):
@@ -762,7 +750,8 @@ class BespONDecoder(object):
         delim = self._opening_delim_single_quote_re.match(line).group(0)
         line = line[len(delim):]
         end_delim_re = self._closing_delim_re_dict[delim]
-        return self._parse_line_quoted_string(line, delim, end_delim_re)
+        match_group_num = 0
+        return self._parse_line_quoted_string(line, delim, end_delim_re, match_group_num)
 
 
     def _parse_line_double_quote(self, line):
@@ -772,28 +761,24 @@ class BespONDecoder(object):
         delim = self._opening_delim_double_quote_re.match(line).group(0)
         line = line[len(delim):]
         end_delim_re = self._closing_delim_re_dict[delim]
-        return self._parse_line_quoted_string(line, delim, end_delim_re)
+        match_group_num = 1
+        return self._parse_line_quoted_string(line, delim, end_delim_re, match_group_num)
 
 
-    def _parse_line_quoted_string(self, line, delim, end_delim_re):
+    def _parse_line_quoted_string(self, line, delim, end_delim_re, match_group_num):
         '''
         Parse a quoted string, once the opening delim has been determined
         and stripped, and a regex for the closing delim has been assembled.
         '''
         m = end_delim_re.search(line)
         if m:
-            if delim[0] == "'":
-                end_delim = m.group(0)
-            else:
-                end_delim = m.group(1)
+            end_delim = m.group(match_group_num)
             if len(end_delim) > len(delim):
                 raise erring.ParseError('A block string may not begin and end on the same line', self.source)
-            if delim[0] == "'":
-                s = line[:m.start()]
-                line = line[m.end():]
-            else:
-                s = line[:m.start(1)]
-                line = line[m.end(1):]
+            s = line[:m.start(match_group_num)]
+            if len(delim) >= 3:
+                s = self._process_quoted_string([s], delim, end_delim)
+            line = line[m.end(match_group_num):]
         else:
             s_lines = [line]
             if self._at_line_start:
@@ -806,32 +791,35 @@ class BespONDecoder(object):
                     raise erring.ParseError('Text ended while scanning quoted string', self.source)
                 if not line.startswith(indent) and line.lstrip(self.whitespace_str):
                     raise erring.ParseError('Indentation error within quoted string', self.source)
-                m = end_delim_re.search(line)
-                if not m:
+                if delim not in line:
                     s_lines.append(line)
                 else:
-                    if delim[0] == "'":
-                        end_delim = m.group(0)
-                        s_lines.append(line[:m.start()])
-                        line = line[m.end():]
+                    m = end_delim_re.search(line)
+                    if not m:
+                        s_lines.append(line)
                     else:
-                        end_delim = m.group(1)
-                        s_lines.append(line[:m.start(1)])
-                        line = line[m.end(1):]
-                    s = self._process_quoted_string(s_lines, delim, end_delim)
-                    break
+                        end_delim = m.group(match_group_num)
+                        s_lines.append(line[:m.start(match_group_num)])
+                        line = line[m.end(match_group_num):]
+                        s = self._process_quoted_string(s_lines, delim, end_delim)
+                        break
         if self._next_type in self._bytes_parsers:
+            s = self.unicodefilter.unicode_to_ascii_newlines(s)
             s = self._unicode_to_bytes(s)
+            if delim[0] == '"':
+                s = self.unicodefilter.unescape_bin(s)
+        elif delim[0] == '"':
+            s = self.unicodefilter.unescape(s)
         try:
             s = self.string_parsers[self._next_type](s)
         except KeyError:
             raise erring.ParseError('Unknown explicit type "{0}" applied to string'.format(self._next_type), self.source)
         except Exception as e:
             raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(self._next_type, e), self.source)
-        if self._next_type_indent:
-            self._indent = self._next_type_indent
-        if self._at_line_start and not self._inline:
-            line = line.lstrip(self.whitespace_str)
+        line = line.lstrip(self.whitespace_str)
+        if self._inline:
+            raise erring.ParseError('Unfinished parsing path')
+        elif self._at_line_start and line:
             m = self._opening_delim_equals_re.match(line)
             if m:
                 if len(m.group(0)) != 1:
@@ -841,10 +829,8 @@ class BespONDecoder(object):
                 self._ast.append(s)
             else:
                 self._ast.append(s)
-        elif not self._inline:
-            self._ast.append(s)
         else:
-            raise erring.ParseError('Unfinished parsing path')
+            self._ast.append(s)
         self._next_type = None
         self._next_type_indent = None
         self._at_line_start = False
