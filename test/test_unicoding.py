@@ -181,7 +181,7 @@ def test_UnicodeFilter_private_methods():
     assert(all(chr(n) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n < 128))
     assert(all(uf._escape_unicode_char(chr(n)) == uf._unicode_to_escaped_ascii_factory(chr(n)) for n in range(0, 512) if n >= 128))
     assert(all(uf._unicode_escaped_hex_to_char_factory(e) == c for c, e in xubrace_test_sequence))
-    assert(all(uf._bin_escaped_hex_to_bytes_factory(e) == c for c, e in [(b'\x01', b'\\x01'), (b'\xaf', b'\\xaf'), (b'\x13', b'\\x13')]))
+    assert(all(uf._bytes_escaped_hex_to_bytes_factory(e) == c for c, e in [(b'\x01', b'\\x01'), (b'\xaf', b'\\xaf'), (b'\x13', b'\\x13')]))
 
 
 def test_UnicodeFilter_public_methods():
@@ -211,11 +211,11 @@ def test_UnicodeFilter_public_methods():
     b_esc = b'\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\x13\\xaf\\xff'
     b_esc_inline = b'\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\x13\\xaf\\xff'
     b_esc_maximal = b'\\\\\\x20\'\\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\x13\\xaf\\xff'
-    assert(uf.unescape_bin(b_esc) == b_raw)
-    assert(uf.unescape_bin(b_esc_inline) == b_raw)
-    assert(uf.escape_bin(b_raw) == b_esc)
-    assert(uf.escape_bin(b_raw, maximal=True) == b_esc_maximal)
-    assert(uf.escape_bin(b_raw, inline=True) == b_esc_inline)
+    assert(uf.unescape_bytes(b_esc) == b_raw)
+    assert(uf.unescape_bytes(b_esc_inline) == b_raw)
+    assert(uf.escape_bytes(b_raw) == b_esc)
+    assert(uf.escape_bytes(b_raw, maximal=True) == b_esc_maximal)
+    assert(uf.escape_bytes(b_raw, inline=True) == b_esc_inline)
 
     uf = mdl.UnicodeFilter(brace_escapes=False)
     s_with_nonliterals = '''\

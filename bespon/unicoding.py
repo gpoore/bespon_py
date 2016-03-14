@@ -135,14 +135,17 @@ class UnicodeFilter(object):
     backslash-escape and backslash-unescape strings, filter out newline
     characters, etc.
     '''
-    def __init__(self, source=None, only_ascii=False,
+    def __init__(self, traceback=None, only_ascii=False,
                  literals=None, nonliterals=None,
                  short_escapes=None, short_unescapes=None,
                  x_escapes=True, brace_escapes=True,
                  unpaired_surrogates=False):
-        # If a `Source()` instance is provided, enhanced tracebacks are
-        # possible in some cases.
-        self.source = source
+        # If a traceback object is provided that has `source`, `start_lineno`,
+        # and `end_lineno`, then enhanced tracebacks are possible
+        if traceback is not None:
+            if not all(hasattr(traceback, x) for x in ('source', 'start_lineno', 'end_lineno')):
+                raise erring.ConfigError('Invalid traceback object')
+        self.traceback = traceback
 
         self.unpaired_surrogates = unpaired_surrogates
 
@@ -190,8 +193,8 @@ class UnicodeFilter(object):
             nonliterals_less_surrogates = nonliterals - UNICODE_SURROGATES
         self.nonliterals = nonliterals
         self.nonliterals_less_surrogates = nonliterals_less_surrogates
-        self.nonliterals_bin_latin1 = set(chr(n) for n in range(256) if n >= 128 or chr(n) in self.nonliterals_less_surrogates)
-        self.nonliterals_bin = set(c.encode('latin1') for c in self.nonliterals_bin_latin1)
+        self.nonliterals_bytes_latin1 = set(chr(n) for n in range(256) if n >= 128 or chr(n) in self.nonliterals_less_surrogates)
+        self.nonliterals_bytes = set(c.encode('latin1') for c in self.nonliterals_bytes_latin1)
         self.newlines = newlines
         # Order for creating newlines variables is important; need to avoid
         # duplicates due to `\r\n`
@@ -214,9 +217,9 @@ class UnicodeFilter(object):
         # Regex for tracking down location of nonliterals
         self.not_nonliterals_or_newlines_re = re.compile(r'[^{chars}{newlines}]+'.format(chars=nonlits_str, newlines=re.escape(self.newline_chars_str)))
         # Regex for working with nonliterals in binary
-        self.nonliterals_or_backslash_bin_re = re.compile(r'[\\{chars}]'.format(chars=re.escape(''.join(self.nonliterals_bin_latin1))).encode('latin1'))
-        self.nonliterals_or_backslash_newlines_tab_bin_re = re.compile(r'[\\{chars}]'.format(chars=re.escape(''.join(chr(n) for n in range(256) if not 0x20 <= n <= 0x7E or chr(n) in self.nonliterals_bin_latin1))).encode('latin1'))
-        self.nonliterals_or_non_printable_non_whitespace_bin_re = re.compile(r'[\\"{chars}]'.format(chars=re.escape(''.join(chr(n) for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bin_latin1))).encode('latin1'))
+        self.nonliterals_or_backslash_bytes_re = re.compile(r'[\\{chars}]'.format(chars=re.escape(''.join(self.nonliterals_bytes_latin1))).encode('latin1'))
+        self.nonliterals_or_backslash_newlines_tab_bytes_re = re.compile(r'[\\{chars}]'.format(chars=re.escape(''.join(chr(n) for n in range(256) if not 0x20 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_latin1))).encode('latin1'))
+        self.nonliterals_or_non_printable_non_whitespace_bytes_re = re.compile(r'[\\"{chars}]'.format(chars=re.escape(''.join(chr(n) for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_latin1))).encode('latin1'))
 
 
         # Spaces, indentation, and whitespace
@@ -271,8 +274,8 @@ class UnicodeFilter(object):
                 raise erring.ConfigError('Short backlash unescapes cannot use the letters X, U, or O, in either upper or lower case')
         self.short_unescapes = short_unescapes
 
-        self.short_escapes_bin = {k.encode('ascii'): v.encode('ascii') for k, v in self.short_escapes.items()}
-        self.short_unescapes_bin = {k.encode('ascii'): v.encode('ascii') for k, v in self.short_unescapes.items()}
+        self.short_escapes_bytes = {k.encode('ascii'): v.encode('ascii') for k, v in self.short_escapes.items()}
+        self.short_unescapes_bytes = {k.encode('ascii'): v.encode('ascii') for k, v in self.short_unescapes.items()}
 
 
         # Unescaping regex.  Depends on whether `\xHH` escapes are allowed and
@@ -287,8 +290,8 @@ class UnicodeFilter(object):
         # first in matching, so need reversed `sorted()`
         unescape_re_pattern = unescape_re_pattern.format(spaces=self.spaces_str, newlines='|'.join(sorted(self.newlines, reverse=True)))
         self.unescape_re = re.compile(unescape_re_pattern, re.DOTALL)
-        unescape_bin_re_pattern = r'\\x[0-9a-fA-F]{2}|\\\x20*(?:\r\n|\r|\n)|\\.|\\'.encode('ascii')
-        self.unescape_bin_re = re.compile(unescape_bin_re_pattern, re.DOTALL)
+        unescape_bytes_re_pattern = r'\\x[0-9a-fA-F]{2}|\\\x20*(?:\r\n|\r|\n)|\\.|\\'.encode('ascii')
+        self.unescape_bytes_re = re.compile(unescape_bytes_re_pattern, re.DOTALL)
 
 
         # Set function for escaping Unicode characters, based on whether `\xHH`
@@ -355,29 +358,29 @@ class UnicodeFilter(object):
         # using `\xHH` escapes is desirable due to readability.  The second
         # approach to escaping plays the binary role of an inline escape, since
         # it allows no literal newlines.
-        minimal_escape_bin_dict = {c.encode('latin1'): '\\x{0:02x}'.format(ord(c)).encode('ascii') for c in self.nonliterals_bin_latin1}
-        maximal_escape_bin_dict = {chr(n).encode('latin1'): '\\x{0:02x}'.format(n).encode('ascii') for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bin_latin1}
-        for k, v in self.short_escapes_bin.items():
-            if k in minimal_escape_bin_dict:
-                minimal_escape_bin_dict[k] = v
-            if k in maximal_escape_bin_dict:
-                maximal_escape_bin_dict[k] = v
+        minimal_escape_bytes_dict = {c.encode('latin1'): '\\x{0:02x}'.format(ord(c)).encode('ascii') for c in self.nonliterals_bytes_latin1}
+        maximal_escape_bytes_dict = {chr(n).encode('latin1'): '\\x{0:02x}'.format(n).encode('ascii') for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_latin1}
+        for k, v in self.short_escapes_bytes.items():
+            if k in minimal_escape_bytes_dict:
+                minimal_escape_bytes_dict[k] = v
+            if k in maximal_escape_bytes_dict:
+                maximal_escape_bytes_dict[k] = v
         # Need backslash in both cases.  Need double quotes for maximal case
         # so that there's no need to check for valid delimiters.  For the
         # maximal case, escaping must be enabled to cover all possible bytes,
         # so there's no reason not to escape double quotes to simplify things.
-        minimal_escape_bin_dict[b'\\'] = self.short_escapes_bin[b'\\']
-        maximal_escape_bin_dict[b'\\'] = self.short_escapes_bin[b'\\']
-        maximal_escape_bin_dict[b'"'] = self.short_escapes_bin[b'"']
-        self.minimal_escape_bin_dict = minimal_escape_bin_dict
-        self.maximal_escape_bin_dict = maximal_escape_bin_dict
+        minimal_escape_bytes_dict[b'\\'] = self.short_escapes_bytes[b'\\']
+        maximal_escape_bytes_dict[b'\\'] = self.short_escapes_bytes[b'\\']
+        maximal_escape_bytes_dict[b'"'] = self.short_escapes_bytes[b'"']
+        self.minimal_escape_bytes_dict = minimal_escape_bytes_dict
+        self.maximal_escape_bytes_dict = maximal_escape_bytes_dict
 
 
         # Dicts for unescaping with current settings.  Used for looking up
         # backlash escapes found by `re.sub()`.  Start with all short escapes;
         # the factory functions add escapes as they are requested.
         self.unescape_dict = tooling.keydefaultdict(self._unicode_escaped_hex_to_char_factory, self.short_unescapes)
-        self.unescape_bin_dict = tooling.keydefaultdict(self._bin_escaped_hex_to_bytes_factory, self.short_unescapes_bin)
+        self.unescape_bytes_dict = tooling.keydefaultdict(self._bytes_escaped_hex_to_bytes_factory, self.short_unescapes_bytes)
 
 
         # Regex for replacing all non-ASCII newlines
@@ -396,7 +399,7 @@ class UnicodeFilter(object):
             e = '\\x{0:02x}'.format(n)
         else:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.source)
+                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
             e = '\\u{{{0:0x}}}'.format(n)
         return e
 
@@ -411,7 +414,7 @@ class UnicodeFilter(object):
             e = '\\x{0:02x}'.format(n)
         elif n < 65536:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.source)
+                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -424,7 +427,7 @@ class UnicodeFilter(object):
         '''
         n = ord(c)
         if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-            raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.source)
+            raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
         return '\\u{{{0:0x}}}'.format(n)
 
 
@@ -436,7 +439,7 @@ class UnicodeFilter(object):
         n = ord(c)
         if n < 65536:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.source)
+                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -452,7 +455,7 @@ class UnicodeFilter(object):
         n = ord(c)
         if not n < 128:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.source)
+                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
             c = self._escape_unicode_char(c)
         return c
 
@@ -473,7 +476,7 @@ class UnicodeFilter(object):
         try:
             n = int(s[2:].strip('{}'), 16)
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError(s, self.source)
+                raise erring.UnicodeSurrogateError(s, self.traceback)
             v = chr(n)
         except ValueError:
             # Need to make sure we have the pattern
@@ -482,11 +485,11 @@ class UnicodeFilter(object):
             if (s[-1] in self.newline_chars and not s[1:].lstrip(self.spaces_str).rstrip(self.newline_chars_str)):
                 v = ''
             else:
-                raise erring.UnknownEscapeError(s, self.source)
+                raise erring.UnknownEscapeError(s, self.traceback)
         return v
 
 
-    def _bin_escaped_hex_to_bytes_factory(self, s):
+    def _bytes_escaped_hex_to_bytes_factory(self, s):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
         to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return an
@@ -505,7 +508,7 @@ class UnicodeFilter(object):
             if (s[-1] in ('\r', '\n') and not s[1:].lstrip(b'\x20').rstrip(b'\r\n')):
                 v = b''
             else:
-                raise erring.UnknownEscapeError(s.decode('latin1'), self.source)
+                raise erring.UnknownEscapeError(s.decode('latin1'), self.traceback)
         return v
 
 
@@ -523,7 +526,7 @@ class UnicodeFilter(object):
         return r.sub(lambda m: d[m.group(0)], s)
 
 
-    def escape_bin(self, s, maximal=False, inline=False):
+    def escape_bytes(self, s, maximal=False, inline=False):
         '''
         Within a binary string, replace all bytes whose corresponding Latin-1
         code points are not allowed to appear literally with their escaped
@@ -531,14 +534,14 @@ class UnicodeFilter(object):
         '''
         # Maximal is everything that inline is, and more
         if maximal:
-            d = self.maximal_escape_bin_dict
-            r = self.nonliterals_or_non_printable_non_whitespace_bin_re
+            d = self.maximal_escape_bytes_dict
+            r = self.nonliterals_or_non_printable_non_whitespace_bytes_re
         elif inline:
-            d = self.maximal_escape_bin_dict
-            r = self.nonliterals_or_backslash_newlines_tab_bin_re
+            d = self.maximal_escape_bytes_dict
+            r = self.nonliterals_or_backslash_newlines_tab_bytes_re
         else:
-            d = self.minimal_escape_bin_dict
-            r = self.nonliterals_or_backslash_bin_re
+            d = self.minimal_escape_bytes_dict
+            r = self.nonliterals_or_backslash_bytes_re
         return r.sub(lambda m: d[m.group(0)], s)
 
 
@@ -551,13 +554,13 @@ class UnicodeFilter(object):
         return self.unescape_re.sub(lambda m: d[m.group(0)], s)
 
 
-    def unescape_bin(self, s):
+    def unescape_bytes(self, s):
         '''
         Within a binary string, replace all backslash escapes with the
         corresponding bytes.
         '''
-        d = self.unescape_bin_dict
-        return self.unescape_bin_re.sub(lambda m: d[m.group(0)], s)
+        d = self.unescape_bytes_dict
+        return self.unescape_bytes_re.sub(lambda m: d[m.group(0)], s)
 
 
     def has_nonliterals(self, s):
