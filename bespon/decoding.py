@@ -44,12 +44,14 @@ class State(object):
     as parsing proceeds.  The instance is passed on to any parsing errors that
     are raised, to provide informative error messages.
     '''
-    __slots__ = ['name', 'indent', 'at_line_start', 'start_lineno', 'end_lineno',
+    __slots__ = ['ast', 'source', 'indent', 'at_line_start', 'start_lineno', 'end_lineno',
                  'type', 'type_indent', 'type_at_line_start', 'type_lineno', 'type_cat',
-                 'stringlike', 'stringlike_indent', 'stringlike_at_line_start', 'stringlike_start_lineno', 'stringlike_end_lineno', 'stringlike_effective_indent',
+                 'stringlike', 'stringlike_indent', 'stringlike_at_line_start', 'stringlike_start_lineno', 'stringlike_end_lineno',
+                     'stringlike_effective_indent', 'stringlike_quoted',
                  'inline', 'inline_indent']
 
-    def __init__(self, source=None, indent=None, at_line_start=True, start_lineno=0, end_lineno=0):
+    def __init__(self, ast=None, source=None, indent=None, at_line_start=True, start_lineno=0, end_lineno=0):
+        self.ast = ast
         if source is None:
             source = '<string>'
         self.source = source
@@ -62,14 +64,15 @@ class State(object):
         self.type_indent = None
         self.type_at_line_start = None
         self.type_lineno = None
-        self.type_cat = cat
+        self.type_cat = None
 
         self.stringlike = []
         self.stringlike_indent = None
         self.stringlike_at_line_start = None
         self.stringlike_start_lineno = None
         self.stringlike_end_lineno = None
-        self.stringlike_effective_indent
+        self.stringlike_effective_indent = None
+        self.stringlike_quoted = None
 
         self.inline = False
         self.inline_indent = None
@@ -83,15 +86,16 @@ class State(object):
         self.type_lineno = self.start_lineno
         self.type_cat = cat
 
-    def set_stringlike(self, s, effective_indent):
+    def set_stringlike(self, s, effective_indent, quoted):
         if self.stringlike:
-            raise erring.ParseError('A previous string-like object has not yet been resolved', self)
+            raise erring.ParseError('A previous string-like object has not yet been resolved', self.traceback_stringlike)
         self.stringlike.append(s)
         self.stringlike_indent = self.indent
         self.stringlike_at_line_start = self.at_line_start
         self.stringlike_start_lineno = self.start_lineno
         self.stringlike_end_lineno = self.end_lineno
         self.stringlike_effective_indent = effective_indent
+        self.stringlike_quoted = quoted
 
     def reset(self):
         self.type = None
@@ -125,13 +129,20 @@ class State(object):
     def traceback_stringlike(self):
         return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_end_lineno)
 
-    def traceback_from_ast_pos(self, ast_pos):
-        if self.type is not None:
-            return self.traceback_namedtuple(self.source, ast_pos.start_lineno, self.type_lineno)
-        elif self.stringlike:
-            return self.traceback_namedtuple(self.source, ast_pos.start_lineno, self.stringlike_start_lineno)
-        else:
-            return self.traceback_namedtuple(self.source, ast_pos.start_lineno, self.start_lineno)
+    @property
+    def traceback_incomplete_kvpair(self):
+        return self.traceback_namedtuple(self.source, self.ast.pos.start_lineno, self.ast.pos.end_lineno)
+
+    @property
+    def traceback_start_inline_to_end(self):
+        p = self.ast.pos
+        while p.parent.inline:
+            p = p.parent
+        return self.traceback_namedtuple(self.source, p.start_lineno, self.state.end_lineno)
+
+    @property
+    def traceback_ast_pos_end_to_end(self):
+        return self.traceback_namedtuple(self.source, self.ast.pos.end_lineno, self.state.end_lineno)
 
 
 
@@ -157,13 +168,17 @@ class AstObj(list):
                         providing line error information for instances that
                         were never closed.
       +  state        = Decoder state.
-    '''
-    __slots__ = ['ast', 'cat', 'check_append', 'indent', 'inline', 'index', 'nodetype', 'open', 'parent', 'start_lineno', 'state']
 
-    def __init__(self, cat, ast, state, indent):
+
+    End lineno for astobj isn't actually complete end, but is kept updated.
+    '''
+    __slots__ = ['ast', 'cat', 'check_append', 'end_lineno', 'indent', 'inline',
+                 'index', 'nodetype', 'open', 'parent', 'start_lineno', 'state']
+
+    def __init__(self, cat, ast, indent):
         self.cat = cat
         self.ast = ast
-        self.state = state
+        self.state = ast.state
         if cat != 'root':
             self.inline = state.inline
             self.indent = indent
@@ -173,6 +188,7 @@ class AstObj(list):
                 self.start_lineno = state.stringlike_start_lineno
             else:
                 self.start_lineno = state.start_lineno
+            self.end_lineno = self.start_lineno
             if state.type is not None and not state.stringlike:
                 if not self.inline and (not state.type_at_line_start or self.start_lineno == state.start_lineno):
                     raise erring.ParseError('Explicit type declaration for {0}-like object must be on a line by itself in non-inline syntax'.format(cat), state.traceback_type)
@@ -182,11 +198,12 @@ class AstObj(list):
                 self.nodetype = None
             self.parent = ast.pos
             self.index = len(ast.pos)
-            self.open = False
+            self.open = True
         else:
             self.inline = None
             self.indent = None
             self.start_lineno = None
+            self.end_lineno = None
             self.nodetype = 'root'
             self.parent = None
             self.index = None
@@ -207,18 +224,29 @@ class AstObj(list):
             raise erring.ParseError('Only a single object is allowed at root level', self.state.traceback)
         if isinstance(val, AstObj):
             self.append(val)
+            self.start_lineno = val.start_lineno
+            self.end_lineno = val.end_lineno
             self.ast.pos = self.ast.pos[-1]
             self.ast._obj_to_pythonize_list.append(val)
         else:
             self.append(val)
+            if self.state.type is not None:
+                self.start_lineno = self.state.type_start_lineno
+            else:
+                self.start_lineno = self.state.stringlike_start_lineno
+            self.end_lineno = self.state.stringlike_end_lineno
             self.state.reset()
 
     def _check_append_dict(self, val):
         if not (isinstance(val, AstObj) and val.cat == 'kvpair'):
-            raise erring.ParseError('Cannot add a non-key-value pair to a dict-like object', self.state.traceback)
+            raise erring.ParseError('Cannot add a non key-value pair to a dict-like object', self.state.traceback)
         if val.indent != self.indent:
             raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+        if self.inline and not self.open:
+            raise erring.ParseError('Cannot add a key-value pair to a dict-like object when the previous pair has not been terminated by a semicolon', self.state.traceback)
         self.append(val)
+        self.end_lineno = val.end_lineno
+        self.open = False
         self.ast.pos = self.ast.pos[-1]
 
     def _check_append_kvpair(self, val):
@@ -228,45 +256,66 @@ class AstObj(list):
             if not self:
                 raise erring.ParseError('Keys for dict-like objects cannot be collection types', self.state.traceback)
             if (self.inline and val.indent != self.indent) or (not self.inline and not (val.indent.startswith(self.indent) and len(val.indent) > len(self.indent))):
-                raise erring.ParseError('Indentation error', self.state.traceback)
+                raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
             self.append(val)
+            self.end_lineno = val.end_lineno
             self.ast.pos = self.ast.pos[-1]
             self.ast._obj_to_pythonize_list.append(val)
         else:
             if not self:
-                if self.state.effective_indent != self.indent:
-                    raise erring.ParseError('Indentation error', self.state.traceback)
-                else:
-                    if ((self.inline and self.state.type_indent != self.indent or self.state.stringlike_indent != self.indent) or
-                            (self.state.type_indent != self.indent or not self.state.stringlike_indent.startswith(self.indent))):
-                        raise erring.ParseError('Indentation error', self.state.traceback)
+                if self.stringlike_effective_indent != self.indent:
+                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+                self.append(val)
             else:
-
+                if ((self.inline and self.stringlike_effective_indent != self.indent) or
+                        (not self.inline and
+                            (self.stringlike_quoted and
+                                not (len(self.stringlike_effective_indent) >= len(self.indent) and self.stringlike_effective_indent.startswith(self.indent))) or
+                            (not self.stringlike_quoted and
+                                not (len(self.stringlike_effective_indent) > len(self.indent) and self.stringlike_effective_indent.startswith(self.indent))) ) ):
+                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+                self.append(val)
+            self.end_lineno = self.state.stringlike_end_lineno
             self.state.reset()
-            self.append(val)
-            if len(self) == 2:
-                self.ast.pos = self.ast.pos.parent
-            # Don't need to check indentation of key; already checked when
-            # kvpair AstObj is created
-            if self and not (self.ast.decoder._indent.startswith(self.indent) and ((self.ast.decoder.source.at_line_start and self.ast.decoder._indent > self.indent) or
-                             (not self.ast.decoder.source.at_line_start and self.ast.decoder._indent >= self.indent)) ):
-                raise erring.ParseError('Value indentation error in dict-like object', self.state)
-            self.append(val)
             if len(self) == 2:
                 self.ast.pos = self.ast.pos.parent
 
     def _check_append_list(self, val):
-        if not self.inline and not self.open:
-            raise erring.ParseError('Cannot append to a list element that already exists', self.state.traceback)
+        if not self.open:
+            if self.inline:
+                raise erring.ParseError('Cannot append to a list-like object when the previous list element has not been terminated by a semicolon', self.state.traceback)
+            else:
+                raise erring.ParseError('Cannot append to a list-like object when the current location has already been filled', self.state.traceback)
         if isinstance(val, AstObj):
-            if (self.inline and val.indent != self.indent) or (not self.inline and not (len(val.indent) >= len(self.indent) + 2 and val.indent.startswith(self.indent))):
+            if self.inline and val.indent != self.indent:
                 raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+            elif not self.inline:
+                if self.indent[-1:] == '\t' and val.indent[len(self.indent):len(self.indent)+1] == '\t':
+                    if not (len(val.indent) >= len(self.indent) + 1 and val.indent.startswith(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+                else:
+                    if not (len(val.indent) >= len(self.indent) + 2 and val.indent.startswith(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
             self.append(val)
+            self.end_lineno = val.end_lineno
             self.ast.pos = self.ast.pos[-1]
             self.ast._obj_to_pythonize_list.append(val)
         else:
+            if self.inline and self.stringlike_effective_indent != self.indent:
+                raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+            elif not self.inline:
+                if self.indent[-1:] == '\t' and self.state.stringlike_effective_indent[len(self.indent):len(self.indent)+1] == '\t':
+                    if not (len(self.state.stringlike_effective_indent) >= len(self.indent) + 1 and self.state.stringlike_effective_indent.startswith(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+                else:
+                    if not (len(self.state.stringlike_effective_indent) >= len(self.indent) + 2 and self.state.stringlike_effective_indent(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
             self.append(val)
+            self.end_lineno = self.state.stringlike_end_lineno
+            self.state.reset()
         self.open = False
+
+
 
 
 class Ast(object):
@@ -283,7 +332,7 @@ class Ast(object):
     def __init__(self, decoder):
         self.decoder = decoder
         self.state = decoder.state
-        self.root = AstObj('root', decoder._ast, decoder.state)
+        self.root = AstObj('root', self, None)
         self.pos = self.root
         self._obj_to_pythonize_list = []
 
@@ -299,53 +348,60 @@ class Ast(object):
     def __bool__(self):
         return bool(self.root)
 
-    def _append_collection(self, cat):
+    def append_collection(self, cat):
         if self.state.inline:
             indent = self.state.inline_indent
-        elif self.state.type is not None:
-            indent = self.state.type_indent
         elif self.state.stringlike:
             indent = self.state.stringlike_effective_indent
+        elif self.state.type:
+            # If this indent is invalid, it will be caught in the creation
+            # of the `AstObj`
+            indent = self.state.type_indent
+        elif self.state.at_line_start:
+            indent = self.state.indent
         else:
-            raise erring.ParseError('Could not resolve indentation for {0}-like object'.format(cat), state.traceback)
-
+            raise erring.ParseError('Cannot resolve indentation in creating {0}-like object'.format(cat), self.state.traceback)
         while self.pos is not self.root and len(indent) < len(self.pos.indent):
             if self.pos.cat == 'kvpair' and len(self.pos) < 2:
-                raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_from_ast_pos(self.pos))
-            elif self.pos.cat == 'list' and self.pos.open:
+                raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_incomplete_kvpair)
+            elif self.pos.cat == 'list' and self.pos.open and not self.inline:
                 raise erring.ParseError('A list-like object was truncated before an expected element was added', self.state.traceback_current_start)
+            # Checking for unused explicit type declarations is done at each
+            # step, so it isn't necessary here
             self.pos = self.pos.parent
-
-        if cat == 'kvpair' and self.pos.cat != 'dict':
-            self.pos.check_append(AstObj('dict', self, self.state, indent))
-
-        self.pos.check_append(AstObj(cat, self, self.state, indent))
-
-    def append_dictlike(self):
-        return self._append_collection(self, 'dict')
-
-    def append_listlike(self):
-        return self._append_collection(self, 'list')
-
-    def append_typed_collection(self):
-        if self.state.type_cat == 'dict':
-            return self._append_collection(self, 'dict')
-        elif self.state.type_cat == 'list':
-            return self._append_collection(self, 'list')
-        else:
-            raise erring.ParseError('Attempting to create collection with invalid explicit type', self.state.traceback)
+        if not self.state.inline and cat == 'kvpair' and self.pos.cat != 'dict':
+            self.pos.check_append(AstObj('dict', self, indent))
+        self.pos.check_append(AstObj(cat, self, indent))
 
     def append_stringlike(self):
         self.ast.check_append(self.state.stringlike[0])
 
+    def open(self):
+        if self.state.inline:
+            if self.pos.cat != 'list':
+                raise erring.ParseError('Cannot append a list element here', self.state.traceback)
+            elif self.pos.indent != self.state.inline_indent
+                raise erring.ParseError('Cannot append a list element here; indentation error', self.state.traceback)
+            self.pos.open = True
+        elif self.state.at_line_start:
+            indent = self.state.indent
+            if self.pos.cat != 'list'
+        else:
+            raise erring.ParseError('Cannot append a list element', self.state.traceback)
+
 
     def finalize(self):
-        while self.pos is not self.root:
-            if self.pos.cat == 'kvpair' and len(self.pos) == 1:
-                self.pos.append('')
-            elif self.pos.cat == 'list' and self.pos.open:
-                self.pos.append('')
-            self.pos = self.pos.parent
+        if self.pos is not self.root:
+            if self.state.inline:
+                raise erring.ParseError('Inline syntax was never closed', self.state.traceback_start_inline_to_end)
+            if self.state.type is not None:
+                raise erring.ParseError('Explicit type definition was never used', self.state.traceback_type)
+            while self.pos is not self.root:
+                if self.pos.cat == 'kvpair' and len(self.pos) != 2:
+                    raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_incomplete_kvpair)
+                elif self.pos.cat == 'list' and self.pos.open and not self.pos.inline:
+                    raise erring.ParseError('A list-like object was truncated before an expected element was added', self.state.traceback_ast_pos_end_to_end)
+                self.pos = self.pos.parent
 
     def pythonize(self):
         for obj in reversed(self._obj_to_pythonize_list):
@@ -644,7 +700,7 @@ class BespONDecoder(object):
         try:
             s_bytes = s.encode('ascii')
         except UnicodeEncodeError as e:
-            raise erring.BinaryStringEncodeError(s, e, self.state)
+            raise erring.BinaryStringEncodeError(s, e, self.state.traceback)
         return s_bytes
 
 
@@ -681,8 +737,8 @@ class BespONDecoder(object):
         the root level, a BespON file may only contain a single scalar, or a
         single collection type.
         '''
-        self.state = Source()
-        self.unicodefilter.source = self.state
+        self.state = State()
+        self.unicodefilter.traceback = self.state
 
         self._ast = Ast(self)
 
@@ -692,7 +748,7 @@ class BespONDecoder(object):
             if line[0] == '\uFEFF':
                 line = line[1:]
             elif line[0] == '\uFFFE':
-                raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state)
+                raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state.traceback)
 
         while line is not None:
             line = self._parse_line[line[:1]](line)
@@ -703,7 +759,7 @@ class BespONDecoder(object):
             raise erring.ParseError('There was no data to load', self.state)
 
         self.state = None
-        self.unicodefilter.source = None
+        self.unicodefilter.traceback = None
 
         if self._debug_raw_ast:
             return
@@ -737,9 +793,9 @@ class BespONDecoder(object):
         `_parse_line_get_next()` is used for lookahead, but nothing is consumed.
         '''
         if line is not None:
+            self.state.at_line_start = True
             self.state.indent, line = self._split_line_on_indent(line)
             self.state.start_lineno = self.state.end_lineno
-            self.state.at_line_start = True
         return line
 
 
@@ -748,8 +804,8 @@ class BespONDecoder(object):
         Reset everything after `_parse_line_get_next()`, to continue on with
         the next line after having consumed part of it.
         '''
-        self.state.start_lineno = self.state.end_lineno
         self.state.at_line_start = False
+        self.state.start_lineno = self.state.end_lineno
         return line
 
 
@@ -759,10 +815,10 @@ class BespONDecoder(object):
         '''
         line = next(self._line_gen, None)
         if line is not None:
+            self.state.at_line_start = True
             self.state.indent, line = self._split_line_on_indent(line)
             self.state.end_lineno += 1
             self.state.start_lineno = self.state.end_lineno
-            self.state.at_line_start = True
         return line
 
 
@@ -774,11 +830,11 @@ class BespONDecoder(object):
         if len(delim) < 3:
             if line.startswith('%!bespon'):
                 if self.state.start_lineno != 1:
-                    raise erring.ParseError('Encountered "%!bespon", but not on first line', self.state)
-                elif not self.state.at_line_start or self._indent or lookahead:
-                    raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.state)
+                    raise erring.ParseError('Encountered "%!bespon", but not on first line', self.state.traceback)
+                elif self.state.indent or not self.state.at_line_start:
+                    raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.state.traceback)
                 elif line[len('%!bespon'):].rstrip(self.whitespace_str):
-                    raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line.rstrip(self.newline_chars_str)), self.state)
+                    raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line.rstrip(self.newline_chars_str)), self.state.traceback)
                 else:
                     line = self._parse_line_goto_next()
             else:
@@ -787,15 +843,21 @@ class BespONDecoder(object):
             line = line[len(delim):]
             self.state.at_line_start = False
             end_delim_re = self._closing_delim_re_dict[delim]
+            text_after_opening_delim = line.lstrip(self.whitespace_str)
             empty_line = False
             while True:
                 if delim in line:
                     m = end_delim_re.search(line)
                     if m:
                         if (empty_line and len(m.group(0)) == len(delim)):
-                            raise erring.ParseError('Found incorrect closing delimiter for multi-line comment containing empty line(s)', self.state)
-                        elif len(m.group(0)) > len(delim) + 2:
-                            raise erring.ParseError('Found incorrect closing delimiter for multi-line comment', self.state)
+                            raise erring.ParseError('Incorrect closing delimiter for multi-line comment containing empty line(s)', self.state.traceback)
+                        if len(m.group(0)) > len(delim) + 2:
+                            raise erring.ParseError('Incorrect closing delimiter for multi-line comment', self.state.traceback)
+                        if len(m.group(0)) == len(delim) + 2:
+                            if self.state.start_lineno == self.state.end_lineno:
+                                raise erring.ParseError('Multi-line comment may not begin and end on the same line', self.state.traceback)
+                            if text_after_opening_delim or line[:m.start()].lstrip(self.indents_str):
+                                raise erring.ParseError('In multi-line comments, opening delimiter may not be followed by anything and closing delimiter may not be preceded by anything', self.state.traceback)
                         line = line[m.end():]
                         if line.lstrip(self.whitespace_str):
                             line = self._parse_line_continue_next()
@@ -818,26 +880,17 @@ class BespONDecoder(object):
         Parse explicit typing.
         '''
         if self.state.type is not None:
-            raise erring.ParseError('Duplicate or unused explicit type declaration', self.state)
+            raise erring.ParseError('Duplicate or unused explicit type declaration', self.state.traceback_type)
         m = self._explicit_type_re.match(line)
         if not m:
             # Due to regex, any match is guaranteed to be a type name
             # consisting of at least one code point
-            raise erring.ParseError('Could not parse explicit type declaration', self.state)
-        self.state.register_type(m.group(0)[1:-2])
+            raise erring.ParseError('Could not parse explicit type declaration', self.state.traceback)
+        t = m.group(0)[1:-2]
+        self.state.set_type(t, self.parser_cats[t])
         self.state.at_line_start = False
         line = line[m.end():].lstrip(self.whitespace_str)
-        if not self.state.inline and self.state.type not in self.string_parsers:
-            if line:
-                while line[:1] == '%':
-                    line = self._parse_line_percent(line)
-                if self.state.start_lineno == self.state.type_lineno:
-                    raise erring.ParseError('Explicit type declarations must not be followed by anything in non-inline syntax', self.state)
-            if self.state.type in self.dict_parsers:
-                self._ast.append_dictlike()
-            elif self.state.type in self.list_parsers:
-                self._ast.append_listlike()
-        if not line and line is not None:
+        if not line:
             line = self._parse_line_goto_next()
         return line
 
