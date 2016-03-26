@@ -32,9 +32,9 @@ class BespONException(Exception):
             return '\n  ' + msg
         else:
             if traceback.start_lineno >= traceback.end_lineno:
-                t = 'In "{0}" on line {1}: '.format(traceback.name, traceback.start_lineno, traceback.end_lineno)
+                t = 'In "{0}" on line {1}: '.format(traceback.source, traceback.start_lineno, traceback.end_lineno)
             else:
-                t = 'In "{0}" on lines {1}-{2}: '.format(traceback.name, traceback.start_lineno, traceback.end_lineno)
+                t = 'In "{0}" on lines {1}-{2}: '.format(traceback.source, traceback.start_lineno, traceback.end_lineno)
             return '\n  ' + t + '\n  ' + msg
 
 

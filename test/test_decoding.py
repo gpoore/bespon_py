@@ -29,6 +29,14 @@ import bespon.erring as err
 
 import pytest
 
+import json
+try:
+    import yaml
+    loaded_yaml = True
+except ImportError:
+    loaded_yaml = False
+import textwrap
+
 
 def test__unwrap_inline():
     dc = mdl.BespONDecoder()
@@ -199,24 +207,14 @@ def test_decode_raw_ast():
     assert(dc._ast == [[['a', 'b'], ['c', 'd']]])
     dc.decode('"a"=\n "b"=\n  "c"="d"\n')
     assert(dc._ast == [ [['a', [['b', [['c', 'd']] ]] ]] ])
-'''
+
     dc.decode(' """\n  ab\n  cd\n """/ = "efg" ')
     assert(dc._ast == [ [[' ab\n cd\n', 'efg']] ])
-
-    dc.decode('(str.empty)> = "a"')
-    assert(dc._ast == [ [['', 'a']] ])
-    dc.decode('(bin.empty)> = "a"')
-    assert(dc._ast == [ [[b'', 'a']] ])
 
     dc.decode('+ "a"\n+ "b"')
     assert(dc._ast == [ ['a', 'b'] ])
     dc.decode('+\n  + "a"')
     assert(dc._ast == [ [ ['a'] ] ])
-
-    dc.decode('+ \n+ ')
-    assert(dc._ast == [ ['', ''] ])
-    dc.decode('=\n=')
-    assert(dc._ast == [ [['', ''], ['', '']] ])
 
     dc.decode('"a"=\n "b"="c"\n"d"="e"')
     assert(dc._ast == [ [ ['a', [['b', 'c']] ], ['d', 'e'] ] ])
@@ -225,20 +223,217 @@ def test_decode_raw_ast():
         dc.decode('"a"="b"\n "c"="d"')
     with pytest.raises(err.ParseError):
         dc.decode('+ "a"\n + "b"')
-'''
 
 
-"""
+
+
 def test_decode_indentation_syntax():
     dc = mdl.BespONDecoder()
 
     assert(dc.decode('"a"="b"') == {'a': 'b'})
+    assert(dc.decode(' "a" = "b" ') == {'a': 'b'})
+    assert(dc.decode('"a"=\n "b"') == {'a': 'b'})
+    assert(dc.decode('"a" =\n "b"') == {'a': 'b'})
+    assert(dc.decode('"a"="b"\n\n\n') == {'a': 'b'})
+    assert(dc.decode(' "a" = "b" \n\n\n') == {'a': 'b'})
+    assert(dc.decode('"a"=\n "b"\n\n\n') == {'a': 'b'})
+    assert(dc.decode('"a" =\n "b"\n\n\n') == {'a': 'b'})
+
+    assert(dc.decode('a=b') == {'a': 'b'})
+    assert(dc.decode(' a = b ') == {'a': 'b'})
+    assert(dc.decode('a=\n b') == {'a': 'b'})
+    assert(dc.decode('a =\n b') == {'a': 'b'})
+
     assert(dc.decode('"a"=\n "b"=\n  "c"="d"') == {'a': {'b': {'c': 'd'} } })
+    assert(dc.decode('a=\n b=\n  c=d') == {'a': {'b': {'c': 'd'} } })
+
+    assert(dc.decode(' "a" = 1\n "b" = \n  "c" = 3\n  "d" = 4\n\n') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+    assert(dc.decode(' a = 1\n b = \n  c = 3\n  d = 4\n\n') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+
     assert(dc.decode('+ "a"\n+ "b"') == ['a', 'b'])
     assert(dc.decode('+\n  + "a"\n  + "b"') == [['a', 'b']])
 
-    assert(dc.decode('a=b') == {'a': 'b'})
-"""
+
+
+def test_decode_inline_syntax():
+    dc = mdl.BespONDecoder()
+
+    assert(dc.decode('["a"]') == ['a'])
+    assert(dc.decode('[a]') == ['a'])
+    assert(dc.decode('{"a"="b"}') == {'a': 'b'})
+    assert(dc.decode('{a=b}') == {'a': 'b'})
+
+    assert(dc.decode('["a"; "b"]') == ['a', "b"])
+    assert(dc.decode('[a; b]') == ['a', 'b'])
+    assert(dc.decode('{"a"="b"; "c"="d"}') == {'a': 'b', 'c': 'd'})
+    assert(dc.decode('{a=b; c=d}') == {'a': 'b', 'c': 'd'})
+
+    assert(dc.decode('["a"; ["a"]]') == ['a', ['a']])
+    assert(dc.decode('{"a"={"b"="c"}}') == {'a': {'b': 'c'}})
+
+    assert(dc.decode('{"a"= 1; "b"= {"c"= 3; "d"= 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+    assert(dc.decode('{a = 1; b = {c = 3; d = 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+
+
+
+def test_decode_vs_json_yaml():
+    dc = mdl.BespONDecoder()
+
+    # Test against json example from https://en.wikipedia.org/wiki/JSON
+    s_json = '''\
+    {
+      "firstName": "John",
+      "lastName": "Smith",
+      "isAlive": true,
+      "age": 25,
+      "address": {
+        "streetAddress": "21 2nd Street",
+        "city": "New York",
+        "state": "NY",
+        "postalCode": "10021-3100"
+      },
+      "phoneNumbers": [
+        {
+          "type": "home",
+          "number": "212 555-1234"
+        },
+        {
+          "type": "office",
+          "number": "646 555-4567"
+        }
+      ],
+      "children": [],
+      "spouse": null
+    }
+    '''
+    s_bespon_inline = '''\
+    {
+      firstName = John;
+      lastName = Smith;
+      isAlive = true;
+      age = 25;
+      address = {
+        streetAddress = 21 2nd Street;
+        city = New York;
+        state = NY;
+        postalCode = 10021-3100
+      };
+      phoneNumbers = [
+        {
+          type = home;
+          number = 212 555-1234
+        };
+        {
+          type = office;
+          number = 646 555-4567
+        }
+      ];
+      children = [];
+      spouse = null
+    }
+    '''
+    s_bespon_non_inline = '''\
+    firstName = John
+    lastName = Smith
+    isAlive = true
+    age = 25
+    address =
+        streetAddress = 21 2nd Street
+        city = New York
+        state = NY
+        postalCode = 10021-3100
+    phoneNumbers =
+        + type = home
+          number = 212 555-1234
+        + type = office
+          number = 646 555-4567
+    children = []
+    spouse = null
+    '''
+    assert(dc.decode(s_bespon_inline) == json.loads(s_json))
+    assert(dc.decode(s_bespon_non_inline) == json.loads(s_json))
+
+    if loaded_yaml:
+        # https://en.wikipedia.org/wiki/YAML
+        s_yaml = '''\
+        ---
+        receipt:     Oz-Ware Purchase Invoice
+        date:        '2012-08-06'
+        customer:
+            first_name:   Dorothy
+            family_name:  Gale
+
+        items:
+            - part_no:   A4786
+              descrip:   Water Bucket (Filled)
+              price:     1.47
+              quantity:  4
+
+            - part_no:   E1628
+              descrip:   High Heeled "Ruby" Slippers
+              size:      8
+              price:     133.7
+              quantity:  1
+
+        bill-to:  &id001
+            street: |
+                    123 Tornado Alley
+                    Suite 16
+            city:   East Centerville
+            state:  KS
+
+        ship-to:  *id001
+
+        specialDelivery:  >
+            Follow the Yellow Brick
+            Road to the Emerald City.
+            Pay no attention to the
+            man behind the curtain.
+        ...
+        '''
+        s_yaml = textwrap.dedent(s_yaml)
+        s_bespon = """\
+        receipt =     Oz-Ware Purchase Invoice
+        date =        2012-08-06
+        customer =
+            first_name =   Dorothy
+            family_name =  Gale
+
+        items =
+            + part_no =   A4786
+              descrip =   'Water Bucket (Filled)'
+              price =     1.47
+              quantity =  4
+
+            + part_no =   E1628
+              descrip =   'High Heeled "Ruby" Slippers'
+              size =      8
+              price =     133.7
+              quantity =  1
+
+        bill-to =
+            street = '''
+                     123 Tornado Alley
+                     Suite 16
+                     '''/
+            city =   East Centerville
+            state =  KS
+
+        ship-to =
+            street = '''
+                     123 Tornado Alley
+                     Suite 16
+                     '''/
+            city =   East Centerville
+            state =  KS
+
+        specialDelivery = '''
+            Follow the Yellow Brick Road to the Emerald City. Pay no attention to the man behind the curtain.
+            '''/
+        """
+        s_bespon = textwrap.dedent(s_bespon)
+        assert(dc.decode(s_bespon) == yaml.load(s_yaml))
+
 
 
 
