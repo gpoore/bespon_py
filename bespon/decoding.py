@@ -195,7 +195,7 @@ class State(object):
 
     @property
     def traceback_ast_pos(self):
-        return self.traceback_namedtuple(self.source, self.ast.pos.start_lineno, selt.ast.pos.end_lineno)
+        return self.traceback_namedtuple(self.source, self.ast.pos.start_lineno, self.ast.pos.end_lineno)
 
     @property
     def traceback_ast_pos_end_to_end(self):
@@ -316,35 +316,42 @@ class AstObj(list):
         if isinstance(val, AstObj):
             if not self:
                 raise erring.ParseError('Keys for dict-like objects cannot be collection types', self.state.traceback)
-            if ((self.inline and val.indent != self.indent) or
-                    (not self.inline and not (val.indent.startswith(self.indent) and
-                        (len(val.indent) > len(self.indent) or (val.inline and val.start_lineno == self.end_lineno and len(val.indent) == len(self.indent))) ) ) ):
-                raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+            if self.inline:
+                if val.indent != self.indent:
+                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+            else:
+                if not (val.indent.startswith(self.indent) and
+                        (len(val.indent) > len(self.indent) or (val.inline and val.start_lineno == self.end_lineno and len(val.indent) == len(self.indent)))):
+                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
             self.append(val)
             self.end_lineno = val.end_lineno
             self.ast.pos = self.ast.pos[-1]
             self.ast._obj_to_pythonize_list.append(val)
         else:
+            state = self.state
             if not self:
-                if self.state.stringlike_effective_indent != self.indent:
-                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
-                if not self.inline and not self.state.stringlike_effective_at_line_start:
-                    raise erring.ParseError('Indeterminate indentation when attempting to add a key to a dict-like object', self.state.traceback)
+                if state.stringlike_effective_indent != self.indent:
+                    raise erring.ParseError('Indentation error in dict-like object', state.traceback)
+                if not self.inline and not state.stringlike_effective_at_line_start:
+                    raise erring.ParseError('Indeterminate indentation when attempting to add a key to a dict-like object', state.traceback)
                 self.append(val)
             else:
-                if ((self.inline and self.state.stringlike_effective_indent != self.indent) or
-                        (not self.inline and self.state.stringlike_effective_at_line_start and
-                            not (len(self.state.stringlike_effective_indent) > len(self.indent) and self.state.stringlike_effective_indent.startswith(self.indent))) ):
-                    raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
-                elif not self.inline and not self.state.stringlike_effective_at_line_start:
-                    if self.state.stringlike_effective_start_lineno != self.end_lineno:
-                        raise erring.ParseError('Indeterminate indentation when attempting to add a value to a dict-like object', self.state.traceback)
-                    if not (len(self.state.stringlike_effective_indent) >= len(self.indent) and self.state.stringlike_effective_indent.startswith(self.indent)):
-                        raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+                if self.inline:
+                    if state.stringlike_effective_indent != self.indent:
+                        raise erring.ParseError('Indentation error in dict-like object', state.traceback)
+                else:
+                    if state.stringlike_effective_at_line_start:
+                        if not (len(state.stringlike_effective_indent) > len(self.indent) and state.stringlike_effective_indent.startswith(self.indent)):
+                            raise erring.ParseError('Indentation error in dict-like object', state.traceback)
+                    else:
+                        if state.stringlike_effective_start_lineno != self.end_lineno:
+                            raise erring.ParseError('Indeterminate indentation when attempting to add a value to a dict-like object', state.traceback)
+                        if not (len(state.stringlike_effective_indent) >= len(self.indent) and state.stringlike_effective_indent.startswith(self.indent)):
+                            raise erring.ParseError('Indentation error in dict-like object', state.traceback)
                 self.append(val)
-            self.end_lineno = self.state.stringlike_end_lineno
-            self.state.type = None
-            self.state.stringlike.pop()
+            self.end_lineno = state.stringlike_end_lineno
+            state.type = None
+            state.stringlike.pop()
             if len(self) == 2:
                 self.ast.pos = self.ast.pos.parent
 
@@ -352,9 +359,10 @@ class AstObj(list):
         if not self.open:
             raise erring.ParseError('Cannot append to a list-like object when the current location has already been filled', self.state.traceback)
         if isinstance(val, AstObj):
-            if self.inline and val.indent != self.indent:
-                raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
-            elif not self.inline:
+            if self.inline:
+                if val.indent != self.indent:
+                    raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+            else:
                 if self.indent[-1:] == '\t' and val.indent[len(self.indent):len(self.indent)+1] == '\t':
                     if not (len(val.indent) >= len(self.indent) + 1 and val.indent.startswith(self.indent)):
                         raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
@@ -366,21 +374,23 @@ class AstObj(list):
             self.ast.pos = self.ast.pos[-1]
             self.ast._obj_to_pythonize_list.append(val)
         else:
-            if self.inline and self.state.stringlike_effective_indent != self.indent:
-                raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
-            elif not self.inline:
-                if not self.state.stringlike_effective_at_line_start:
-                    raise erring.ParseError('Indeterminate indentation when appending to list-like object', self.state.traceback)
-                elif self.indent[-1:] == '\t' and self.state.stringlike_effective_indent[len(self.indent):len(self.indent)+1] == '\t':
-                    if not (len(self.state.stringlike_effective_indent) >= len(self.indent) + 1 and self.state.stringlike_effective_indent.startswith(self.indent)):
-                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+            state = self.state
+            if self.inline:
+                if state.stringlike_effective_indent != self.indent:
+                    raise erring.ParseError('Indentation error in list-like object', state.traceback)
+            else:
+                if not state.stringlike_effective_at_line_start:
+                    raise erring.ParseError('Indeterminate indentation when appending to list-like object', state.traceback)
+                elif self.indent[-1:] == '\t' and state.stringlike_effective_indent[len(self.indent):len(self.indent)+1] == '\t':
+                    if not (len(state.stringlike_effective_indent) >= len(self.indent) + 1 and state.stringlike_effective_indent.startswith(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', state.traceback)
                 else:
-                    if not (len(self.state.stringlike_effective_indent) >= len(self.indent) + 2 and self.state.stringlike_effective_indent.startswith(self.indent)):
-                        raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
+                    if not (len(state.stringlike_effective_indent) >= len(self.indent) + 2 and state.stringlike_effective_indent.startswith(self.indent)):
+                        raise erring.ParseError('Indentation error in list-like object', state.traceback)
             self.append(val)
-            self.end_lineno = self.state.stringlike_end_lineno
-            self.state.type = None
-            self.state.stringlike.pop()
+            self.end_lineno = state.stringlike_end_lineno
+            state.type = None
+            state.stringlike.pop()
         self.open = False
 
 
@@ -417,36 +427,50 @@ class Ast(object):
         return bool(self.root)
 
     def append_collection(self, cat):
-        if self.state.inline:
-            if not self.state.indent.startswith(self.state.inline_indent):
-                raise erring.ParseError('Indentation error', self.state.traceback)
-            indent = self.state.inline_indent
-        elif self.state.stringlike:
-            indent = self.state.stringlike_effective_indent
-        elif self.state.type:
-            indent = self.state.type_indent
-        elif self.state.at_line_start:
-            indent = self.state.indent
+        state = self.state
+        if state.inline:
+            if not state.indent.startswith(state.inline_indent):
+                raise erring.ParseError('Indentation error', state.traceback)
+            indent = state.inline_indent
+        elif state.stringlike:
+            indent = state.stringlike_effective_indent
+        elif state.type:
+            indent = state.type_indent
+        elif state.at_line_start:
+            indent = state.indent
         else:
-            raise erring.ParseError('Indeterminate indentation when creating {0}-like object'.format(cat), self.state.traceback)
-        while self.pos is not self.root and len(indent) < len(self.pos.indent):
-            if self.pos.cat == 'kvpair' and len(self.pos) < 2:
-                raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_ast_pos)
-            elif self.pos.cat == 'dict' and not self.pos and not self.pos.inline:
-                raise erring.ParseError('A non-inline dict cannot be empty', self.traceback_ast_pos)
-            elif self.pos.cat == 'list' and not self.pos.inline:
-                if self.pos.open:
-                    raise erring.ParseError('A list-like object was truncated before an expected element was added', self.state.traceback_ast_pos)
-                if not self.pos:
-                    raise erring.ParseError('A non-inline list cannot be empty', self.state.traceback_ast_pos)
-            self.pos.parent.end_lineno = self.pos.end_lineno
-            self.pos = self.pos.parent
-            if self.pos.cat == 'kvpair':
-                if len(self.pos) < 2:
-                    raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_ast_pos)
-                self.pos.parent.end_lineno = self.pos.end_lineno
-                self.pos = self.pos.parent
-        if not self.state.inline and cat == 'kvpair' and self.pos.cat != 'dict':
+            raise erring.ParseError('Indeterminate indentation when creating {0}-like object'.format(cat), state.traceback)
+        # Temp variables must be used with care; otherwise, mess up tracebacks
+        pos = self.pos
+        root = self.root
+        while pos is not root and len(indent) < len(pos.indent):
+            if pos.cat == 'kvpair':
+                if len(pos) < 2:
+                    self.pos = pos
+                    raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
+            elif pos.cat == 'dict':
+                if not pos and not pos.inline:
+                    self.pos = pos
+                    raise erring.ParseError('A non-inline dict cannot be empty', state.traceback_ast_pos)
+            elif pos.cat == 'list':
+                if not pos.inline:
+                    if pos.open:
+                        self.pos = pos
+                        raise erring.ParseError('A list-like object was truncated before an expected element was added', state.traceback_ast_pos)
+                    if not pos:
+                        self.pos = pos
+                        raise erring.ParseError('A non-inline list cannot be empty', state.traceback_ast_pos)
+            pos.parent.end_lineno = pos.end_lineno
+            pos = pos.parent
+            if pos.cat == 'kvpair':
+                if len(pos) < 2:
+                    self.pos = pos
+                    raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
+                pos.parent.end_lineno = pos.end_lineno
+                pos = pos.parent
+        self.pos = pos
+        # Stop using temp var before doing anything that might change Ast
+        if not state.inline and cat == 'kvpair' and pos.cat != 'dict':
             self.pos.check_append(AstObj('dict', self, indent))
         self.pos.check_append(AstObj(cat, self, indent))
 
@@ -461,80 +485,108 @@ class Ast(object):
         self.pos.open = True
 
     def open_list_non_inline(self):
-        if self.state.inline or not self.state.at_line_start:
+        state = self.state
+        if state.inline or not state.at_line_start:
             raise erring.ParseError('Invalid location to begin a non-inline list element')
-        while self.pos is not self.root and len(self.state.indent) < len(self.pos.indent):
-            if self.pos.cat == 'kvpair' and len(self.pos) < 2:
-                raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_ast_pos)
-            elif self.pos.cat == 'dict' and not self.pos and not self.pos.inline:
-                raise erring.ParseError('A non-inline dict cannot be empty', self.traceback_ast_pos)
-            elif self.pos.cat == 'list' and not self.pos.inline:
-                if self.pos.open:
-                    raise erring.ParseError('A list-like object was truncated before an expected element was added', self.state.traceback_ast_pos)
-                if not self.pos:
-                    raise erring.ParseError('A non-inline list cannot be empty', self.state.traceback_ast_pos)
-            self.pos.parent.end_lineno = self.pos.end_lineno
-            self.pos = self.pos.parent
-            if self.pos.cat == 'kvpair':
-                if len(self.pos) < 2:
-                    raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_ast_pos)
-                self.pos.parent.end_lineno = self.pos.end_lineno
-                self.pos = self.pos.parent
-        if self.pos.cat != 'list' or len(self.pos.indent) < len(self.state.indent):
+        # Temp variables must be used with care; otherwise, mess up tracebacks
+        pos = self.pos
+        root = self.root
+        while pos is not root and len(state.indent) < len(pos.indent):
+            if pos.cat == 'kvpair':
+                if len(pos) < 2:
+                    self.pos = pos
+                    raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
+            elif pos.cat == 'dict':
+                if not pos and not pos.inline:
+                    self.pos = pos
+                    raise erring.ParseError('A non-inline dict cannot be empty', state.traceback_ast_pos)
+            elif pos.cat == 'list':
+                if not pos.inline:
+                    if pos.open:
+                        self.pos = pos
+                        raise erring.ParseError('A list-like object was truncated before an expected element was added', state.traceback_ast_pos)
+                    if not pos:
+                        self.pos = pos
+                        raise erring.ParseError('A non-inline list cannot be empty', state.traceback_ast_pos)
+            pos.parent.end_lineno = pos.end_lineno
+            pos = pos.parent
+            if pos.cat == 'kvpair':
+                if len(pos) < 2:
+                    self.pos = pos
+                    raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
+                pos.parent.end_lineno = pos.end_lineno
+                pos = pos.parent
+        self.pos = pos
+        if pos.cat != 'list' or len(pos.indent) < len(state.indent):
             self.append_collection('list')
         self.pos.open = True
 
     def end_dict_inline(self):
-        if not self.state.inline:
-            raise erring.ParseError('Cannot end an inline dict-like object with "}" when not in inline mode', self.state.traceback)
+        state = self.state
+        if not state.inline:
+            raise erring.ParseError('Cannot end an inline dict-like object with "}" when not in inline mode', state.traceback)
         if not self.pos.cat == 'dict':
-            raise erring.ParseError('Encountered "}" when there is no dict-like object to end', self.state.traceback)
-        if not self.state.indent.startswith(self.state.inline_indent):
-            raise erring.ParseError('Indentation error', self.state.traceback)
+            raise erring.ParseError('Encountered "}" when there is no dict-like object to end', state.traceback)
+        if not state.indent.startswith(state.inline_indent):
+            raise erring.ParseError('Indentation error', state.traceback)
         self.pos = self.pos.parent
-        self.state.inline = self.pos.inline
+        state.inline = self.pos.inline
         if self.pos.cat == 'kvpair' and len(self.pos) == 2:
             self.pos = self.pos.parent
-            self.state.inline = self.pos.inline
+            state.inline = self.pos.inline
 
     def end_list_inline(self):
-        if not self.state.inline:
-            raise erring.ParseError('Cannot end an inline list-like object with "]" when not in inline mode', self.state.traceback)
+        state = self.state
+        if not state.inline:
+            raise erring.ParseError('Cannot end an inline list-like object with "]" when not in inline mode', state.traceback)
         if not self.pos.cat == 'list':
             raise erring.ParseError('Encountered "]" when there is no list-like object to end', self.state.traceback)
-        if not self.state.indent.startswith(self.state.inline_indent):
-            raise erring.ParseError('Indentation error', self.state.traceback)
+        if not state.indent.startswith(state.inline_indent):
+            raise erring.ParseError('Indentation error', state.traceback)
         self.pos = self.pos.parent
-        self.state.inline = self.pos.inline
+        state.inline = self.pos.inline
         if self.pos.cat == 'kvpair' and len(self.pos) == 2:
             self.pos = self.pos.parent
-            self.state.inline = self.pos.inline
+            state.inline = self.pos.inline
 
 
     def finalize(self):
         if self.pos is not self.root:
-            if self.state.inline:
-                raise erring.ParseError('Inline syntax was never closed', self.state.traceback_start_inline_to_end)
-            if self.state.type:
-                raise erring.ParseError('Explicit type definition was never used', self.state.traceback_type)
-            if self.state.stringlike:
-                raise erring.ParseError('String-like object was never used', self.state.traceback_stringlike)
-            while self.pos is not self.root:
-                if self.pos.cat == 'kvpair' and len(self.pos) < 2:
-                    raise erring.ParseError('A key-value pair was truncated before being completed', self.state.traceback_ast_pos)
-                elif self.pos.cat == 'dict' and not self.pos and not self.pos.inline:
-                    raise erring.ParseError('A non-inline dict cannot be empty', self.traceback_ast_pos)
-                elif self.pos.cat == 'list' and not self.pos.inline:
-                    if self.pos.open:
-                        raise erring.ParseError('A list-like object was truncated before an expected element was added', self.state.traceback_ast_pos)
-                    if not self.pos:
-                        raise erring.ParseError('A non-inline list cannot be empty', self.state.traceback_ast_pos)
-                self.pos.parent.end_lineno = self.pos.end_lineno
-                self.pos = self.pos.parent
+            state = self.state
+            if state.inline:
+                raise erring.ParseError('Inline syntax was never closed', state.traceback_start_inline_to_end)
+            if state.type:
+                raise erring.ParseError('Explicit type definition was never used', state.traceback_type)
+            if state.stringlike:
+                raise erring.ParseError('String-like object was never used', state.traceback_stringlike)
+            # Temp variables must be used with care; otherwise, mess up tracebacks
+            pos = self.pos
+            root = self.root
+            while pos is not root:
+                if pos.cat == 'kvpair':
+                    if len(pos) < 2:
+                        self.pos = pos
+                        raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
+                elif pos.cat == 'dict':
+                    if not pos and not pos.inline:
+                        self.pos = pos
+                        raise erring.ParseError('A non-inline dict cannot be empty', state.traceback_ast_pos)
+                elif pos.cat == 'list':
+                    if not pos.inline:
+                        if pos.open:
+                            self.pos = pos
+                            raise erring.ParseError('A list-like object was truncated before an expected element was added', state.traceback_ast_pos)
+                        if not pos:
+                            self.pos = pos
+                            raise erring.ParseError('A non-inline list cannot be empty', state.traceback_ast_pos)
+                pos.parent.end_lineno = pos.end_lineno
+                pos = pos.parent
+            self.pos = pos
 
     def pythonize(self):
+        parsers = self.decoder.parsers
         for obj in reversed(self._obj_to_pythonize_list):
-            py_obj = self.decoder.parsers[obj.cat][obj.type](obj)
+            py_obj = parsers[obj.cat][obj.type](obj)
             obj.parent[obj.index] = py_obj
 
 
@@ -678,7 +730,7 @@ class BespONDecoder(object):
         # corresponding parsing functions.
         self.not_unquoted_str = '%()[]{}\'"=;'
         self.not_unquoted = set(self.not_unquoted_str)
-        self.not_unquoted_re = re.compile(r'[{0}]'.format(re.escape(self.not_unquoted_str)))
+        self._not_unquoted_re = re.compile('|'.join(re.escape(c) for c in self.not_unquoted))
 
         # Dict of functions for proceding with parsing, based on the next
         # character.
@@ -922,7 +974,7 @@ class BespONDecoder(object):
         '''
         if line is not None:
             state = self.state
-            rest = line.lstrip(self.indents_str)
+            rest = line.lstrip(self.whitespace_str)
             state.indent = line[:len(line)-len(rest)]
             state.at_line_start = True
             state.start_lineno = state.end_lineno
@@ -948,7 +1000,7 @@ class BespONDecoder(object):
         line = next(self._line_gen, None)
         if line is not None:
             state = self.state
-            rest = line.lstrip(self.indents_str)
+            rest = line.lstrip(self.whitespace_str)
             state.indent = line[:len(line)-len(rest)]
             state.at_line_start = True
             state.end_lineno += 1
@@ -1148,45 +1200,80 @@ class BespONDecoder(object):
         Parse a quoted string, once the opening delim has been determined
         and stripped, and a regex for the closing delim has been assembled.
         '''
-        m = end_delim_re.search(line)
-        if m:
-            end_delim = m.group(match_group_num)
-            if len(end_delim) > len(delim):
-                raise erring.ParseError('A block string may not begin and end on the same line', self.state.traceback)
-            s = line[:m.start(match_group_num)]
-            if len(delim) >= 3:
-                s = self._process_quoted_string([s], delim, end_delim)
-            line = line[m.end(match_group_num):]
+        s_lines = [line]
+        # No need to check for consistent indentation here; that is done
+        # during determination of `effective_indent`
+        state = self.state
+        if state.at_line_start:
+            indent = state.indent
+        elif state.inline:
+            indent = state.inline_indent
+        elif state.type:
+            indent = state.type_indent
         else:
-            s_lines = [line]
-            # No need to check for consistent indentation here; that is done
-            # during determination of `effective_indent`
-            if self.state.at_line_start:
-                indent = self.state.indent
-            elif self.state.inline:
-                indent = self.state.inline_indent
-            elif self.state.type:
-                indent = self.state.type_indent
+            indent = state.indent
+        while True:
+            line = self._parse_line_get_next()
+            if line is None:
+                raise erring.ParseError('Text ended while scanning quoted string', state.traceback)
+            if not line.startswith(indent) and line.lstrip(self.whitespace_str):
+                raise erring.ParseError('Indentation error within quoted string', state.traceback)
+            if delim not in line:
+                s_lines.append(line)
             else:
-                indent = self.state.indent
-            while True:
-                line = self._parse_line_get_next()
-                if line is None:
-                    raise erring.ParseError('Text ended while scanning quoted string', self.state.traceback)
-                if not line.startswith(indent) and line.lstrip(self.whitespace_str):
-                    raise erring.ParseError('Indentation error within quoted string', self.state.traceback)
-                if delim not in line:
+                m = end_delim_re.search(line)
+                if not m:
                     s_lines.append(line)
                 else:
-                    m = end_delim_re.search(line)
-                    if not m:
-                        s_lines.append(line)
-                    else:
-                        end_delim = m.group(match_group_num)
-                        s_lines.append(line[:m.start(match_group_num)])
-                        line = line[m.end(match_group_num):]
-                        s = self._process_quoted_string(s_lines, delim, end_delim)
-                        break
+                    end_delim = m.group(match_group_num)
+                    s_lines.append(line[:m.start(match_group_num)])
+                    line = line[m.end(match_group_num):].lstrip(self.whitespace_str)
+                    break
+        if len(delim) == len(end_delim):
+            # Make sure indentation is consistent and there are no empty lines
+            if len(s_lines) > 2:
+                for s_line in s_lines[1:-1]:
+                    if not s_line.lstrip(self.unicode_whitespace_str):
+                        raise erring.ParseError('Inline strings cannot contain empty lines', state.traceback)
+                indent = s_lines[1][:len(s_lines[1].lstrip(self.indents_str))]
+                len_indent = len(indent)
+                for n, s_line in enumerate(s_lines[1:]):
+                    if not s_line.startswith(indent) or s_line[len_indent:len_indent+1] in self.unicode_whitespace:
+                        raise erring.ParseError('Inconsistent indentation or leading Unicode whitespace within inline string', state.traceback)
+                    s_lines[n+1] = s_line[len_indent:]
+            else:
+                s_lines[1] = s_lines[1].lstrip(self.indents_str)
+            # Take care of any leading/trailing spaces that separate delimiter
+            # characters from identical characters in string.
+            if len(delim) >= 3:
+                dc = delim[0]
+                if s_lines[0][:1] in self.spaces and s_lines[0].lstrip(self.spaces_str)[:1] == dc:
+                    s_lines[0] = s_lines[0][1:]
+                if s_lines[-1][-1:] in self.spaces and s_lines[-1].rstrip(self.spaces_str)[-1:] == dc:
+                    s_lines[-1] = s_lines[-1][:-1]
+            # Unwrap
+            s = self._unwrap_inline(s_lines)
+        else:
+            if len(delim) < len(end_delim) - 2:
+                raise erring.ParseError('Invalid ending delimiter for block string', state.traceback)
+            if s_lines[0].lstrip(self.whitespace_str):
+                raise erring.ParseError('Characters are not allowed immediately after the opening delimiter of a block string', state.traceback)
+            if s_lines[-1].lstrip(self.indents_str):
+                raise erring.ParseError('Characters are not allowed immediately before the closing delimiter of a block string', state.traceback)
+            indent = s_lines[-1]
+            len_indent = len(indent)
+            if state.at_line_start and state.indent != indent:
+                raise erring.ParseError('Opening and closing delimiters for block string do not have matching indentation', state.traceback)
+            for n, s_line in enumerate(s_lines[1:-1]):
+                if s_line.startswith(indent):
+                    s_lines[n+1] = s_line[len_indent:]
+                else:
+                    if s_line.lstrip(self.whitespace_str):
+                        raise erring.ParseError('Inconsistent indent in block string', state.traceback)
+                    s_lines[n+1] = line.lstrip(self.indents_str)
+            if len(delim) == len(end_delim) - 2:
+                s_lines[-2] = s_lines[-2].rstrip(self.newline_chars_str)
+            s = ''.join(s_lines[1:-1])
         return (s, line)
 
 
@@ -1238,59 +1325,6 @@ class BespONDecoder(object):
         else:
             self._ast.append_stringlike()
         return line
-
-
-    def _process_quoted_string(self, s_lines, delim, end_delim):
-        '''
-        Process list of raw text lines that make up a quoted string.  The
-        string wraps over multiple lines if it is an inline string.
-        '''
-        if len(delim) == len(end_delim):
-            # Make sure indentation is consistent and there are no empty lines
-            if len(s_lines) > 2:
-                for line in s_lines[1:-1]:
-                    if not line.lstrip(self.unicode_whitespace_str):
-                        raise erring.ParseError('Inline strings cannot contain empty lines', self.state.traceback)
-                indent = s_lines[1][:len(s_lines[1].lstrip(self.indents_str))]
-                len_indent = len(indent)
-                for n, line in enumerate(s_lines[1:]):
-                    if not line.startswith(indent) or line[len_indent:len_indent+1] in self.unicode_whitespace:
-                        raise erring.ParseError('Inconsistent indentation or leading Unicode whitespace within inline string', self.state.traceback)
-                    s_lines[n+1] = line[len_indent:]
-            else:
-                s_lines[1] = s_lines[1].lstrip(self.indents_str)
-            # Take care of any leading/trailing spaces that separate delimiter
-            # characters from identical characters in string.
-            if len(delim) >= 3:
-                dc = delim[0]
-                if s_lines[0][:1] in self.spaces and s_lines[0].lstrip(self.spaces_str)[:1] == dc:
-                    s_lines[0] = s_lines[0][1:]
-                if s_lines[-1][-1:] in self.spaces and s_lines[-1].rstrip(self.spaces_str)[-1:] == dc:
-                    s_lines[-1] = s_lines[-1][:-1]
-            # Unwrap
-            s = self._unwrap_inline(s_lines)
-        else:
-            if len(delim) < len(end_delim) - 2:
-                raise erring.ParseError('Invalid ending delimiter for block string', self.state)
-            if s_lines[0].lstrip(self.whitespace_str):
-                raise erring.ParseError('Characters are not allowed immediately after the opening delimiter of a block string', self.state)
-            if s_lines[-1].lstrip(self.indents_str):
-                raise erring.ParseError('Characters are not allowed immediately before the closing delimiter of a block string', self.state)
-            indent = s_lines[-1]
-            len_indent = len(indent)
-            if self.state.at_line_start and self.state.indent != indent:
-                raise erring.ParseError('Opening and closing delimiters for block string do not have matching indentation', self.state)
-            for n, line in enumerate(s_lines[1:-1]):
-                if line.startswith(indent):
-                    s_lines[n+1] = line[len_indent:]
-                else:
-                    if line.lstrip(self.whitespace_str):
-                        raise erring.ParseError('Inconsistent indent in block string', self.state)
-                    s_lines[n+1] = line.lstrip(self.indents_str)
-            if len(delim) == len(end_delim) - 2:
-                s_lines[-2] = s_lines[-2].rstrip(self.newline_chars_str)
-            s = ''.join(s_lines[1:-1])
-        return s
 
 
     def _parse_line_equals(self, line):
@@ -1415,61 +1449,66 @@ class BespONDecoder(object):
 
     def _parse_line_unquoted_string(self, line):
         state = self.state
-        m = self._unquoted_string_fragment_re.match(line)
-        if m.end() < len(line):
-            s = line[:m.end()].rstrip(self.whitespace_str)
-            line = line[m.end():]
+        m = self._not_unquoted_re.search(line)
+        if m:
+            s = line[:m.start()].rstrip(self.whitespace_str)
+            line = line[m.start():]
             next_line_action = None
         else:
             s_list = [line]
             line = self._parse_line_get_next()
             if state.inline:
                 indent = state.inline_indent
-                len_indent = len(indent)
             elif state.at_line_start:
                 indent = state.indent
-                len_indent = len(indent)
             else:
-                if line is not None and line.lstrip(self.whitespace_str):
-                    indent = line[:len(state.indent)+1]
-                    len_indent = len(indent)
-                    if not indent.startswith(state.indent) or indent[-1] not in self.indents:
+                if line is not None:
+                    if line.lstrip(self.whitespace_str):
+                        indent = line[:len(state.indent)+1]
+                        if indent[-1] not in self.indents or not indent.startswith(state.indent):
+                            indent = None
+                            next_line_action = self._parse_line_start_next
+                    else:
                         indent = None
+                        next_line_action = self._parse_line_goto_next
                 else:
                     indent = None
+                    next_line_action = self._parse_line_start_next
             if indent is None:
-                next_line_action = self._parse_line_start_next
+                s = s_list[0].rstrip(self.whitespace_str)
             else:
+                len_indent = len(indent)
                 while True:
                     if line is None or not line.lstrip(self.whitespace_str) or not line.startswith(indent):
                         next_line_action = self._parse_line_start_next
                         break
-                    # Match with offset, to avoid matching indentation chars
-                    m = self._unquoted_string_fragment_re.match(line, len_indent)
-                    if not m:
-                        next_line_action = self._parse_line_start_next
-                        break
-                    elif m.end() < len(line):
-                        s_line = line[len_indent:m.end()]
-                        if s_line.lstrip(self.whitespace_str):
-                            s_list.append(s_line)
-                            line = line[m.end():]
-                            next_line_action = self._parse_line_continue_next
-                        else:
+                    # Search with offset for efficiency
+                    m = self._not_unquoted_re.search(line, len_indent)
+                    if m:
+                        if m.start() == len(line) - len(line.lstrip(self.indents_str)) - 1:
                             next_line_action = self._parse_line_start_next
-                        break
+                            break
+                        else:
+                            s_line = line[len_indent:m.start()]
+                            if s_line.lstrip(self.whitespace_str):
+                                s_list.append(s_line)
+                                line = line[m.start():]
+                                next_line_action = self._parse_line_continue_next
+                            else:
+                                next_line_action = self._parse_line_start_next
+                            break
                     else:
                         s_list.append(line[len_indent:])
                         line = self._parse_line_get_next()
-            # Leading whitespace will have already been stripped
-            s_list[-1] = s_list[-1].rstrip(self.whitespace_str)
-            for s_line in s_list:
-                s_line_lstrip_uws = s_line.lstrip(self.unicode_whitespace_str)
-                if not s_line_lstrip_uws:
-                    raise erring.ParseError('Unquoted strings cannot contain lines consisting solely of Unicode whitespace characters', self.state.traceback)
-                if s_line_lstrip_uws[:1] in self.unicode_whitespace:
-                    raise erring.ParseError('Unquoted strings cannot contain lines beginning with Unicode whitespace characters', self.state.traceback)
-            s = self._unwrap_inline(s_list)
+                # Leading whitespace will have already been stripped
+                s_list[-1] = s_list[-1].rstrip(self.whitespace_str)
+                for s_line in s_list:
+                    s_line_lstrip_uws = s_line.lstrip(self.unicode_whitespace_str)
+                    if not s_line_lstrip_uws:
+                        raise erring.ParseError('Unquoted strings cannot contain lines consisting solely of Unicode whitespace characters', self.state.traceback)
+                    if s_line_lstrip_uws[:1] in self.unicode_whitespace:
+                        raise erring.ParseError('Unquoted strings cannot contain lines beginning with Unicode whitespace characters', self.state.traceback)
+                s = self._unwrap_inline(s_list)
         if s[0] in self.unicode_whitespace or s[-1] in self.unicode_whitespace:
             raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters', self.state.traceback)
 
@@ -1507,10 +1546,12 @@ class BespONDecoder(object):
             while line is not None:
                 if line[:1] == '%':
                     line = self._parse_line_percent(line)
-                elif not line.lstrip(self.whitespace_str):
-                    line = self._parse_line_goto_next()
                 else:
-                    break
+                    line = line.lstrip(self.whitespace_str)
+                    if not line:
+                        line = self._parse_line_goto_next()
+                    else:
+                        break
         if line is not None and line[:1] == '=' and line[1:2] != '=':
             if state.inline:
                 if not state.indent.startswith(state.inline_indent):
@@ -1523,6 +1564,4 @@ class BespONDecoder(object):
             self._ast.append_stringlike()
         else:
             self._ast.append_stringlike()
-        if line is not None and not line.lstrip(self.whitespace_str):
-            line = self._parse_line_goto_next()
         return line
