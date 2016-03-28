@@ -124,12 +124,14 @@ class State(object):
             else:
                 if not self.stringlike_at_line_start and self.stringlike_start_lineno != self.type_lineno:
                     raise erring.ParseError('Indeterminate indentation for string-like object', self.traceback_stringlike)
-                if ((self.type_at_line_start and self.stringlike_at_line_start and not self.stringlike_indent.startswith(self.type_indent)) or
-                        (not self.type_at_line_start and self.stringlike_at_line_start and
-                            not (self.stringlike_indent.startswith(self.type_indent) and len(self.stringlike_indent) > len(self.type_indent)) ) ):
+                if self.type_at_line_start:
+                    if self.stringlike_at_line_start and not self.stringlike_indent.startswith(self.type_indent):
+                        raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                else:
+                    if self.stringlike_at_line_start and not (self.stringlike_indent.startswith(self.type_indent) and len(self.stringlike_indent) > len(self.type_indent)):
                     # When `stringlike_at_line_start` is False, indentation
                     # would automatically be identical
-                    raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                        raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
                 self.stringlike_effective_at_line_start = self.type_at_line_start
                 self.stringlike_effective_indent = self.type_indent
         else:
@@ -676,6 +678,7 @@ class BespONDecoder(object):
         # corresponding parsing functions.
         self.not_unquoted_str = '%()[]{}\'"=;'
         self.not_unquoted = set(self.not_unquoted_str)
+        self.not_unquoted_re = re.compile(r'[{0}]'.format(re.escape(self.not_unquoted_str)))
 
         # Dict of functions for proceding with parsing, based on the next
         # character.
@@ -738,6 +741,9 @@ class BespONDecoder(object):
                 p = r'(?<!{c}){c}{{{n}}}(?!{c})/*'.format(c=re.escape(c), n=len(delim))
             return re.compile(p)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
+
+        # Quick identification of strings for int/float checking
+        self._numeric_type_starting_chars = set('+-.0123456789')
 
         # Regex for integers, including hex, octal, and binary.
         pattern_int = r'''
@@ -899,15 +905,6 @@ class BespONDecoder(object):
             return self._ast.root[0]
 
 
-    def _split_line_on_indent(self, line):
-        '''
-        Split a line into its leading indentation and everything else.
-        '''
-        rest = line.lstrip(self.indents_str)
-        indent = line[:len(line)-len(rest)]
-        return (indent, rest)
-
-
     def _parse_line_get_next(self, line=None):
         '''
         Get next line.  For use in lookahead in string scanning, etc.
@@ -924,9 +921,12 @@ class BespONDecoder(object):
         `_parse_line_get_next()` is used for lookahead, but nothing is consumed.
         '''
         if line is not None:
-            self.state.at_line_start = True
-            self.state.indent, line = self._split_line_on_indent(line)
-            self.state.start_lineno = self.state.end_lineno
+            state = self.state
+            rest = line.lstrip(self.indents_str)
+            state.indent = line[:len(line)-len(rest)]
+            state.at_line_start = True
+            state.start_lineno = state.end_lineno
+            return rest
         return line
 
 
@@ -935,8 +935,9 @@ class BespONDecoder(object):
         Reset everything after `_parse_line_get_next()`, to continue on with
         the next line after having consumed part of it.
         '''
-        self.state.at_line_start = False
-        self.state.start_lineno = self.state.end_lineno
+        state = self.state
+        state.at_line_start = False
+        state.start_lineno = state.end_lineno
         return line
 
 
@@ -946,10 +947,13 @@ class BespONDecoder(object):
         '''
         line = next(self._line_gen, None)
         if line is not None:
-            self.state.at_line_start = True
-            self.state.indent, line = self._split_line_on_indent(line)
-            self.state.end_lineno += 1
-            self.state.start_lineno = self.state.end_lineno
+            state = self.state
+            rest = line.lstrip(self.indents_str)
+            state.indent = line[:len(line)-len(rest)]
+            state.at_line_start = True
+            state.end_lineno += 1
+            state.start_lineno = state.end_lineno
+            return rest
         return line
 
 
@@ -1094,25 +1098,52 @@ class BespONDecoder(object):
         '''
         Parse single-quoted string.
         '''
-        delim = self._opening_delim_single_quote_re.match(line).group(0)
-        line = line[len(delim):]
-        end_delim_re = self._closing_delim_re_dict[delim]
-        match_group_num = 0
-        return self._parse_line_quoted_string(line, delim, end_delim_re, match_group_num)
-
+        len_delim = len(line)
+        line = line.lstrip("'")
+        len_delim -= len(line)
+        delim = "'"*len_delim
+        if delim in line:
+            s, line = line.split("'", 1)
+            if len(delim) > 2:
+                if line[:1] == '/':
+                    raise erring.ParseError('A block string may not begin and end on the same line', self.state.traceback)
+                if s[:1] in self.spaces and s.lstrip(self.spaces_str) == "'":
+                    s = s[1:]
+                if s[-1:] in self.spaces and s.rstrip(self.spaces_str) == "'":
+                    s = s[:-1]
+        elif len(delim) == 2:
+            s = ''
+        else:
+            end_delim_re = self._closing_delim_re_dict[delim]
+            match_group_num = 0
+            s, line = self._parse_line_get_quoted_string(line, delim, end_delim_re, match_group_num)
+        return self._parse_line_resolve_quoted_string(line, s, delim)
 
     def _parse_line_double_quote(self, line):
         '''
         Parse double-quoted string.
         '''
-        delim = self._opening_delim_double_quote_re.match(line).group(0)
-        line = line[len(delim):]
-        end_delim_re = self._closing_delim_re_dict[delim]
-        match_group_num = 1
-        return self._parse_line_quoted_string(line, delim, end_delim_re, match_group_num)
+        len_delim = len(line)
+        line = line.lstrip('"')
+        len_delim -= len(line)
+        delim = '"'*len_delim
+        if delim == '""':
+            s = ''
+        else:
+            end_delim_re = self._closing_delim_re_dict[delim]
+            match_group_num = 1
+            m = end_delim_re.match(line)
+            if m:
+                s = line[:m.start(match_group_num)]
+                line = line[m.end(match_group_num):]
+                if m.end(match_group_num) - m.start(match_group_num) > len(delim):
+                    raise erring.ParseError('A block string may not begin and end on the same line', self.state.traceback)
+            else:
+                s, line = self._parse_line_get_quoted_string(line, delim, end_delim_re, match_group_num)
+        return self._parse_line_resolve_quoted_string(line, s, delim)
 
 
-    def _parse_line_quoted_string(self, line, delim, end_delim_re, match_group_num):
+    def _parse_line_get_quoted_string(self, line, delim, end_delim_re, match_group_num):
         '''
         Parse a quoted string, once the opening delim has been determined
         and stripped, and a regex for the closing delim has been assembled.
@@ -1156,8 +1187,12 @@ class BespONDecoder(object):
                         line = line[m.end(match_group_num):]
                         s = self._process_quoted_string(s_lines, delim, end_delim)
                         break
+        return (s, line)
 
-        if self.state.type in self._bytes_parsers:
+
+    def _parse_line_resolve_quoted_string(self, line, s, delim):
+        state = self.state
+        if state.type and state.type in self._bytes_parsers:
             s = self.unicodefilter.unicode_to_ascii_newlines(s)
             s = self._unicode_to_bytes(s)
             if delim[0] == '"':
@@ -1165,39 +1200,43 @@ class BespONDecoder(object):
         elif delim[0] == '"':
             s = self.unicodefilter.unescape(s)
 
-        try:
-            s = self.string_parsers[self.state.type](s)
-        except KeyError:
-            raise erring.ParseError('Unknown explicit type "{0}" applied to string'.format(self.state.type), self.state.traceback_type)
-        except Exception as e:
-            raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(self.state.type, e), self.state.traceback)
+        if state.type:
+            try:
+                s = self.string_parsers[self.state.type](s)
+            except KeyError:
+                raise erring.ParseError('Unknown explicit type "{0}" applied to string'.format(self.state.type), self.state.traceback_type)
+            except Exception as e:
+                raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(self.state.type, e), self.state.traceback)
 
-        self.state.set_stringlike(s)
-        if self.state.start_lineno == self.state.end_lineno:
-            self.state.at_line_start = False
+        state.set_stringlike(s)
+        if state.start_lineno == state.end_lineno:
+            state.at_line_start = False
         else:
             self._parse_line_continue_next()
 
         line = line.lstrip(self.whitespace_str)
-        while line is not None:
-            if line[:1] == '%':
-                line = self._parse_line_percent(line)
-            elif not line.lstrip(self.whitespace_str):
-                line = self._parse_line_goto_next()
-            else:
-                break
+        if not line or line[:1] == '%':
+            while line is not None:
+                if line[:1] == '%':
+                    line = self._parse_line_percent(line)
+                else:
+                    line = line.lstrip(self.whitespace_str)
+                    if not line:
+                        line = self._parse_line_goto_next()
+                    else:
+                        break
         if line is not None and line[:1] == '=' and line[1:2] != '=':
-            if self.state.inline and not self.state.indent.startswith(self.state.inline_indent):
-                raise erring.ParseError('Indentation error', self.state.traceback)
-            if not self.state.inline and self.state.stringlike_end_lineno != self.state.start_lineno:
-                raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
+            if state.inline:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.ParseError('Indentation error', self.state.traceback)
+            else:
+                if state.stringlike_end_lineno != self.state.start_lineno:
+                    raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
             line = line[1:].lstrip(self.whitespace_str)
             self._ast.append_collection('kvpair')
             self._ast.append_stringlike()
         else:
             self._ast.append_stringlike()
-        if line is not None and not line.lstrip(self.whitespace_str):
-            line = self._parse_line_goto_next()
         return line
 
 
@@ -1375,25 +1414,26 @@ class BespONDecoder(object):
         raise erring.ParseError('Unexpected whitespace; if you are seeing this message, there is a bug in the parser', self.state.traceback)
 
     def _parse_line_unquoted_string(self, line):
+        state = self.state
         m = self._unquoted_string_fragment_re.match(line)
         if m.end() < len(line):
-            s_list = [line[:m.end()]]
+            s = line[:m.end()].rstrip(self.whitespace_str)
             line = line[m.end():]
             next_line_action = None
         else:
             s_list = [line]
             line = self._parse_line_get_next()
-            if self.state.inline:
-                indent = self.state.inline_indent
+            if state.inline:
+                indent = state.inline_indent
                 len_indent = len(indent)
-            elif self.state.at_line_start:
-                indent = self.state.indent
+            elif state.at_line_start:
+                indent = state.indent
                 len_indent = len(indent)
             else:
                 if line is not None and line.lstrip(self.whitespace_str):
-                    indent = line[:len(self.state.indent)+1]
+                    indent = line[:len(state.indent)+1]
                     len_indent = len(indent)
-                    if not indent.startswith(self.state.indent) or indent[-1] not in self.indents:
+                    if not indent.startswith(state.indent) or indent[-1] not in self.indents:
                         indent = None
                 else:
                     indent = None
@@ -1421,59 +1461,30 @@ class BespONDecoder(object):
                     else:
                         s_list.append(line[len_indent:])
                         line = self._parse_line_get_next()
-        # Leading whitespace will have already been stripped
-        s_list[-1] = s_list[-1].rstrip(self.whitespace_str)
-        for s_line in s_list:
-            s_line_lstrip_uws = s_line.lstrip(self.unicode_whitespace_str)
-            if not s_line_lstrip_uws:
-                raise erring.ParseError('Unquoted strings cannot contain lines consisting solely of Unicode whitespace characters', self.state.traceback)
-            if s_line_lstrip_uws[:1] in self.unicode_whitespace:
-                raise erring.ParseError('Unquoted strings cannot contain lines beginning with Unicode whitespace characters', self.state.traceback)
-        s = self._unwrap_inline(s_list)
+            # Leading whitespace will have already been stripped
+            s_list[-1] = s_list[-1].rstrip(self.whitespace_str)
+            for s_line in s_list:
+                s_line_lstrip_uws = s_line.lstrip(self.unicode_whitespace_str)
+                if not s_line_lstrip_uws:
+                    raise erring.ParseError('Unquoted strings cannot contain lines consisting solely of Unicode whitespace characters', self.state.traceback)
+                if s_line_lstrip_uws[:1] in self.unicode_whitespace:
+                    raise erring.ParseError('Unquoted strings cannot contain lines beginning with Unicode whitespace characters', self.state.traceback)
+            s = self._unwrap_inline(s_list)
         if s[0] in self.unicode_whitespace or s[-1] in self.unicode_whitespace:
-            raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters')
-        s = self._type_unquoted_string(s)
+            raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters', self.state.traceback)
 
-        self.state.set_stringlike(s)
-        if next_line_action is None:
-            self.state.at_line_start = False
-        else:
-            line = next_line_action(line)
-
-        while line is not None:
-            if line[:1] == '%':
-                line = self._parse_line_percent(line)
-            elif not line.lstrip(self.whitespace_str):
-                line = self._parse_line_goto_next()
-            else:
-                break
-        if line is not None and line[:1] == '=' and line[1:2] != '=':
-            if self.state.inline and not self.state.indent.startswith(self.state.inline_indent):
-                raise erring.ParseError('Indentation error', self.state.traceback)
-            if not self.state.inline and self.state.stringlike_end_lineno != self.state.start_lineno:
-                raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
-            line = line[1:].lstrip(self.whitespace_str)
-            self._ast.append_collection('kvpair')
-            self._ast.append_stringlike()
-        else:
-            self._ast.append_stringlike()
-        if line is not None and not line.lstrip(self.whitespace_str):
-            line = self._parse_line_goto_next()
-        return line
-
-    def _type_unquoted_string(self, s):
-        if self.state.type:
-            if self.state.type in self._bytes_parsers:
+        if state.type:
+            if state.type in self._bytes_parsers:
                 s = self._unicode_to_bytes(s)
             try:
-                s_typed = self.string_parsers[self.state.type](s)
+                s_typed = self.string_parsers[state.type](s)
             except KeyError:
                 raise erring.ParseError('Unknown explicit type "{0}" applied to unquoted string-like object', self.state.traceback_type)
             except Exception as e:
                 raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(self.state.type, e), self.state.traceback)
         elif s in self.reserved_words:
             s_typed = self.reserved_words[s]
-        else:
+        elif s[0] in self._numeric_type_starting_chars:
             m_int = self._int_re.match(s)
             if m_int:
                 s_typed = int(s.replace('_', ''))
@@ -1483,4 +1494,35 @@ class BespONDecoder(object):
                     s_typed = float(s.replace('_', ''))
                 else:
                     s_typed = s
-        return s_typed
+        else:
+            s_typed = s
+
+        state.set_stringlike(s_typed)
+        if next_line_action is None:
+            state.at_line_start = False
+        else:
+            line = next_line_action(line)
+
+        if not line or line[:1] == '%':
+            while line is not None:
+                if line[:1] == '%':
+                    line = self._parse_line_percent(line)
+                elif not line.lstrip(self.whitespace_str):
+                    line = self._parse_line_goto_next()
+                else:
+                    break
+        if line is not None and line[:1] == '=' and line[1:2] != '=':
+            if state.inline:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.ParseError('Indentation error', self.state.traceback)
+            else:
+                if state.stringlike_end_lineno != state.start_lineno:
+                    raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
+            line = line[1:].lstrip(self.whitespace_str)
+            self._ast.append_collection('kvpair')
+            self._ast.append_stringlike()
+        else:
+            self._ast.append_stringlike()
+        if line is not None and not line.lstrip(self.whitespace_str):
+            line = self._parse_line_goto_next()
+        return line

@@ -50,12 +50,6 @@ def test__unwrap_inline():
     assert(dc._unwrap_inline(v.splitlines(True)) == v.replace('\n', ''))
 
 
-def test__split_line_on_indent():
-    dc = mdl.BespONDecoder()
-    s = '\x20\t\x20\t\t\x20\r\n'
-    assert(dc._split_line_on_indent(s) == (s[:-2], '\r\n'))
-
-
 def test_int_re():
     dc = mdl.BespONDecoder()
     assert(dc._int_re.match('0'))
