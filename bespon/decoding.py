@@ -24,9 +24,7 @@ from . import erring
 from . import unicoding
 from . import tooling
 import base64
-import binascii
 import collections
-import copy
 import re
 
 
@@ -38,63 +36,85 @@ class State(object):
     current location within the source (range of lines currently being parsed,
     plus indentation and whether at beginning of line), whether syntax is
     inline, explicit typing to be applied to the next object, the next
-    string-like object, etc.
+    string-like object, etc.  Several properties are available for providing
+    tracebacks in the event of errors.
 
-    An instance is created when decoding begins, and line numbers are updated
-    as parsing proceeds.  The instance is passed on to any parsing errors that
-    are raised, to provide informative error messages.
+    The state serves as a one-element stack for explicit typing and for
+    string-like objects.  This allows type information to be held until it is
+    needed, and allows lookahead after string-like objects so that it may be
+    determined whether they are dict keys.
     '''
-    __slots__ = ['ast', 'decoder', 'source', 'indent', 'at_line_start', 'start_lineno', 'end_lineno',
+    # Use __slots__ to optimize attribute access
+    __slots__ = ['ast', 'decoder', 'source',
+                 'indent', 'at_line_start', 'start_lineno', 'end_lineno',
+                 'inline', 'inline_indent',
                  'type', 'type_indent', 'type_at_line_start', 'type_lineno', 'type_cat',
                  'stringlike', 'stringlike_val', 'stringlike_indent', 'stringlike_at_line_start', 'stringlike_start_lineno', 'stringlike_end_lineno',
-                     'stringlike_effective_indent', 'stringlike_effective_at_line_start', 'stringlike_effective_start_lineno',
-                 'inline', 'inline_indent']
+                 'stringlike_effective_indent', 'stringlike_effective_at_line_start', 'stringlike_effective_start_lineno']
 
-    def __init__(self, ast=None, decoder=None, source=None, indent=None, at_line_start=True, start_lineno=0, end_lineno=0):
-        self.ast = ast
-        self.decoder = decoder
-        if source is None:
-            source = '<string>'
-        self.source = source
+    def __init__(self, source=None,
+                 indent=None, at_line_start=None, start_lineno=0, end_lineno=0,
+                 inline=False, inline_indent=None):
+        # These are set later, since they don't typically exist when a
+        # `State()` is created
+        self.ast = None
+        self.decoder = None
+
+        # Current state information
+        self.source = source or '<string>'
         self.indent = indent
         self.at_line_start = at_line_start
         self.start_lineno = start_lineno
         self.end_lineno = end_lineno
+        self.inline = inline
+        self.inline_indent = inline_indent
 
+        # Information for last explicit type declaration
         self.type = None
         self.type_indent = None
         self.type_at_line_start = None
         self.type_lineno = None
         self.type_cat = None
 
-        self.stringlike = []
+        # Information for last string-like object
+        self.stringlike = False
+        self.stringlike_val = None
         self.stringlike_indent = None
         self.stringlike_at_line_start = None
         self.stringlike_start_lineno = None
         self.stringlike_end_lineno = None
+        # Information for resolving string-like object that accounts for the
+        # possibility of an explicit type declaration, which might be on an
+        # earlier line
         self.stringlike_effective_indent = None
         self.stringlike_effective_at_line_start = None
         self.stringlike_effective_start_lineno = None
 
-        self.inline = False
-        self.inline_indent = None
-
     def register(self, ast=None, decoder=None):
-        if ast is not None:
-            self.ast = ast
-        if decoder is not None:
-            self.decoder = decoder
+        '''
+        Set `ast` and `decoder`.
+
+        This isn't done in `__init__()` because `ast` and `state` have a
+        circular dependency.  The solution is to create `state` first, then
+        create `ast` and allow it to register itself and its `decoder`.
+        '''
+        self.ast = ast
+        self.decoder = decoder
 
     traceback_namedtuple = collections.namedtuple('traceback_namedtuple', ['source', 'start_lineno', 'end_lineno'])
 
     def set_type(self, t):
+        '''
+        Store explicit type definition and relevant current state for later use.
+
+        Indentation is checked when used, rather than when stored.
+        '''
         if self.type:
-            raise erring.ParseError('A previous explicit type declaration has not yet been resolved', self.traceback_type)
-        if self.inline and not self.indent.startswith(self.inline_indent):
-            raise erring.ParseError('INdentation error in explicity type definition', self.traceback)
+            raise erring.ParseError('An explicit type declaration was not resolved before the next type declaration', self.traceback_type)
         self.type = t
         self.type_indent = self.indent
         self.type_at_line_start = self.at_line_start
+        # Type definitions must always be on a single line
         self.type_lineno = self.start_lineno
         try:
             self.type_cat = self.decoder.parser_cats[t]
@@ -102,74 +122,111 @@ class State(object):
             raise erring.ParseError('Unknown explicit type "{0}"'.format(t), self.traceback_type)
 
     def set_stringlike(self, s):
+        '''
+        Store string-like object and relevant current state so that lookahead
+        is possible to determine whether the object is a dict key.
+
+        The `effective*` attributes are actually used in determining whether
+        the object may be inserted into the AST without errors.  They take
+        into account the possibility that the string-like object might have an
+        explicit type declaration on a previous line.
+        '''
         if self.stringlike:
-            raise erring.ParseError('A previous string-like object has not yet been resolved', self.traceback_stringlike)
-        self.stringlike = True
-        self.stringlike_val = s
+            raise erring.ParseError('A string-like object was not resolved before the next string-like object', self.traceback_stringlike)
         if self.start_lineno == self.stringlike_effective_start_lineno:
+            # If another, complete string-like object has already occurred on
+            # the current line, then only a few settings need to be updated.
+            # Don't need to check for an explicit type declaration for a
+            # collection object, since it wouldn't be valid and would trigger
+            # an error when applied to the string.
+            self.stringlike_at_line_start = False
+            self.stringlike_effective_at_line_start = False
+            self.stringlike_end_lineno = self.end_lineno
+        elif not self.type:
+            self.stringlike_indent = self.indent
             self.stringlike_at_line_start = self.at_line_start
-            self.stringlike_effective_at_line_start = self.at_line_start
+            self.stringlike_start_lineno = self.start_lineno
+            self.stringlike_end_lineno = self.end_lineno
+            self.stringlike_effective_start_lineno = self.stringlike_start_lineno
+            self.stringlike_effective_at_line_start = self.stringlike_at_line_start
+            if self.inline:
+                if not self.stringlike_indent.startswith(self.inline_indent):
+                    raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                self.stringlike_effective_indent = self.inline_indent
+            else:
+                self.stringlike_effective_indent = self.stringlike_indent
+        elif self.type_cat != 'string':
+            if self.inline:
+                raise erring.ParseError('Explicit type declaration for collection type "{0}" was never used'.format(self.type), self.traceback_type)
+            self.ast.append_collection(self.type_cat, self.type_indent)
+            self.stringlike_indent = self.indent
+            self.stringlike_at_line_start = self.at_line_start
+            self.stringlike_start_lineno = self.start_lineno
+            self.stringlike_end_lineno = self.end_lineno
+            self.stringlike_effective_start_lineno = self.stringlike_start_lineno
+            self.stringlike_effective_at_line_start = self.stringlike_at_line_start
+            if self.inline:
+                if not self.stringlike_indent.startswith(self.inline_indent):
+                    raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                self.stringlike_effective_indent = self.inline_indent
+            else:
+                self.stringlike_effective_indent = self.stringlike_indent
         else:
             self.stringlike_indent = self.indent
             self.stringlike_at_line_start = self.at_line_start
             self.stringlike_start_lineno = self.start_lineno
             self.stringlike_end_lineno = self.end_lineno
-
-            if self.type:
-                self.stringlike_effective_start_lineno = self.type_lineno
-                if self.inline:
-                    # All lines in inline syntax, including the first, are
-                    # guaranteed to start with the same minimum Indentation
-                    if not self.stringlike_indent.startswith(self.inline_indent):
-                        raise erring.ParseError('Indentation error in string', self.traceback_type)
-                    # `stringlike_effective_at_line_start` isn't important in
-                    # inline syntax, so don't actually calculate
-                    # Also, indentation of explicit type would have already
-                    # been checked in `set_type()`
-                    self.stringlike_effective_at_line_start = False
-                    self.stringlike_effective_indent = self.inline_indent
-                else:
-                    if self.stringlike_at_line_start:
-                        if self.type_at_line_start:
-                            if not self.stringlike_indent.startswith(self.type_indent):
-                                raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
-                        elif not (self.stringlike_indent.startswith(self.type_indent) and len(self.stringlike_indent) > len(self.type_indent)):
-                            raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
-                    elif self.stringlike_start_lineno != self.type_lineno:
-                            raise erring.ParseError('Indeterminate indentation for string-like object', self.traceback_stringlike)
-                    self.stringlike_effective_at_line_start = self.type_at_line_start
-                    self.stringlike_effective_indent = self.type_indent
+            self.stringlike_effective_start_lineno = self.type_lineno
+            if self.inline:
+                if not self.type_indent.startswith(self.inline_indent):
+                    raise erring.ParseError('Indentation error in explicit type declaration for string-like object', self.traceback_type)
+                if not self.stringlike_indent.startswith(self.inline_indent):
+                    raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                self.stringlike_effective_at_line_start = False
+                self.stringlike_effective_indent = self.inline_indent
             else:
-                self.stringlike_effective_start_lineno = self.stringlike_start_lineno
-                if self.inline:
-                    self.stringlike_effective_at_line_start = False
-                    if not self.stringlike_indent.startswith(self.inline_indent):
-                        raise erring.ParseError('Indentation error in string', self.traceback_type)
-                    self.stringlike_effective_indent = self.inline_indent
-                else:
-                    self.stringlike_effective_at_line_start = self.stringlike_at_line_start
-                    self.stringlike_effective_indent = self.stringlike_indent
+                if self.stringlike_at_line_start:
+                    if self.type_at_line_start:
+                        if not self.stringlike_indent.startswith(self.type_indent):
+                            raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                    elif len(self.stringlike_indent) <= len(self.type_indent) or not self.stringlike_indent.startswith(self.type_indent):
+                        raise erring.ParseError('Indentation error in string-like object', self.traceback_stringlike)
+                elif self.stringlike_start_lineno != self.type_lineno:
+                    # This would imply an intervening multi-line comment
+                    raise erring.ParseError('Indeterminate indentation for string-like object', self.traceback_stringlike)
+                self.stringlike_effective_at_line_start = self.type_at_line_start
+                self.stringlike_effective_indent = self.type_indent
+        # Actually set things last, so that it's possible to do a correct
+        # boolean check on `stringlike` during the process if that is ever
+        # desirable (for example, in `ast.append_collection()`)
+        self.stringlike = True
+        self.stringlike_val = s
 
     def start_inline(self):
+        '''
+        Transition to inline syntax.
+        '''
         self.inline = True
         if self.type:
             if self.at_line_start:
-                if not self.type_at_line_start:
-                    if not self.indent.startswith(self.type_indent) or len(self.indent) <= len(self.type_indent):
-                        raise erring.ParseError('Indentation error at start of explicitly typed inline collection object', self.traceback_stringlike)
-                elif not self.indent.startswith(self.type_indent):
-                    raise erring.ParseError('Indentation error at start of explicitly typed inline collection object', self.traceback_stringlike)
-            else:
-                if self.start_lineno != self.type.lineno:
-                    raise erring.ParseError('Indeterminate indentation at start of explicitly typed inline collection object', self.state.traceback)
+                if self.type_at_line_start:
+                    if not self.indent.startswith(self.type_indent):
+                        raise erring.ParseError('Indentation error at start of explicitly typed inline collection object', self.traceback)
+                elif len(self.indent) <= len(self.type_indent) or not self.indent.startswith(self.type_indent):
+                    raise erring.ParseError('Indentation error at start of explicitly typed inline collection object', self.traceback)
+            elif self.start_lineno != self.type_lineno:
+                raise erring.ParseError('Indeterminate indentation at start of explicitly typed inline collection object', self.traceback)
             self.inline_indent = self.type_indent
         else:
             self.inline_indent = self.indent
 
     @property
     def traceback(self):
+        '''
+        Traceback from the earliest stored position to the end.
+        '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.end_lineno)
+            return self.traceback_namedtuple(self.source, self.type_lineno, self.end_lineno)
         else:
             if self.stringlike:
                 return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.end_lineno)
@@ -178,8 +235,11 @@ class State(object):
 
     @property
     def traceback_current_start(self):
+        '''
+        Traceback to the start of the region currently being parsed.
+        '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.type_start_lineno)
+            return self.traceback_namedtuple(self.source, self.type_lineno, self.type_lineno)
         else:
             if self.stringlike:
                 return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_start_lineno)
@@ -188,14 +248,24 @@ class State(object):
 
     @property
     def traceback_type(self):
+        '''
+        Traceback to explicit type declaration.
+        '''
         return self.traceback_namedtuple(self.source, self.type_lineno, self.type_lineno)
 
     @property
     def traceback_stringlike(self):
+        '''
+        Traceback to string-like object.
+        '''
         return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_end_lineno)
 
     @property
     def traceback_start_inline_to_end(self):
+        '''
+        Traceback from beginning of current inline syntax to the end
+        (that is, to current parsing location).
+        '''
         p = self.ast.pos
         while p.parent.inline:
             p = p.parent
@@ -203,10 +273,17 @@ class State(object):
 
     @property
     def traceback_ast_pos(self):
+        '''
+        Traceback to a particular position in the AST.
+        '''
         return self.traceback_namedtuple(self.source, self.ast.pos.start_lineno, self.ast.pos.end_lineno)
 
     @property
     def traceback_ast_pos_end_to_end(self):
+        '''
+        Traceback from the end of a particular position in the AST to the end
+        (that is, to current parsing location).
+        '''
         return self.traceback_namedtuple(self.source, self.ast.pos.end_lineno, self.state.end_lineno)
 
 
@@ -214,35 +291,15 @@ class State(object):
 
 class AstObj(list):
     '''
-    Abstract representation of collection types in AST.
-
-    Attributes:
-      +  ast          = Abstract Syntax Tree in which object is placed.
-      +  cat          = General type category of the object.  Possibilities
-                        include `root`, `list` (list-like; list, set, etc.),
-                        `dict` (dict-like; dict, ordered dict, or other
-                        mapping), or `kvpair` (key-value pair; what an object
-                        with category `dict` must contain).
-      +  indent       = Indentation of object.
-      +  inline       = Whether the object was opened in inline syntax.
-      +  nodetype     = The type of the object, if the object is explicitly
-                        typed via `(type)>` syntax.  Otherwise, type is
-                        inherited from `cat`.
-      +  parent       = Parent node in AST.
-      +  start_lineno = Line number on which object started.  Used for
-                        providing line error information for instances that
-                        were never closed.
-      +  state        = Decoder state.
-
-
-    End lineno for astobj isn't actually complete end, but is kept updated.
+    Abstract representation of collection types in AST.  String-like objects
+    appear in the AST as themselves.
     '''
     __slots__ = ['ast', 'cat', 'check_append_astobj', 'check_append_stringlike',
-                 'end_lineno', 'indent', 'inline', 'index', 'open', 'parent',
-                 'start_lineno', 'state', 'type']
+                 'end_lineno', 'indent', 'inline', 'index', 'jump', 'open',
+                 'parent', 'start_lineno', 'state', 'type']
 
-    def __init__(self, cat, ast, indent):
-        self.cat = cat
+    def __init__(self, cat, ast, indent, jump=None):
+        self.cat = cat  # Collection type category
         self.ast = ast
         state = ast.state
         self.state = state
@@ -250,19 +307,18 @@ class AstObj(list):
             self.inline = state.inline
             self.indent = indent
             self.type = None
-            if state.type:
-                self.start_lineno = state.type_start_lineno
-                if not state.stringlike:
-                    if not self.inline and (not state.type_at_line_start or self.start_lineno == state.start_lineno):
-                        raise erring.ParseError('Explicit type declaration for {0}-like object must be on a line by itself in non-inline syntax'.format(cat), state.traceback_type)
-                    if not state.type_cat != self.cat:
-                        raise erring.ParseError('Invalid explicit type "{0}" applied to {1}-like collection object'.format(state.type, self.cat), state.traceback_type)
-                    if indent != state.type_indent:
-                        raise erring.ParseError('Indentation mismatch between explicit type declaration for collection object and object contents')
-                    self.type = state.type
-                    state.type = None
+            if state.type and not state.stringlike:
+                self.start_lineno = state.type_lineno
+                if not self.inline and (not state.type_at_line_start or self.start_lineno == state.start_lineno):
+                    raise erring.ParseError('Explicit type declaration for {0}-like object must be on a line by itself in non-inline syntax'.format(cat), state.traceback_type)
+                if state.type_cat != self.cat:
+                    raise erring.ParseError('Invalid explicit type "{0}" applied to {1}-like collection object'.format(state.type, self.cat), state.traceback_type)
+                if indent != state.type_indent:
+                    raise erring.ParseError('Indentation mismatch between explicit type declaration for collection object and object contents')
+                self.type = state.type
+                state.type = None
             elif state.stringlike:
-                self.start_lineno = state.stringlike_start_lineno
+                self.start_lineno = state.stringlike_effective_start_lineno
             else:
                 self.start_lineno = state.start_lineno
             self.end_lineno = self.start_lineno
@@ -279,7 +335,6 @@ class AstObj(list):
             self.index = None
             self.open = None
 
-        # Ordered by expected frequency
         if cat == 'kvpair':
             self.check_append_astobj = self._check_append_kvpair_astobj
             self.check_append_stringlike = self._check_append_kvpair_stringlike
@@ -298,6 +353,9 @@ class AstObj(list):
     def _check_append_root_astobj(self, val):
         if len(self) == 1:
             raise erring.ParseError('Only a single object is allowed at root level', self.state.traceback)
+        # Don't have to check for appending a collection with category `kvpair`,
+        # because AST will automatically wrap it in a `dict` in non-inline
+        # syntax.
         self.append(val)
         self.start_lineno = val.start_lineno
         self.end_lineno = val.end_lineno
@@ -318,7 +376,11 @@ class AstObj(list):
         if val.cat != 'kvpair':
             raise erring.ParseError('Cannot add a non key-value pair to a dict-like object', self.state.traceback)
         if val.indent != self.indent:
-            raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
+            if not self and self.type and not self.inline and val.indent.startswith(self.indent):
+                # Account for indentation under explicit type declaration
+                self.indent = val.indent
+            else:
+                raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
         if self.inline and not self.open:
             # Due to syntax, non-inline key-value pairs are "self-opening"
             raise erring.ParseError('Cannot add a key-value pair to a dict-like object when the previous pair has not been terminated by a semicolon', self.state.traceback)
@@ -331,16 +393,23 @@ class AstObj(list):
         raise erring.ParseError('Cannot add a non key-value pair to a dict-like object', self.state.traceback)
 
     def _check_append_kvpair_astobj(self, val):
+        # No need to check for attempting to add an `AstObj` to an empty
+        # `kvpair`, since a `kvpair` is only ever created when there is a
+        # string-like key.
         if len(self) == 2:
             raise erring.ParseError('Key-value pair can only contain two elements', self.state.traceback)
-        if not self:
-            raise erring.ParseError('Keys for dict-like objects cannot be collection types', self.state.traceback)
         if self.inline:
+            if val.cat == 'kvpair':
+                # No need to check for this in non-inline syntax, since
+                # key-value pairs automatically supply their own dicts
+                raise erring.ParseError('Cannot insert a key-value pair within an existing key-value pair', self.state.traceback)
             if val.indent != self.indent:
                 raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
-        else:
-            if not (val.indent.startswith(self.indent) and
-                    (len(val.indent) > len(self.indent) or (val.inline and val.start_lineno == self.end_lineno and len(val.indent) == len(self.indent)))):
+        elif not (val.indent.startswith(self.indent) and
+                (len(val.indent) > len(self.indent) or (val.inline and val.start_lineno == self.end_lineno and len(val.indent) == len(self.indent)) ) ):
+            if not self.inline and not val.inline and self.end_lineno == val.start_lineno:
+                raise erring.ParseError('Cannot begin a collection object at this point within a dict-like object', self.state.traceback)
+            else:
                 raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
         self.append(val)
         self.end_lineno = val.end_lineno
@@ -365,15 +434,11 @@ class AstObj(list):
             if self.inline:
                 if state.stringlike_effective_indent != self.indent:
                     raise erring.ParseError('Indentation error in dict-like object', state.traceback)
+            elif state.stringlike_effective_at_line_start:
+                if len(state.stringlike_effective_indent) <= len(self.indent) or not state.stringlike_effective_indent.startswith(self.indent):
+                    raise erring.ParseError('Indentation error in dict-like object', state.traceback)
             else:
-                if state.stringlike_effective_at_line_start:
-                    if len(state.stringlike_effective_indent) <= len(self.indent) or not state.stringlike_effective_indent.startswith(self.indent):
-                        raise erring.ParseError('Indentation error in dict-like object', state.traceback)
-                else:
-                    if state.stringlike_effective_start_lineno != self.end_lineno:
-                        raise erring.ParseError('Indeterminate indentation when attempting to add a value to a dict-like object', state.traceback)
-                    if len(state.stringlike_effective_indent) < len(self.indent) or not state.stringlike_effective_indent.startswith(self.indent):
-                        raise erring.ParseError('Indentation error in dict-like object', state.traceback)
+                raise erring.ParseError('Indeterminate indentation when attempting to add a value to a dict-like object', state.traceback)
         self.append(state.stringlike_val)
         self.end_lineno = state.stringlike_end_lineno
         state.type = None
@@ -388,6 +453,10 @@ class AstObj(list):
         if not self.open:
             raise erring.ParseError('Cannot append to a list-like object when the current location has already been filled', self.state.traceback)
         if self.inline:
+            if val.cat == 'kvpair':
+                # No need to check for this in non-inline syntax, since
+                # key-value pairs automatically supply their own dicts
+                raise erring.ParseError('Cannot insert a key-value pair within a list-like object', self.state.traceback)
             if val.indent != self.indent:
                 raise erring.ParseError('Indentation error in list-like object', self.state.traceback)
         else:
@@ -421,8 +490,8 @@ class AstObj(list):
                     raise erring.ParseError('Indentation error in list-like object', state.traceback)
         self.append(state.stringlike_val)
         self.end_lineno = state.stringlike_end_lineno
-        state.type = None
         state.stringlike = False
+        state.type = None
         self.open = False
 
 
@@ -1146,19 +1215,20 @@ class BespONDecoder(object):
         '''
         Parse explicit typing.
         '''
-        if self.state.type:
-            raise erring.ParseError('Duplicate or unused explicit type declaration', self.state.traceback_type)
+        state = self.state
+        if state.type:
+            if state.inline:
+                raise erring.ParseError('Encountered explicit type declaration before a previous type declaration was resolved', state.traceback_type)
+            self._ast.append_collection(state.type_cat, state.type_indent)
         m = self._explicit_type_re.match(line)
         if not m:
             # Due to regex, any match is guaranteed to be a type name
             # consisting of at least one code point
-            raise erring.ParseError('Could not parse explicit type declaration', self.state.traceback)
+            raise erring.ParseError('Could not parse explicit type declaration', state.traceback)
         t = m.group(0)[1:-2]
-        self.state.set_type(t)
-        self.state.at_line_start = False
+        state.set_type(t)
+        state.at_line_start = False
         line = line[m.end():].lstrip(self.whitespace_str)
-        if not line:
-            line = self._parse_line_goto_next()
         return line
 
 
@@ -1498,7 +1568,7 @@ class BespONDecoder(object):
                                 if not s_line.startswith(line_indent) or s_line[len_line_indent:len_line_indent+1] in self.unicode_whitespace:
                                     raise erring.ParseError('Invalid indentation in pipe-quoted string', self.state.traceback)
                                 s_list[n] = s_line[len_line_indent:]
-                            s = self._unwrap_inline(s_lines)
+                            s = self._unwrap_inline(s_list)
                         else:
                             if len(delim) == len(end_delim) - 2:
                                 s_list[-1] = s_list[-1].rstrip(self.newline_chars_str)
@@ -1586,11 +1656,11 @@ class BespONDecoder(object):
         # is more efficient for multi-line unquoted strings
         if state.type:
             if state.type in self._bytes_parsers:
-                s_bytes = self._unicode_to_bytes(s)
+                s = self._unicode_to_bytes(s)
             try:
-                state.stringlike_val = self.string_parsers[state.type](s_bytes)
+                state.stringlike_val = self.string_parsers[state.type](s)
             except KeyError:
-                raise erring.ParseError('Unknown explicit type "{0}" applied to unquoted string-like object', state.traceback_type)
+                raise erring.ParseError('Unknown explicit type "{0}" applied to unquoted string-like object'.format(state.type), state.traceback_type)
             except Exception as e:
                 raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(state.type, e), state.traceback)
         elif s in self.reserved_words:
@@ -1632,6 +1702,3 @@ class BespONDecoder(object):
             else:
                 self._ast.append_stringlike()
         return line
-
-
-_default_decoder = BespONDecoder()
