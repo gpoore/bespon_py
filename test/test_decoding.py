@@ -15,6 +15,7 @@ from __future__ import (division, print_function, absolute_import,
 import sys
 import os
 import random
+import collections
 
 if sys.version_info.major == 2:
     str = unicode
@@ -189,12 +190,7 @@ def test_decode_raw_ast():
 
     dc.decode(' """\n  a\n  b\n """//\n')
     assert(dc._ast == [" a\n b"])
-    '''
-    dc.decode('(dict)>\n')
-    assert(dc._ast == [[]])
-    dc.decode('(list)>\n')
-    assert(dc._ast == [[]])
-    '''
+
     dc.decode('"a"="b"')
     assert(dc._ast == [[['a', 'b']]])
     dc.decode('"a"="b"\n"c"="d"\n')
@@ -431,7 +427,10 @@ def test_decode_vs_json_yaml():
 
 
 
-
+    def test_explicit_typing():
+        dc = mdl.BespONDecoder()
+        assert(dc.decode('(odict)> {a=b}') == collections.OrderedDict({'a': 'b'}))
+        assert(dc.decode('(set)> [1; 2; 3]') == set(1, 2, 3))
 
 
 

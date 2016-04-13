@@ -291,12 +291,16 @@ class State(object):
 
 class AstObj(list):
     '''
-    Abstract representation of collection types in AST.  String-like objects
-    appear in the AST as themselves.
+    Abstract representation of collection types in AST.
+
+    String-like objects appear in the AST as themselves.  List-like objects are
+    represented as lists.  Dict-like objects are represented as lists of
+    two-element lists (key-value pairs).  The AST root is represented as a list
+    that may only contain a single element.
     '''
     __slots__ = ['ast', 'cat', 'check_append_astobj', 'check_append_stringlike',
-                 'end_lineno', 'indent', 'inline', 'index', 'jump', 'open',
-                 'parent', 'start_lineno', 'state', 'type']
+                 'end_lineno', 'indent', 'inline', 'index', 'jump', 'key_set',
+                 'open', 'parent', 'start_lineno', 'state', 'type']
 
     def __init__(self, cat, ast, indent, jump=None):
         self.cat = cat  # Collection type category
@@ -308,13 +312,22 @@ class AstObj(list):
             self.indent = indent
             self.type = None
             if state.type and not state.stringlike:
-                self.start_lineno = state.type_lineno
-                if not self.inline and (not state.type_at_line_start or self.start_lineno == state.start_lineno):
-                    raise erring.ParseError('Explicit type declaration for {0}-like object must be on a line by itself in non-inline syntax'.format(cat), state.traceback_type)
                 if state.type_cat != self.cat:
                     raise erring.ParseError('Invalid explicit type "{0}" applied to {1}-like collection object'.format(state.type, self.cat), state.traceback_type)
-                if indent != state.type_indent:
-                    raise erring.ParseError('Indentation mismatch between explicit type declaration for collection object and object contents')
+                if self.inline:
+                    if not state.type_indent.startswith(state.inline_indent):
+                        raise erring.ParseError('Indentation error in explicit type declaration for inline collection object', state.traceback_type)
+                else:
+                    if not state.type_at_line_start or state.type_lineno == state.start_lineno:
+                        raise erring.ParseError('Explicit type declaration for {0}-like object must be on a line by itself in non-inline syntax'.format(cat), state.traceback_type)
+                    if indent != state.type_indent and not (indent.startswith(state.type_indent) and cat == 'list'):
+                        # A list with an explicit type declaration may be
+                        # indented under the declaration.  A similar case
+                        # exists for dicts, but is triggered when a `kvpair`
+                        # is appended; that case is handled in
+                        # `_check_append_dict_astobj()`
+                        raise erring.ParseError('Indentation mismatch between explicit type declaration for collection object and object contents', state.traceback_type)
+                self.start_lineno = state.type_lineno
                 self.type = state.type
                 state.type = None
             elif state.stringlike:
@@ -341,6 +354,7 @@ class AstObj(list):
         elif cat == 'dict':
             self.check_append_astobj = self._check_append_dict_astobj
             self.check_append_stringlike = self._check_append_dict_stringlike
+            self.key_set = set()
         elif cat == 'list':
             self.check_append_astobj = self._check_append_list_astobj
             self.check_append_stringlike = self._check_append_list_stringlike
@@ -383,7 +397,7 @@ class AstObj(list):
                 raise erring.ParseError('Indentation error in dict-like object', self.state.traceback)
         if self.inline and not self.open:
             # Due to syntax, non-inline key-value pairs are "self-opening"
-            raise erring.ParseError('Cannot add a key-value pair to a dict-like object when the previous pair has not been terminated by a semicolon', self.state.traceback)
+            raise erring.ParseError('Cannot add a key-value pair to a dict-like object when the previous pair has not been terminated by "{0}"'.format(self.state.decoder.reserved_chars.separator), self.state.traceback)
         self.append(val)
         self.end_lineno = val.end_lineno
         self.open = False
@@ -422,7 +436,12 @@ class AstObj(list):
         # only ever created by a string-like object
         if not self.inline and not state.stringlike_effective_at_line_start:
             raise erring.ParseError('Indeterminate indentation when attempting to add a key to a dict-like object', state.traceback)
-        self.append(state.stringlike_val)
+        key = state.stringlike_val
+        key_set = self.parent.key_set
+        if key in key_set:
+            raise erring.ParseError('Duplicate keys in dict-like objects are not allowed; duplicate key = "{0}"'.format(key.replace('"', '\\"')), state.traceback)
+        key_set.update((key, ))
+        self.append(key)
         self.end_lineno = state.stringlike_end_lineno
         state.type = None
         state.stringlike = False
@@ -502,13 +521,15 @@ class Ast(object):
     Abstract syntax tree of data, before final, full conversion into Python
     objects.  At this stage, all non-collection types are in final form,
     and all collection types are represented as `AstObj` instances, which
-    are a subclass of list and can represent all collection types in a form
+    are a subclass of `list` and can represent all collection types in a form
     that may be conveniently translated to Python objects.
 
-    The `pythonize()` method converts all `AstObj` instances into the
-    corresponding Python objects.
+    The `pythonize()` method converts `AstObj` instances within an `Ast` into
+    the corresponding Python objects.  This leaves the `Ast` as an `AstObj` of
+    category `root` that contains a single element that is the actual data.
     '''
-    __slots__ = ['decoder', 'pos', '_obj_to_pythonize_list', 'root', 'state', ]
+    __slots__ = ['decoder', 'pos', '_obj_to_pythonize_list', 'root', 'state']
+
     def __init__(self, decoder):
         self.decoder = decoder
         self.state = decoder.state
@@ -529,11 +550,21 @@ class Ast(object):
         return bool(self.root)
 
     def append_collection(self, cat, indent):
+        '''
+        Append a collection object to the AST, using its collection category
+        and indentation.
+
+        If the indentation of the object is less than that of the current
+        position in the AST, walk back up the AST to find a location with
+        appropriate indentation.
+        '''
         state = self.state
         # Temp variables must be used with care; otherwise, mess up tracebacks
         pos = self.pos
         root = self.root
         if pos is not root and len(indent) < len(pos.indent):
+            # Don't actually start up the `while` loop machinery unless it will
+            # be used
             while pos is not root and len(indent) < len(pos.indent):
                 if pos.cat == 'kvpair':
                     if len(pos) < 2:
@@ -554,6 +585,10 @@ class Ast(object):
                 pos.parent.end_lineno = pos.end_lineno
                 pos = pos.parent
                 if pos.cat == 'kvpair':
+                    # If must go to higher levels in the AST due to indentation,
+                    # can't stop at a `kvpair`, but must go to the `dict` above
+                    # it, since the `dict` is the actual AST element at that
+                    # indentation level
                     if len(pos) < 2:
                         self.pos = pos
                         raise erring.ParseError('A key-value pair was truncated before being completed', state.traceback_ast_pos)
@@ -566,23 +601,37 @@ class Ast(object):
         self.pos.check_append_astobj(AstObj(cat, self, indent))
 
     def append_stringlike(self):
+        '''
+        Append a string-like object at the current position within the AST.
+        '''
         self.pos.check_append_stringlike()
 
     def open_collection_inline(self):
-        if not (self.state.inline and self.pos.cat in ('dict', 'list')):
+        '''
+        Open a collection object in inline syntax.
+        '''
+        if not self.state.inline or self.pos.cat not in ('dict', 'list'):
             raise erring.ParseError('Invalid object termination (semicolon)', self.state.traceback)
         if self.pos.open:
-            raise erring.ParseError('Encountered ";" when there is no object to end', self.state.traceback)
+            raise erring.ParseError('Encountered "{0}" when there is no object to end'.format(self.state.decoder.reserved_chars.separator), self.state.traceback)
         self.pos.open = True
 
     def open_list_non_inline(self):
+        '''
+        Open a list-like object in non-inline syntax.
+        '''
         state = self.state
         if state.inline or not state.at_line_start:
-            raise erring.ParseError('Invalid location to begin a non-inline list element')
+            raise erring.ParseError('Invalid location to begin a non-inline list element', state.traceback)
         # Temp variables must be used with care; otherwise, mess up tracebacks
         pos = self.pos
         root = self.root
         if pos is not root and len(state.indent) < len(pos.indent):
+            # If the list to be opened already exists, need to make sure we are
+            # at the correct level in the AST.  Don't have to do this in the
+            # case of adding keys to dict-like objects, because in that
+            # situation a `kvpair` `AstObj` is appended to the AST, triggering
+            # an equivalent check of AST position.
             while pos is not root and len(state.indent) < len(pos.indent):
                 if pos.cat == 'kvpair':
                     if len(pos) < 2:
@@ -616,25 +665,32 @@ class Ast(object):
         self.pos.open = True
 
     def end_dict_inline(self):
+        '''
+        End a dict-like object in inline syntax.
+        '''
         state = self.state
         if not state.inline:
-            raise erring.ParseError('Cannot end an inline dict-like object with "}" when not in inline mode', state.traceback)
+            raise erring.ParseError('Cannot end an inline dict-like object with "{0}" when not in inline mode'.format(state.decoder.reserved_chars.end_dict), state.traceback)
         if not self.pos.cat == 'dict':
-            raise erring.ParseError('Encountered "}" when there is no dict-like object to end', state.traceback)
+            raise erring.ParseError('Encountered "{0}" when there is no dict-like object to end'.format(state.decoder.reserved_chars.end_dict), state.traceback)
         if not state.indent.startswith(state.inline_indent):
             raise erring.ParseError('Indentation error', state.traceback)
         self.pos = self.pos.parent
         state.inline = self.pos.inline
         if self.pos.cat == 'kvpair' and len(self.pos) == 2:
+            # If just finished a `kvpair`, go up a level in AST
             self.pos = self.pos.parent
             state.inline = self.pos.inline
 
     def end_list_inline(self):
+        '''
+        End a list-like object in inline syntax.
+        '''
         state = self.state
         if not state.inline:
-            raise erring.ParseError('Cannot end an inline list-like object with "]" when not in inline mode', state.traceback)
+            raise erring.ParseError('Cannot end an inline list-like object with "{0}" when not in inline mode'.format(state.decoder.reserved_chars.end_list), state.traceback)
         if not self.pos.cat == 'list':
-            raise erring.ParseError('Encountered "]" when there is no list-like object to end', self.state.traceback)
+            raise erring.ParseError('Encountered "{0}" when there is no list-like object to end'.format(state.decoder.reserved_chars.end_list), state.traceback)
         if not state.indent.startswith(state.inline_indent):
             raise erring.ParseError('Indentation error', state.traceback)
         self.pos = self.pos.parent
@@ -645,13 +701,20 @@ class Ast(object):
 
 
     def finalize(self):
+        '''
+        Check AST for errors and return to root node.
+        '''
         if self.pos is not self.root:
             state = self.state
             if state.inline:
                 raise erring.ParseError('Inline syntax was never closed', state.traceback_start_inline_to_end)
             if state.type:
+                # Explicit type declarations are used as needed; they are not
+                # used immediately as encountered, as are string-like objects
                 raise erring.ParseError('Explicit type definition was never used', state.traceback_type)
             if state.stringlike:
+                # This should never happen since string-like objects are always
+                # used immediately, but just for safety purposes
                 raise erring.ParseError('String-like object was never used', state.traceback_stringlike)
             # Temp variables must be used with care; otherwise, mess up tracebacks
             pos = self.pos
@@ -679,6 +742,16 @@ class Ast(object):
                 self.pos = pos
 
     def pythonize(self):
+        '''
+        Convert all `AstObj` (except for root node) to corresponding native
+        Python types.
+
+        Go through list of objects that need to be Pythonized in reverse order,
+        so that lower-level objects are Pythonized first.  This way,
+        higher-level objects remain in abstract form until they themselves are
+        Pythonized, so their contents are easily replaced with Pythonized
+        equivalents.
+        '''
         parsers = self.decoder.parsers
         for obj in reversed(self._obj_to_pythonize_list):
             py_obj = parsers[obj.cat][obj.type](obj)
@@ -1310,15 +1383,10 @@ class BespONDecoder(object):
         line = line.lstrip("'")
         len_delim -= len(line)
         delim = "'"*len_delim
-        if delim in line:
-            s, line = line.split("'", 1)
-            if len(delim) > 2:
-                if line[:1] == '/':
-                    raise erring.ParseError('A block string may not begin and end on the same line', self.state.traceback)
-                if s[:1] in self.spaces and s.lstrip(self.spaces_str) == "'":
-                    s = s[1:]
-                if s[-1:] in self.spaces and s.rstrip(self.spaces_str) == "'":
-                    s = s[:-1]
+        if len(delim) == 1:
+            s, line = line.split(delim, 1)
+            if line[:1] == delim:
+                raise erring.ParseError('Invalid quotation mark following end of quoted string', self.state.traceback)
         elif len(delim) == 2:
             s = ''
         else:
