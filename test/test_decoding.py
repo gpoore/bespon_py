@@ -192,14 +192,14 @@ def test_decode_raw_ast():
     assert(dc._ast == [" a\n b"])
 
     dc.decode('"a"="b"')
-    assert(dc._ast == [[['a', 'b']]])
+    assert(dc._ast == [collections.OrderedDict([['a', 'b']])])
     dc.decode('"a"="b"\n"c"="d"\n')
-    assert(dc._ast == [[['a', 'b'], ['c', 'd']]])
+    assert(dc._ast == [collections.OrderedDict([['a', 'b'], ['c', 'd']])])
     dc.decode('"a"=\n "b"=\n  "c"="d"\n')
-    assert(dc._ast == [ [['a', [['b', [['c', 'd']] ]] ]] ])
+    assert(dc._ast == [ collections.OrderedDict([['a', collections.OrderedDict([['b', collections.OrderedDict([['c', 'd']]) ]]) ]]) ])
 
     dc.decode(' """\n  ab\n  cd\n """/ = "efg" ')
-    assert(dc._ast == [ [[' ab\n cd\n', 'efg']] ])
+    assert(dc._ast == [ collections.OrderedDict([[' ab\n cd\n', 'efg']]) ])
 
     dc.decode('+ "a"\n+ "b"')
     assert(dc._ast == [ ['a', 'b'] ])
@@ -207,7 +207,7 @@ def test_decode_raw_ast():
     assert(dc._ast == [ [ ['a'] ] ])
 
     dc.decode('"a"=\n "b"="c"\n"d"="e"')
-    assert(dc._ast == [ [ ['a', [['b', 'c']] ], ['d', 'e'] ] ])
+    assert(dc._ast == [ collections.OrderedDict([ ['a', collections.OrderedDict([['b', 'c']]) ], ['d', 'e'] ]) ])
 
     with pytest.raises(err.ParseError):
         dc.decode('"a"="b"\n "c"="d"')
@@ -429,8 +429,14 @@ def test_decode_vs_json_yaml():
 
     def test_explicit_typing():
         dc = mdl.BespONDecoder()
+        assert(dc.decode('(odict)>{a=b}') == collections.OrderedDict({'a': 'b'}))
         assert(dc.decode('(odict)> {a=b}') == collections.OrderedDict({'a': 'b'}))
+        assert(dc.decode('(odict)>\na=b') == collections.OrderedDict({'a': 'b'}))
+        assert(dc.decode('(odict)>\n a=b') == collections.OrderedDict({'a': 'b'}))
+        assert(dc.decode('(set)>[1; 2; 3]') == set(1, 2, 3))
         assert(dc.decode('(set)> [1; 2; 3]') == set(1, 2, 3))
+        assert(dc.decode('(set)>\n+ 1\n+ 2\n+ 3]') == set(1, 2, 3))
+        assert(dc.decode('(set)>\n + 1\n + 2\n + 3]') == set(1, 2, 3))
 
 
 
