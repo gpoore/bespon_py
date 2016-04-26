@@ -396,7 +396,7 @@ def test_decode_vs_json_yaml():
               quantity =  4
 
             + part_no =   E1628
-              descrip =   'High Heeled "Ruby" Slippers'
+              descrip =   High Heeled "Ruby" Slippers
               size =      8
               price =     133.7
               quantity =  1
@@ -427,16 +427,23 @@ def test_decode_vs_json_yaml():
 
 
 
-    def test_explicit_typing():
-        dc = mdl.BespONDecoder()
-        assert(dc.decode('(odict)>{a=b}') == collections.OrderedDict({'a': 'b'}))
-        assert(dc.decode('(odict)> {a=b}') == collections.OrderedDict({'a': 'b'}))
-        assert(dc.decode('(odict)>\na=b') == collections.OrderedDict({'a': 'b'}))
-        assert(dc.decode('(odict)>\n a=b') == collections.OrderedDict({'a': 'b'}))
-        assert(dc.decode('(set)>[1; 2; 3]') == set(1, 2, 3))
-        assert(dc.decode('(set)> [1; 2; 3]') == set(1, 2, 3))
-        assert(dc.decode('(set)>\n+ 1\n+ 2\n+ 3]') == set(1, 2, 3))
-        assert(dc.decode('(set)>\n + 1\n + 2\n + 3]') == set(1, 2, 3))
+def test_explicit_typing():
+    dc = mdl.BespONDecoder()
+    assert(dc.decode('(odict)>{a=b}') == collections.OrderedDict({'a': 'b'}))
+    assert(dc.decode('(odict)> {a=b}') == collections.OrderedDict({'a': 'b'}))
+    assert(dc.decode('(odict)>\na=b') == collections.OrderedDict({'a': 'b'}))
+    assert(dc.decode('(odict)>\n a=b') == collections.OrderedDict({'a': 'b'}))
+    assert(dc.decode('(set)>[1; 2; 3]') == set([1, 2, 3]))
+    assert(dc.decode('(set)> [1; 2; 3]') == set([1, 2, 3]))
+    assert(dc.decode('(set)>\n+ 1\n+ 2\n+ 3') == set([1, 2, 3]))
+    assert(dc.decode('(set)>\n + 1\n + 2\n + 3') == set([1, 2, 3]))
+
+    with pytest.raises(err.ParseError):
+        dc.decode('%%%comment%%% {a=1}')
+    with pytest.raises(err.ParseError):
+        dc.decode('%%%comment%%% {\na=1}')
+    with pytest.raises(err.ParseError):
+        dc.decode('k =\n%%%comment%%% (b)> abc')
 
 
 
