@@ -396,7 +396,7 @@ def test_decode_vs_json_yaml():
               quantity =  4
 
             + part_no =   E1628
-              descrip =   High Heeled "Ruby" Slippers
+              descrip =   'High Heeled "Ruby" Slippers'
               size =      8
               price =     133.7
               quantity =  1

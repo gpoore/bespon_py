@@ -587,7 +587,7 @@ class DictlikeAstObj(collections.OrderedDict):
     def _check_append_stringlike_inline_key(self):
         state = self.state
         if not self.open:
-            raise erring.ParseError('Cannot add a key to a dict-like object when the previous pair has not been terminated by "{0}"'.format(state.decoder._reserved_chars.separator), state.traceback)
+            raise erring.ParseError('Cannot add a key to a dict-like object when the previous pair has not been terminated by "{0}"'.format(state.decoder._reserved_chars_separator), state.traceback)
         if state.stringlike_effective_indent != self.indent:
             raise erring.ParseError('Indentation error in dict-like object', state.traceback)
         key = state.stringlike_obj
@@ -618,7 +618,7 @@ class DictlikeAstObj(collections.OrderedDict):
         # Non-inline dict-like objects are self-opening
         state = self.state
         if not state.stringlike_effective_at_line_start:
-            raise erring.ParseError('Keys for dict-like objects must be at the beginning of a line in non-inline syntax', state.traceback)
+            raise erring.ParseError('Keys for dict-like objects must be at the beginning of a line in non-inline syntax; check for leading comment, missing linebreak, or missing quotes', state.traceback)
         if state.stringlike_effective_indent != self.indent:
             if not self and self.type is not None and state.stringlike_effective_indent.startswith(self.indent):
                 # Could be indented relative to explicit type declaration.
@@ -783,12 +783,12 @@ class Ast(object):
         Open a collection object in inline syntax.
         '''
         if not self.state.inline:
-            raise erring.ParseError('Invalid object termination "{0}" in non-inline syntax'.format(self.state.decoder._reserved_chars.separator), self.state.traceback)
+            raise erring.ParseError('Invalid object termination "{0}" in non-inline syntax'.format(self.state.decoder._reserved_chars_separator), self.state.traceback)
         if self.pos.open:
             if self.pos.cat == 'dict' and self.pos.next_key_needs_val:
-                raise erring.ParseError('Encountered "{0}" before a key-value pair was completed'.format(self.state.decoder._reserved_chars.separator), self.state.traceback)
+                raise erring.ParseError('Encountered "{0}" before a key-value pair was completed'.format(self.state.decoder._reserved_chars_separator), self.state.traceback)
             else:
-                raise erring.ParseError('Encountered "{0}" when there is no object to end'.format(self.state.decoder._reserved_chars.separator), self.state.traceback)
+                raise erring.ParseError('Encountered "{0}" when there is no object to end'.format(self.state.decoder._reserved_chars_separator), self.state.traceback)
         self.pos.open = True
 
     def open_list_non_inline(self):
@@ -823,11 +823,15 @@ class Ast(object):
                 pos.parent.end_lineno = pos.end_lineno
                 pos = pos.parent
             self.pos = pos
-        if pos.cat != 'list' or len(pos.indent) < len(state.indent):
+        if pos.cat != 'list':
             # No need to check indentation in the event of an explicit type
             # declaraction; that's built into `ListlikeAstObj`.  This will give
             # list correct indentation, even if the `+`, etc. is indented
             # relative to the type declaration.
+            self.append_collection('list', state.indent)
+        elif len(pos.indent) < len(state.indent):
+            if pos.start_lineno == state.start_lineno:
+                raise erring.ParseError('Cannot begin a list element on a line where one has already been started in non-inline syntax', state.traceback)
             self.append_collection('list', state.indent)
         self.pos.open = True
 
@@ -837,9 +841,9 @@ class Ast(object):
         '''
         state = self.state
         if not state.inline:
-            raise erring.ParseError('Cannot end an inline dict-like object with "{0}" when not in inline mode'.format(state.decoder._reserved_chars.end_dict), state.traceback)
+            raise erring.ParseError('Cannot end an inline dict-like object with "{0}" when not in inline mode'.format(state.decoder._reserved_chars_end_dict), state.traceback)
         if self.pos.cat != 'dict':
-            raise erring.ParseError('Encountered "{0}" when there is no dict-like object to end'.format(state.decoder._reserved_chars.end_dict), state.traceback)
+            raise erring.ParseError('Encountered "{0}" when there is no dict-like object to end'.format(state.decoder._reserved_chars_end_dict), state.traceback)
         if not state.indent.startswith(state.inline_indent):
             raise erring.ParseError('Indentation error', state.traceback)
         if self.pos.next_key_needs_val:
@@ -853,9 +857,9 @@ class Ast(object):
         '''
         state = self.state
         if not state.inline:
-            raise erring.ParseError('Cannot end an inline list-like object with "{0}" when not in inline mode'.format(state.decoder._reserved_chars.end_list), state.traceback)
+            raise erring.ParseError('Cannot end an inline list-like object with "{0}" when not in inline mode'.format(state.decoder._reserved_chars_end_list), state.traceback)
         if self.pos.cat != 'list':
-            raise erring.ParseError('Encountered "{0}" when there is no list-like object to end'.format(state.decoder._reserved_chars.end_list), state.traceback)
+            raise erring.ParseError('Encountered "{0}" when there is no list-like object to end'.format(state.decoder._reserved_chars_end_list), state.traceback)
         if not state.indent.startswith(state.inline_indent):
             raise erring.ParseError('Indentation error', state.traceback)
         self.pos = self.pos.parent
@@ -969,7 +973,7 @@ class BespONDecoder(object):
     '_opening_delim_pipe_re',
     '_opening_delim_plus_re',
     '_closing_delim_re_dict',
-    '_numeric_type_starting_chars',
+    '_numeric_types_starting_chars',
     '_int_re',
     '_float_re',
     '_unquoted_key_re',
@@ -978,12 +982,25 @@ class BespONDecoder(object):
     '_unquoted_string_fragment_re',
     '_line_iter', '_ast']
     """
-    def __init__(self, reserved_chars=None, reserved_words=None,
-                 dict_parsers=None, list_parsers=None, string_parsers=None,
-                 parser_aliases=None, **kwargs):
+    def __init__(self, only_ascii=False, unquoted_strings=True, unquoted_unicode=False,
+                 reserved_chars=None, reserved_words=None,
+                 dict_parsers=None, list_parsers=None, string_parsers=None, parser_aliases=None,
+                 **kwargs):
+        arg_bools = (only_ascii, unquoted_strings, unquoted_unicode)
+        if not all(x in (True, False) for x in arg_bools):
+            raise erring.ConfigError('Arguments "only_ascii", "unquoted_strings", "unquoted_unicode" must be boolean')
+        if only_ascii and unquoted_unicode:
+            raise erring.ConfigError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
+        if not unquoted_strings and unquoted_unicode:
+            raise erring.ConfigError('Setting "unquoted_strings" = False is incompatible with "unquoted_unicode" = True')
+        self.only_ascii = only_ascii
+        self.unquoted_strings = unquoted_strings
+        self.unquoted_unicode = unquoted_unicode
+
         # Create a UnicodeFilter instance
         # Provide shortcuts to some of its attributes
         self._unicodefilter = unicoding.UnicodeFilter(**kwargs)
+        self._nonliterals = self._unicodefilter.nonliterals
         self._newlines = self._unicodefilter.newlines
         self._newline_chars = self._unicodefilter.newline_chars
         self._newline_chars_str = self._unicodefilter.newline_chars_str
@@ -997,47 +1014,118 @@ class BespONDecoder(object):
         self._unicode_whitespace_str = self._unicodefilter.unicode_whitespace_str
         self._unicode_whitespace_re = re.compile('|'.join(re.escape(c) for c in self._unicode_whitespace))
 
+
         arg_dicts = (reserved_chars, reserved_words, dict_parsers, list_parsers, string_parsers, parser_aliases)
         if not all(x is None or isinstance(x, dict) for x in arg_dicts):
-            raise TypeError('Arguments {0} must be dicts'.format(', '.join('"{0}"'.format(x) for x in arg_dicts)))
+            raise TypeError('Arguments "reserved_chars", "reserved_words", "*_parsers", "parser_aliases" must be dicts')
 
 
         # Take care of reserved characters and related dict for parsing
         if reserved_chars is None:
             final_reserved_chars = defaults.RESERVED_CHARS
         else:
-            if reserved_chars.keys() != defaults.RESERVED_CHARS.keys():
-                raise erring.ConfigError('"reserved_chars" does not map all keys in defaults.RESERVED_CHARS')
+            # For custom reserved characters, do basic consistency checks
             for k, v in reserved_chars.items():
+                if k not in defaults.RESERVED_CHARS:
+                    raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
                 if v is not None and (not isinstance(v, str) or len(v) != 1):
-                    raise erring.ConfigError('"reserved_chars" must map to None or Unicode strings of length 1')
-            final_reserved_chars = reserved_chars
+                    raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1')
+            if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
+                raise erring.ConfigError('"reserved_chars" contains duplicate mappings to a single code point')
+            # Need a `defaultdict`, so that don't have to worry about whether
+            # all elements are present
+            final_reserved_chars = collections.defaultdict(lambda: None, reserved_chars)
+            for o, c in (('start_type', 'end_type'), ('start_list', 'end_list'), ('start_dict', 'end_dict')):
+                if not ((final_reserved_chars[o] is None and final_reserved_chars[c] is None) or (final_reserved_chars[o] is not None and final_reserved_chars[c] is not None)):
+                    raise erring.ConfigError('Inconsistent "reserved_chars"; opening and closing delimiters must be defined in pairs')
+            if final_reserved_chars['start_type'] is not None and final_reserved_chars['end_type_suffix'] is None:
+                raise erring.ConfigError('Inconsistent "reserved_chars"; must define "end_type_suffix"')
+            if any(final_reserved_chars[k] is not None for k in ('comment', 'literal_string', 'escaped_string')) and final_reserved_chars['block_suffix'] is None:
+                raise erring.ConfigError('Inconsistent "reserved_chars"; cannot define comments or quoted strings without defining "block_suffix"')
+            if any(final_reserved_chars[k] is not None for k in ('start_type', 'start_list', 'start_dict')) and final_reserved_chars['separator'] is None:
+                raise erring.ConfigError('Inconsistent "reserved_chars"; cannot define explicit typing or collection objects without defining "separator"')
+            if final_reserved_chars['assign_key_val'] is None:
+                raise erring.ConfigError('Inconsistent "reserved_chars"; must define "assign_key_val"')
         self._reserved_chars = final_reserved_chars
-        self._reserved_chars_literal_string = self._reserved_chars['literal_string'] or ''
-        self._reserved_chars_escaped_string = self._reserved_chars['escaped_string'] or ''
-        # Dict of functions for proceding with parsing, based on the next
-        # character.
-        _parse_line = {final_reserved_chars['comment']:         self._parse_line_comment,
-                       final_reserved_chars['start_type']:      self._parse_line_start_type,
-                       final_reserved_chars['end_type']:        self._parse_line_end_type,
-                       final_reserved_chars['start_list']:      self._parse_line_start_list,
-                       final_reserved_chars['end_list']:        self._parse_line_end_list,
-                       final_reserved_chars['start_dict']:      self._parse_line_start_dict,
-                       final_reserved_chars['end_dict']:        self._parse_line_end_dict,
-                       final_reserved_chars['literal_string']:  self._parse_line_literal_string,
-                       final_reserved_chars['escaped_string']:  self._parse_line_escaped_string,
-                       final_reserved_chars['assign_key_val']:  self._parse_line_assign_key_val,
-                       final_reserved_chars['separator']:       self._parse_line_separator,
-                       final_reserved_chars['list_item']:       self._parse_line_list_item,
-                       '':  self._parse_line_goto_next}
+        self._reserved_chars_literal_string = self._reserved_chars['literal_string']
+        self._reserved_chars_escaped_string = self._reserved_chars['escaped_string']
+        self._reserved_chars_list_item = self._reserved_chars['list_item']
+        self._reserved_chars_comment = self._reserved_chars['comment']
+        self._reserved_chars_separator = self._reserved_chars['separator']
+        self._reserved_chars_end_list = self._reserved_chars['end_list']
+        self._reserved_chars_end_dict = self._reserved_chars['end_dict']
+
+        char_functions = {'comment':         self._parse_line_comment,
+                          'start_type':      self._parse_line_start_type,
+                          'end_type':        self._parse_line_end_type,
+                          'start_list':      self._parse_line_start_list,
+                          'end_list':        self._parse_line_end_list,
+                          'start_dict':      self._parse_line_start_dict,
+                          'end_dict':        self._parse_line_end_dict,
+                          'literal_string':  self._parse_line_literal_string,
+                          'escaped_string':  self._parse_line_escaped_string,
+                          'assign_key_val':  self._parse_line_assign_key_val,
+                          'separator':       self._parse_line_separator,
+                          'list_item':       self._parse_line_list_item}
+        # Dict of functions for proceeding with parsing, based on the next
+        # character. Two versions are created; which is actually used Depends
+        # on the `unquoted_unicode` setting.
+        parse_line__unquoted_ascii = collections.defaultdict(lambda: self._parse_line_invalid_unquoted)
+        parse_line__unquoted_ascii[''] = self._parse_line_goto_next
         for c in self._whitespace:
-            _parse_line[c] = self._parse_line_whitespace
-        if reserved_chars is not None:
-            _parse_line = {k: v for k, v in _parse_line.items() if v is not None}
-        self._parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string, _parse_line)
+            parse_line__unquoted_ascii[c] = self._parse_line_whitespace
+        for k, v in final_reserved_chars.items():
+            if k in char_functions and v is not None:
+                # `*_suffix` characters don't need parsing functions
+                parse_line__unquoted_ascii[v] = char_functions[k]
+        for n in range(128):
+            c = chr(n)
+            if c not in self._nonliterals and c not in parse_line__unquoted_ascii:
+                parse_line__unquoted_ascii[c] = self._parse_line_unquoted_string
+        self._parse_line__unquoted_ascii = parse_line__unquoted_ascii
+        if unquoted_unicode:
+            parse_line__unquoted_unicode = collections.defaultdict(lambda: self._parse_line_unquoted_string)
+            parse_line__unquoted_unicode[''] = self._parse_line_goto_next
+            for c in self._whitespace:
+                parse_line__unquoted_unicode[c] = self._parse_line_whitespace
+            for k, v in final_reserved_chars.items():
+                if k in char_functions and v is not None:
+                    # `*_suffix` characters don't need parsing functions
+                    parse_line__unquoted_unicode[v] = char_functions[k]
+            self._parse_line__unquoted_unicode = parse_line__unquoted_unicode
 
 
-        # Take care of reserved_words
+        # Characters that can't appear in normal unquoted strings.
+        #
+        # `list_item` (`+`) is only special in non-compact syntax, at the
+        # beginning of a line, when followed by an indentation character (or
+        # Unicode whitespace), so it is allowed otherwise.
+        #
+        # `literal_string` and `escaped_string` (quotation marks) could be
+        # treated similarly in principle, but that would prevent them from
+        # being used with an ASCII prefix as a shorthand type notation
+        # (`b"byte string"`) and could increase cognitive load for visual
+        # parsing.
+        #
+        # The suffix characters are always safe, because they only
+        # have special meaning when immediately following special characters.
+        #
+        # It would be possible to have context-sensitive comment characters
+        # or key-value assignment characters, but that would significantly
+        # increase cognitive load.
+        #
+        # The inline object delimiters and separator must always be special in
+        # inline syntax, unless special context and nesting rules are used, in
+        # which case cognitive load is also increased to undesirable levels.
+        # It would be possible to allow them in non-inline syntax, but that
+        # would make switching between inline and non-inline syntax more
+        # complex.
+        self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix', 'list_item') and v is not None)
+        self._not_unquoted = set(self._not_unquoted_str)
+        self._not_unquoted_re = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
+
+
+        # Take care of `reserved_words`
         if reserved_words is None:
             self._reserved_words = defaults.RESERVED_WORDS
         else:
@@ -1045,6 +1133,45 @@ class BespONDecoder(object):
                 if self._unicode_whitespace_re.search(k):
                     raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
             self._reserved_words = reserved_words
+
+
+        # Take care of special types besides `reserved_words`
+        # Regex for integers, including hex, octal, and binary.
+        pattern_int = r'''
+                       [+-]? (?: [1-9](?:_[0-9]|[0-9])* |
+                                 0x [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* |
+                                 0o [0-7](?:_[0-7]|[0-7])* |
+                                 0b [01](?:_[01]|[01])* |
+                                 0
+                             )
+                       $
+                       '''
+        # Easier if don't have to worry about `re.VERBOSE` later, when
+        # combining into a large regex
+        pattern_int = pattern_int.replace(' ', '').replace('\n', '')
+        self._int_re = re.compile(pattern_int)
+
+        # Regex for floats, including hex.
+        pattern_float = r'''
+                         [+-]? (?: (?: \. [0-9](?:_[0-9]|[0-9])* (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                       (?:[1-9](?:_[0-9]|[0-9])*|0)
+                                          (?: \. (?:[0-9](?:_[0-9]|[0-9])*)? (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                              [eE][+-]?[0-9](?:_[0-9]|[0-9])*
+                                          )
+                                   ) |
+                                   0x (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                          [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
+                                             (?: \. (?:[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*)? (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                                 [pP][+-]?[0-9](?:_[0-9]|[0-9])*
+                                             )
+                                      )
+                               )
+                         $
+                         '''
+        pattern_float = pattern_float.replace(' ', '').replace('\n', '')
+        self._float_re = re.compile(pattern_float)
+        # Quick identification of strings for int/float checking
+        self._numeric_types_starting_chars = set('+-.0123456789')
 
 
         # Take care of parsers and parser aliases
@@ -1113,23 +1240,7 @@ class BespONDecoder(object):
         self._string_parsers[None] = self._string_parsers['str']
 
 
-        # Characters that can't appear in normal unquoted strings.
-        # `+` is only special in non-compact syntax, at the beginning of a
-        # line, when followed by an indentation character (or Unicode
-        # whitespace), so it is allowed otherwise.  Similarly, quotation marks
-        # only have special meaning when appearing at the beginning of a
-        # string.  The suffix characters are always safe, because they only
-        # have special meaning when immediately following special characters.
-        # It would be possible to have context-sensitive comment characters
-        # or key-value assignment characters, but that would significantly
-        # increase cognitive load.  The inline object delimiters and separator
-        # must always be special in inline syntax, unless special context and
-        # nesting rules are used, in which case cognitive load is also
-        # increased to undesirable levels.  Deciding which characters may
-        # appear unquoted will always involve major trade-offs.
-        self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix', 'list_item', 'escaped_string', 'literal_string'))
-        self._not_unquoted = set(self._not_unquoted_str)
-        self._not_unquoted_re = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
+
 
 
         # Regex for matching explicit type declarations.  Don't need to check
@@ -1159,39 +1270,7 @@ class BespONDecoder(object):
             return re.compile(p)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
-        # Quick identification of strings for int/float checking
-        self._numeric_type_starting_chars = set('+-.0123456789')
 
-        # Regex for integers, including hex, octal, and binary.
-        pattern_int = r'''
-                       [+-]? (?: [1-9](?:_(?=[0-9])|[0-9])* |
-                                 0x [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* |
-                                 0o [0-7](?:_(?=[0-7])|[0-7])* |
-                                 0b [01](?:_(?=[01])|[01])* |
-                                 0
-                             )
-                       $
-                       '''
-        self._int_re = re.compile(pattern_int, re.VERBOSE)
-
-        # Regex for floats, including hex.
-        pattern_float = r'''
-                         [+-]? (?: (?: \. [0-9](?:_(?=[0-9])|[0-9])* (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                       (?:[1-9](?:_(?=[0-9])|[0-9])*|0)
-                                          (?: \. (?:[0-9](?:_(?=[0-9])|[0-9])*)? (?:[eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                              [eE][+-]?[0-9](?:_(?=[0-9])|[0-9])*
-                                          )
-                                   ) |
-                                   0x (?: \.[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])* (:? [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                          [0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])*
-                                             (?: \. (?:[0-9a-fA-F](?:_(?=[0-9a-fA-F])|[0-9a-fA-F])*)? (:? [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*)? |
-                                                 [pP][+-]?[0-9](?:_(?=[0-9])|[0-9])*
-                                             )
-                                      )
-                               )
-                         $
-                         '''
-        self._float_re = re.compile(pattern_float, re.VERBOSE)
 
         # There are multiple regexes for unquoted keys.  Plain unquoted keys
         # need to be distinguished from keys describing key paths.
@@ -1306,7 +1385,7 @@ class BespONDecoder(object):
             elif line[0] == '\uFFFE':
                 raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state.traceback)
 
-        _parse_line = self._parse_line
+        _parse_line = self._parse_line__unquoted_ascii
         while line is not None:
             line = _parse_line[line[:1]](line)
 
@@ -1381,7 +1460,10 @@ class BespONDecoder(object):
         '''
         Parse comments.
         '''
-        delim = self._opening_delim_percent_re.match(line).group(0)
+        len_delim = len(line)
+        line = line.lstrip(self._reserved_chars_comment)
+        len_delim -= len(line)
+        delim = self._reserved_chars_comment*len_delim
         if len(delim) < 3:
             if line.startswith('%!bespon'):
                 if self.state.start_lineno != 1:
@@ -1720,20 +1802,21 @@ class BespONDecoder(object):
         return line
 
     def _parse_line_list_item(self, line):
-        m = self._opening_delim_plus_re.match(line)
-        if not m:
+        nc = line[1:2]
+        if nc != '' and nc not in self._whitespace:
             line = self._parse_line_unquoted_string(line)
         else:
+            # Opening list involves all needed checks for attempting to open
+            # two lists on the same line, being in inline syntax, etc.
             self._ast.open_list_non_inline()
-            indent_after_plus = line[1:m.end()]
-            line = line[m.end():]
-            if line[:1] == '+' and self.opening_delim_plus_re.match(line):
-                raise erring.ParseError('Cannot begin a list element on a line where one has already been started in non-inline syntax')
+            line_lstrip_whitespace = line[1:].lstrip(self._whitespace_str)
+            indent_after_list_item = line[1:len(line)-len(line_lstrip_whitespace)]
+            line = line_lstrip_whitespace
             if line:
-                if self.state.indent[-1:] == '\t' and indent_after_plus[:1] == '\t':
-                    self.state.indent += indent_after_plus
+                if self.state.indent[-1:] == '\t' and indent_after_list_item[:1] == '\t':
+                    self.state.indent += indent_after_list_item
                 else:
-                    self.state.indent += '\x20' + indent_after_plus
+                    self.state.indent += '\x20' + indent_after_list_item
             else:
                 line = self._parse_line_goto_next()
         return line
@@ -1817,11 +1900,21 @@ class BespONDecoder(object):
                 line = self._parse_line_goto_next()
         return line
 
+
     def _parse_line_whitespace(self, line):
         '''
         Parse line segment beginning with whitespace.
         '''
         raise erring.ParseError('Unexpected whitespace; if you are seeing this message, there is a bug in the parser', self.state.traceback)
+
+
+    def _parse_line_invalid_unquoted(self, line):
+        '''
+        Parse line segment beginning with code point >= 128 when unquoted
+        Unicode is not allowed.
+        '''
+        raise erring.ParseError('Unquoted non-ASCII characters are not allowed by default; retry with "unquoted_unicode" = True if the source is trustworthy/appropriate security measures are in place', self.state.traceback)
+
 
     def _parse_line_unquoted_string(self, line):
         state = self.state
@@ -1885,7 +1978,7 @@ class BespONDecoder(object):
                 raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(state.type, e), state.traceback)
         elif s in self._reserved_words:
             state.stringlike_obj = self._reserved_words[s]
-        elif s[0] in self._numeric_type_starting_chars:
+        elif s[0] in self._numeric_types_starting_chars:
             m_int = self._int_re.match(s)
             if m_int:
                 state.stringlike_obj = int(s.replace('_', ''))
