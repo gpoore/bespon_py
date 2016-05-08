@@ -201,9 +201,9 @@ def test_decode_raw_ast():
     dc.decode(' """\n  ab\n  cd\n """/ = "efg" ')
     assert(dc._ast == [ collections.OrderedDict([[' ab\n cd\n', 'efg']]) ])
 
-    dc.decode('+ "a"\n+ "b"')
+    dc.decode('* "a"\n* "b"')
     assert(dc._ast == [ ['a', 'b'] ])
-    dc.decode('+\n  + "a"')
+    dc.decode('*\n  * "a"')
     assert(dc._ast == [ [ ['a'] ] ])
 
     dc.decode('"a"=\n "b"="c"\n"d"="e"')
@@ -212,7 +212,7 @@ def test_decode_raw_ast():
     with pytest.raises(err.ParseError):
         dc.decode('"a"="b"\n "c"="d"')
     with pytest.raises(err.ParseError):
-        dc.decode('+ "a"\n + "b"')
+        dc.decode('* "a"\n * "b"')
 
 
 
@@ -240,8 +240,8 @@ def test_decode_indentation_syntax():
     assert(dc.decode(' "a" = 1\n "b" = \n  "c" = 3\n  "d" = 4\n\n') == {'a': 1, 'b': {'c': 3, 'd': 4}})
     assert(dc.decode(' a = 1\n b = \n  c = 3\n  d = 4\n\n') == {'a': 1, 'b': {'c': 3, 'd': 4}})
 
-    assert(dc.decode('+ "a"\n+ "b"') == ['a', 'b'])
-    assert(dc.decode('+\n  + "a"\n  + "b"') == [['a', 'b']])
+    assert(dc.decode('* "a"\n* "b"') == ['a', 'b'])
+    assert(dc.decode('*\n  * "a"\n  * "b"') == [['a', 'b']])
 
 
 
@@ -333,9 +333,9 @@ def test_decode_vs_json_yaml():
         state = NY
         postalCode = 10021-3100
     phoneNumbers =
-        + type = home
+        * type = home
           number = 212 555-1234
-        + type = office
+        * type = office
           number = 646 555-4567
     children = []
     spouse = null
@@ -390,12 +390,12 @@ def test_decode_vs_json_yaml():
             family_name =  Gale
 
         items =
-            + part_no =   A4786
+            * part_no =   A4786
               descrip =   'Water Bucket (Filled)'
               price =     1.47
               quantity =  4
 
-            + part_no =   E1628
+            * part_no =   E1628
               descrip =   'High Heeled "Ruby" Slippers'
               size =      8
               price =     133.7
@@ -435,8 +435,8 @@ def test_explicit_typing():
     assert(dc.decode('(odict)>\n a=b') == collections.OrderedDict({'a': 'b'}))
     assert(dc.decode('(set)>[1; 2; 3]') == set([1, 2, 3]))
     assert(dc.decode('(set)> [1; 2; 3]') == set([1, 2, 3]))
-    assert(dc.decode('(set)>\n+ 1\n+ 2\n+ 3') == set([1, 2, 3]))
-    assert(dc.decode('(set)>\n + 1\n + 2\n + 3') == set([1, 2, 3]))
+    assert(dc.decode('(set)>\n* 1\n* 2\n* 3') == set([1, 2, 3]))
+    assert(dc.decode('(set)>\n * 1\n * 2\n * 3') == set([1, 2, 3]))
 
     with pytest.raises(err.ParseError):
         dc.decode('%%%comment%%% {a=1}')

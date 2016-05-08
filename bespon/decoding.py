@@ -85,7 +85,7 @@ class State(object):
         self.stringlike_start_lineno = 0
         self.stringlike_end_lineno = 0
         # Information for resolving string-like object that accounts for the
-        # possibility of an explicit type declaration, which might be on an
+        # possibility of explicit type declaration, which might be on an
         # earlier line
         self.stringlike_effective_indent = None
         self.stringlike_effective_at_line_start = None
@@ -104,7 +104,7 @@ class State(object):
 
     traceback_namedtuple = collections.namedtuple('traceback_namedtuple', ['source', 'start_lineno', 'end_lineno'])
 
-    def set_type(self, t):
+    def set_type(self, kvarg_list):
         '''
         Store explicit type definition and relevant current state for later use.
 
@@ -112,24 +112,30 @@ class State(object):
         '''
         if self.type:
             if self.inline:
-                raise erring.ParseError('Encountered explicit type declaration before a previous type declaration was resolved', self.traceback_type)
+                raise erring.ParseError('Encountered explicit type declaration before a previous declaration was resolved', self.traceback_type)
             if self.type_cat == 'string':
                 raise erring.ParseError('Explicit type declaration "{0}" for string-like object was never used'.format(self.type_obj), self.traceback_type)
             # Use current indentation, in case collection contents are indented
             # relative to type declaration.  If indentations aren't compatible,
             # it will be caught in the creation of the `*AstObj`.
             self.ast.append_collection(self.type_cat, self.indent)
-        self.type = True
-        self.type_obj = t
-        self.type_indent = self.indent
-        self.type_at_line_start = self.at_line_start
-        self.at_line_start = False
-        # Type definitions must always be on a single line
-        self.type_lineno = self.start_lineno
-        try:
+        if not kvarg_list:
+            raise erring.ParseError('Encountered empty explicit type declaration', self.state.traceback)
+        t, v = kvarg_list[0]
+        if t in self.decoder._parser_cats and v is True and len(kvarg_list) == 1:
+            self.type_obj = t
+            self.type_indent = self.indent
+            self.type_at_line_start = self.at_line_start
+            self.at_line_start = False
+            self.type_lineno = self.start_lineno
             self.type_cat = self.decoder._parser_cats[t]
-        except KeyError:
-            raise erring.ParseError('Unknown explicit type "{0}"'.format(t), self.traceback_type)
+            self.type = True
+        elif t == self.decoder.dialect and v is True:
+            if len(kvarg_list) > 1:
+                self.decoder._parser_directives(dict(kvarg_list[1:]))
+        else:
+            raise erring.ParseError('Could not parse explicit type declaration; invalid or unsupported settings', self.traceback)
+
 
     def set_stringlike(self, s):
         '''
@@ -825,7 +831,7 @@ class Ast(object):
             self.pos = pos
         if pos.cat != 'list':
             # No need to check indentation in the event of an explicit type
-            # declaraction; that's built into `ListlikeAstObj`.  This will give
+            # declaration; that's built into `ListlikeAstObj`.  This will give
             # list correct indentation, even if the `+`, etc. is indented
             # relative to the type declaration.
             self.append_collection('list', state.indent)
@@ -965,7 +971,7 @@ class BespONDecoder(object):
     'not_unquoted',
     '_not_unquoted_re',
     '_parse_line',
-    '_explicit_type_re',
+    '_explicit_type_name_check_re',
     '_opening_delim_percent_re',
     '_opening_delim_single_quote_re',
     '_opening_delim_double_quote_re',
@@ -983,7 +989,7 @@ class BespONDecoder(object):
     '_line_iter', '_ast']
     """
     def __init__(self, only_ascii=False, unquoted_strings=True, unquoted_unicode=False,
-                 reserved_chars=None, reserved_words=None,
+                 dialect=None, reserved_chars=None, reserved_words=None,
                  dict_parsers=None, list_parsers=None, string_parsers=None, parser_aliases=None,
                  **kwargs):
         arg_bools = (only_ascii, unquoted_strings, unquoted_unicode)
@@ -996,6 +1002,15 @@ class BespONDecoder(object):
         self.only_ascii = only_ascii
         self.unquoted_strings = unquoted_strings
         self.unquoted_unicode = unquoted_unicode
+
+
+        if reserved_chars is None and reserved_words is None:
+            self.dialect = dialect or 'bespon'
+        elif dialect is not None:
+            self.dialect = dialect
+        else:
+            raise erring.ConfigError('A dialect name must be specified when constructing a custom parser with "reserved_chars" or "reserved_words"; this is no longer a standard BespON parser')
+
 
         # Create a UnicodeFilter instance
         # Provide shortcuts to some of its attributes
@@ -1030,6 +1045,8 @@ class BespONDecoder(object):
                     raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
                 if v is not None and (not isinstance(v, str) or len(v) != 1):
                     raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1')
+                if v in '._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('A'):
+                    raise erring.ConfigError('"reserved_chars" cannot involve the period, underscore, or 0-9, a-z, A-Z')
             if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
                 raise erring.ConfigError('"reserved_chars" contains duplicate mappings to a single code point')
             # Need a `defaultdict`, so that don't have to worry about whether
@@ -1054,6 +1071,8 @@ class BespONDecoder(object):
         self._reserved_chars_separator = self._reserved_chars['separator']
         self._reserved_chars_end_list = self._reserved_chars['end_list']
         self._reserved_chars_end_dict = self._reserved_chars['end_dict']
+        self._reserved_chars_end_type_with_suffix = self._reserved_chars['end_type'] + self._reserved_chars['end_type_suffix']
+        self._reserved_chars_assign_key_val = self._reserved_chars['assign_key_val']
 
         char_functions = {'comment':         self._parse_line_comment,
                           'start_type':      self._parse_line_start_type,
@@ -1083,16 +1102,16 @@ class BespONDecoder(object):
             if c not in self._nonliterals and c not in parse_line__unquoted_ascii:
                 parse_line__unquoted_ascii[c] = self._parse_line_unquoted_string
         self._parse_line__unquoted_ascii = parse_line__unquoted_ascii
-        if unquoted_unicode:
-            parse_line__unquoted_unicode = collections.defaultdict(lambda: self._parse_line_unquoted_string)
-            parse_line__unquoted_unicode[''] = self._parse_line_goto_next
-            for c in self._whitespace:
-                parse_line__unquoted_unicode[c] = self._parse_line_whitespace
-            for k, v in final_reserved_chars.items():
-                if k in char_functions and v is not None:
-                    # `*_suffix` characters don't need parsing functions
-                    parse_line__unquoted_unicode[v] = char_functions[k]
-            self._parse_line__unquoted_unicode = parse_line__unquoted_unicode
+
+        parse_line__unquoted_unicode = collections.defaultdict(lambda: self._parse_line_unquoted_string)
+        parse_line__unquoted_unicode[''] = self._parse_line_goto_next
+        for c in self._whitespace:
+            parse_line__unquoted_unicode[c] = self._parse_line_whitespace
+        for k, v in final_reserved_chars.items():
+            if k in char_functions and v is not None:
+                # `*_suffix` characters don't need parsing functions
+                parse_line__unquoted_unicode[v] = char_functions[k]
+        self._parse_line__unquoted_unicode = parse_line__unquoted_unicode
 
 
         # Characters that can't appear in normal unquoted strings.
@@ -1134,6 +1153,8 @@ class BespONDecoder(object):
                     raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
             self._reserved_words = reserved_words
 
+        self._boolean_reserved_words_re = '|'.join(re.escape(k) for k, v in self._reserved_words.items() if v is True or v is False)
+
 
         # Take care of special types besides `reserved_words`
         # Regex for integers, including hex, octal, and binary.
@@ -1170,17 +1191,28 @@ class BespONDecoder(object):
                          '''
         pattern_float = pattern_float.replace(' ', '').replace('\n', '')
         self._float_re = re.compile(pattern_float)
+
         # Quick identification of strings for int/float checking
         self._numeric_types_starting_chars = set('+-.0123456789')
+        self._numeric_types_ending_chars = set('.0123456789')
+
+
+        # Required form for all type names
+        pattern_type_key = r'[a-z](?:\:\:[a-z0-9]|\.[a-z0-9]|[a-z0-9])*'
+        self._type_name_check_re = re.compile(pattern_type_key + '$')
+        self._type_key_re = re.compile(pattern_type_key)
 
 
         # Take care of parsers and parser aliases
-        self._type_re = re.compile(r'[a-zA-Z][a-zA-Z0-9]*(?:\:[a-zA-Z][a-zA-Z0-9]*)?(?:\.[a-zA-Z][a-zA-Z0-9]*)*$')
         for d in (dict_parsers, list_parsers, string_parsers):
             if d is not None:
                 for k, v in d.items():
-                    if not isinstance(k, str) or not self._type_re.match(k) or not hasattr(v, '__call__'):
-                        raise TypeError('All parser dicts must map Unicode strings meeting the type name specification to functions (callable)'.format(k, v))
+                    if not isinstance(k, str) or not hasattr(v, '__call__'):
+                        raise TypeError('All parser dicts must map Unicode strings to functions (callable)'.format(k, v))
+                    if any(k.startswith(p) for p in defaults.RESERVED_META_PREFIXES) or k in defaults.RESERVED_META_KEYWORDS:
+                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved meta keyword, or that begins with a reserved meta prefix'.format(k))
+                    if not self._type_name_check_re.match(k):
+                        raise erring.ConfigError('User-defined parser "{0}" has a name that does not fit the required form for parser names; use a name of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
         if dict_parsers is None:
             self._dict_parsers = defaults.DICT_PARSERS
         else:
@@ -1197,22 +1229,22 @@ class BespONDecoder(object):
         if all(x is None for x in (dict_parsers, list_parsers, string_parsers)):
             self.__bytes_parsers = defaults._BYTES_PARSERS
         else:
-            bytes_parser_re = re.compile(r'(?:^|[^:]+:)bytes(?:$|\.[^.].*)')
-            self.__bytes_parsers = set([p for p in self._string_parsers if bytes_parser_re.match(p)])
+            self.__bytes_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'bytes'])
             if (set(self._dict_parsers) & set(self._list_parsers) & set(self._string_parsers)):
                 raise erring.ConfigError('Overlap between dict, list, and string parsers is not supported')
 
-        self._parsers = {'dict': self._dict_parsers,
-                        'list': self._list_parsers,
-                        'string': self._string_parsers}
+        # Need a way to look up parsers by category
+        self._parsers = {'dict':   self._dict_parsers,
+                         'list':   self._list_parsers,
+                         'string': self._string_parsers}
 
         if parser_aliases is None:
             self._parser_aliases = defaults.PARSER_ALIASES
         else:
             self._parser_aliases = parser_aliases
         for k, v in self._parser_aliases.items():
-            if not isinstance(k, str) or not self._type_re.match(k):
-                raise TypeError('All parser aliases must be Unicode strings meeting the type name specification'.format(k, v))
+            if not isinstance(k, str) or not self._type_name_check_re.match(k):
+                raise ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
             found = False
             if v in self._dict_parsers:
                 self._dict_parsers[k] = self._dict_parsers[v]
@@ -1228,6 +1260,8 @@ class BespONDecoder(object):
             if not found:
                 raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
 
+        # Need a way to look up category for a given parser
+        # Note that parsers can't overlap multiple categories
         parser_cats = {}
         for c, d in self._parsers.items():
             for k in d:
@@ -1238,18 +1272,6 @@ class BespONDecoder(object):
         self._dict_parsers[None] = self._dict_parsers['dict']
         self._list_parsers[None] = self._list_parsers['list']
         self._string_parsers[None] = self._string_parsers['str']
-
-
-
-
-
-        # Regex for matching explicit type declarations.  Don't need to check
-        # content; will attempt type lookup and raise error upon failure.
-        pattern_type = r'{st}.*?{et}{ets}'.format(st=re.escape(self._reserved_chars['start_type']),
-                                                  et=re.escape(self._reserved_chars['end_type']),
-                                                  ets=re.escape(self._reserved_chars['end_type_suffix']) )
-        self._explicit_type_declaration_re = re.compile(pattern_type)
-
 
         # Dict of regexes for identifying closing delimiters.  Automatically
         # generates needed regex on the fly.  Regexes for opening delimiters
@@ -1385,9 +1407,12 @@ class BespONDecoder(object):
             elif line[0] == '\uFFFE':
                 raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state.traceback)
 
-        _parse_line = self._parse_line__unquoted_ascii
+        if unquoted_strings:
+        self._parse_line = self._parse_line__unquoted_ascii
+        else:
+
         while line is not None:
-            line = _parse_line[line[:1]](line)
+            line = self._parse_line[line[:1]](line)
 
         self._ast.finalize()
 
@@ -1529,14 +1554,71 @@ class BespONDecoder(object):
         Parse explicit typing.
         '''
         state = self.state
-        m = self._explicit_type_declaration_re.match(line)
-        if not m:
-            # Due to regex, any match is guaranteed to be a type name
-            # consisting of at least one code point
-            raise erring.ParseError('Could not parse explicit type declaration', state.traceback)
-        t = m.group(0)[1:-2]
-        state.set_type(t)
-        line = line[m.end():].lstrip(self._whitespace_str)
+        if state.inline:
+            indent = state.inline_indent
+        else:
+            indent = state.indent
+        line = line[1:].lstrip(self._whitespace_str)
+        kvarg_list = []
+        next_key = None
+        awaiting_key = True
+        awaiting_val = False
+        while True:
+            if line == '':
+                while line == '':
+                    line = self._parse_line_get_next()
+                    if line is None:
+                        raise erring.ParseError('Text ended while looking for end of explicit type declaration', state.traceback)
+                    line_lstrip_whitespace = line.lstrip(self._whitespace_str)
+                    if line_lstrip_whitespace and not line.startswith(indent):
+                        raise erring.ParseError('Indentation error in explicit type declaration', state.traceback)
+                    line = line_lstrip_whitespace
+
+            if line[:2] == self._reserved_chars_end_type_with_suffix:
+                if awaiting_val:
+                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
+                if next_key is not None:
+                    kvarg_list.append((next_key, True))
+                state.set_type(kvarg_list)
+                line = line[2:].lstrip(self._whitespace_str)
+                break
+            elif line[:1] == self._reserved_chars_separator:
+                if awaiting_key:
+                    raise erring.ParseError('Invalid explicit type declaration; extra "{0}"'.format(self._reserved_chars_separator), state.traceback)
+                if awaiting_val:
+                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
+                if next_key is not None:
+                    kvarg_list.append((next_key, True))
+                    next_key = None
+                awaiting_key = True
+                line = line[1:].lstrip(self._whitespace_str)
+            elif line[:1] == self._reserved_chars_assign_key_val:
+                if next_key is None:
+                    raise erring.ParseError('Invalid explicit type declaration; missing key in key-value pair', state.traceback)
+                if awaiting_val:
+                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
+                awaiting_val = True
+                line = line[1:].lstrip(self._whitespace_str)
+            elif awaiting_val:
+                m = self._boolean_reserved_words_re.match(line)
+                if m:
+                    w = m.group(0)
+                    v = self._reserved_words[w]
+                    awaiting_val = False
+                    kvarg_list.append((next_key, v))
+                    line = line[m.end():].lstrip(self._whitespace_str)
+                else:
+                    raise erring.ParseError('Invalid explicit type declaration, or type declaration using unsupported features', state.traceback)
+            elif awaiting_key:
+                m = self._type_key_re.match(line)
+                if m:
+                    next_key = m.group(0)
+                    line = line[m.end():].lstrip(self._whitespace_str)
+                    awaiting_key = False
+                else:
+                    raise erring.ParseError('Invalid explicit type declaration', state.traceback)
+            else:
+                raise erring.ParseError('Invalid explicit type declaration, or type declaration using unsupported features', state.traceback)
         return line
 
 

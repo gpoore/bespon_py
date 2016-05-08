@@ -31,7 +31,7 @@ RESERVED_CHARS = {'comment': '%',
                   'literal_string': "'",
                   'separator': ';',
                   'assign_key_val': '=',
-                  'list_item': '+',
+                  'list_item': '*',
                   'block_suffix': '/'}
 
 
@@ -42,6 +42,15 @@ RESERVED_WORDS = {'true': True, 'TRUE': True, 'True': True,
                   '-inf': float('-inf'), '-INF': float('-inf'), '-Inf': float('-inf'),
                   '+inf': float('+inf'), '+INF': float('+inf'), '+Inf': float('+inf'),
                   'nan': float('nan'), 'NAN': float('nan'), 'NaN': float('nan')}
+
+
+RESERVED_META_PREFIXES = ['bespon']
+
+
+RESERVED_META_KEYWORDS = ['type', 'schema', 'meta',
+                          'label', 'labelref', 'pathref', 'ref',
+                          'copy', 'copy.deep', 'copy.shallow',
+                          'template', 'path']
 
 
 DICT_PARSERS = {'dict':  dict,
