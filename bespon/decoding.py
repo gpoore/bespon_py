@@ -48,7 +48,7 @@ class State(object):
     __slots__ = ['ast', 'decoder', 'source',
                  'indent', 'at_line_start', 'start_lineno', 'end_lineno',
                  'inline', 'inline_indent',
-                 'type', 'type_obj', 'type_indent', 'type_at_line_start', 'type_lineno', 'type_cat',
+                 'type', 'type_obj', 'type_indent', 'type_at_line_start', 'type_start_lineno', 'type_end_lineno', 'type_cat',
                  'stringlike', 'stringlike_obj', 'stringlike_indent', 'stringlike_at_line_start', 'stringlike_start_lineno', 'stringlike_end_lineno',
                  'stringlike_effective_indent', 'stringlike_effective_at_line_start', 'stringlike_effective_start_lineno']
 
@@ -74,7 +74,8 @@ class State(object):
         self.type_obj = None
         self.type_indent = None
         self.type_at_line_start = None
-        self.type_lineno = 0
+        self.type_start_lineno = 0
+        self.type_end_lineno = 0
         self.type_cat = None
 
         # Information for last string-like object
@@ -127,12 +128,18 @@ class State(object):
             self.type_indent = self.indent
             self.type_at_line_start = self.at_line_start
             self.at_line_start = False
-            self.type_lineno = self.start_lineno
+            self.type_start_lineno = self.start_lineno
+            self.type_end_lineno = self.end_lineno
             self.type_cat = self.decoder._parser_cats[t]
             self.type = True
         elif t == self.decoder.dialect and v is True:
+            if self.decoder._ast:
+                raise erring.ParseError('Parser directives can only be used before the beginning of data', self.traceback)
             if len(kvarg_list) > 1:
-                self.decoder._parser_directives(dict(kvarg_list[1:]))
+                d = dict(kvarg_list[1:])
+                if len(d) < len(kvarg_list[1:]):
+                    raise erring.ParseError('Explicit type declaration contains duplicate keys', self.traceback)
+                self.decoder._parser_directives(d)
         else:
             raise erring.ParseError('Could not parse explicit type declaration; invalid or unsupported settings', self.traceback)
 
@@ -192,7 +199,7 @@ class State(object):
             self.stringlike_at_line_start = self.at_line_start
             self.stringlike_start_lineno = self.start_lineno
             self.stringlike_end_lineno = self.end_lineno
-            self.stringlike_effective_start_lineno = self.type_lineno
+            self.stringlike_effective_start_lineno = self.type_start_lineno
             if self.inline:
                 if not self.type_indent.startswith(self.inline_indent):
                     raise erring.ParseError('Indentation error in explicit type declaration for string-like object', self.traceback_type)
@@ -239,7 +246,7 @@ class State(object):
         Traceback from the earliest stored position to the end.
         '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_lineno, self.end_lineno)
+            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.end_lineno)
         else:
             if self.stringlike:
                 return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.end_lineno)
@@ -252,7 +259,7 @@ class State(object):
         Traceback to the start of the region currently being parsed.
         '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_lineno, self.type_lineno)
+            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.type_start_lineno)
         else:
             if self.stringlike:
                 return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_start_lineno)
@@ -264,7 +271,7 @@ class State(object):
         '''
         Traceback to explicit type declaration.
         '''
-        return self.traceback_namedtuple(self.source, self.type_lineno, self.type_lineno)
+        return self.traceback_namedtuple(self.source, self.type_start_lineno, self.type_end_lineno)
 
     @property
     def traceback_stringlike(self):
@@ -382,13 +389,13 @@ class ListlikeAstObj(list):
                 if not state.type_indent.startswith(state.inline_indent):
                     raise erring.ParseError('Indentation error in explicit type declaration for inline list-like object', state.traceback_type)
             else:
-                if not state.type_at_line_start or state.type_lineno == state.start_lineno:
+                if not state.type_at_line_start or state.type_end_lineno == state.start_lineno:
                     raise erring.ParseError('Explicit type declaration for list-like object must be on a line by itself in non-inline syntax', state.traceback_type)
                 if not indent.startswith(state.type_indent):
                     # A list with an explicit type declaration may indented
                     # under the declaration.
                     raise erring.ParseError('Indentation mismatch between explicit type declaration for list-like object and object contents', state.traceback_type)
-            self.start_lineno = state.type_lineno
+            self.start_lineno = state.type_start_lineno
             self.type = state.type_obj
             state.type = False
         elif state.stringlike:
@@ -528,13 +535,13 @@ class DictlikeAstObj(collections.OrderedDict):
                 if not state.type_indent.startswith(state.inline_indent):
                     raise erring.ParseError('Indentation error in explicit type declaration for inline dict-like object', state.traceback_type)
             else:
-                if not state.type_at_line_start or state.type_lineno == state.start_lineno:
+                if not state.type_at_line_start or state.type_end_lineno == state.start_lineno:
                     raise erring.ParseError('Explicit type declaration for dict-like object must be on a line by itself in non-inline syntax', state.traceback_type)
                 if not indent.startswith(state.type_indent):
                     # A dict with an explicit type declaration may indented
                     # under the declaration.
                     raise erring.ParseError('Indentation mismatch between explicit type declaration for list-like object and object contents', state.traceback_type)
-            self.start_lineno = state.type_lineno
+            self.start_lineno = state.type_start_lineno
             self.type = state.type_obj
             state.type = False
         elif state.stringlike:
@@ -995,13 +1002,22 @@ class BespONDecoder(object):
         arg_bools = (only_ascii, unquoted_strings, unquoted_unicode)
         if not all(x in (True, False) for x in arg_bools):
             raise erring.ConfigError('Arguments "only_ascii", "unquoted_strings", "unquoted_unicode" must be boolean')
+        # In sanity checks, it is important to keep in mind that
+        # `unquoted_strings` and `unquoted_unicode` are separate and don't
+        # necessarily overlap.  It would be possible to have unquoted Unicode
+        # characters in a keyword, which would not count as a string that
+        # needs quoting.
         if only_ascii and unquoted_unicode:
             raise erring.ConfigError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
-        if not unquoted_strings and unquoted_unicode:
-            raise erring.ConfigError('Setting "unquoted_strings" = False is incompatible with "unquoted_unicode" = True')
+        # Default settings for allowed characters and quoting
         self.only_ascii = only_ascii
         self.unquoted_strings = unquoted_strings
         self.unquoted_unicode = unquoted_unicode
+        # Settings that are actually used; these may be changed via parser
+        # directives `(bespon ...)>`.
+        self._only_ascii__current = only_ascii
+        self._unquoted_strings__current = unquoted_strings
+        self._unquoted_unicode__current = unquoted_unicode
 
 
         if reserved_chars is None and reserved_words is None:
@@ -1045,8 +1061,8 @@ class BespONDecoder(object):
                     raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
                 if v is not None and (not isinstance(v, str) or len(v) != 1):
                     raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1')
-                if v in '._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('A'):
-                    raise erring.ConfigError('"reserved_chars" cannot involve the period, underscore, or 0-9, a-z, A-Z')
+                if v in '+-._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('A'):
+                    raise erring.ConfigError('"reserved_chars" cannot involve the plus, hyphen, period, underscore, or 0-9, a-z, A-Z')
             if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
                 raise erring.ConfigError('"reserved_chars" contains duplicate mappings to a single code point')
             # Need a `defaultdict`, so that don't have to worry about whether
@@ -1087,44 +1103,29 @@ class BespONDecoder(object):
                           'separator':       self._parse_line_separator,
                           'list_item':       self._parse_line_list_item}
         # Dict of functions for proceeding with parsing, based on the next
-        # character. Two versions are created; which is actually used Depends
-        # on the `unquoted_unicode` setting.
-        parse_line__unquoted_ascii = collections.defaultdict(lambda: self._parse_line_invalid_unquoted)
-        parse_line__unquoted_ascii[''] = self._parse_line_goto_next
+        # character.
+        parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string)
+        parse_line[''] = self._parse_line_goto_next
         for c in self._whitespace:
-            parse_line__unquoted_ascii[c] = self._parse_line_whitespace
+            parse_line[c] = self._parse_line_whitespace
         for k, v in final_reserved_chars.items():
             if k in char_functions and v is not None:
                 # `*_suffix` characters don't need parsing functions
-                parse_line__unquoted_ascii[v] = char_functions[k]
-        for n in range(128):
-            c = chr(n)
-            if c not in self._nonliterals and c not in parse_line__unquoted_ascii:
-                parse_line__unquoted_ascii[c] = self._parse_line_unquoted_string
-        self._parse_line__unquoted_ascii = parse_line__unquoted_ascii
-
-        parse_line__unquoted_unicode = collections.defaultdict(lambda: self._parse_line_unquoted_string)
-        parse_line__unquoted_unicode[''] = self._parse_line_goto_next
-        for c in self._whitespace:
-            parse_line__unquoted_unicode[c] = self._parse_line_whitespace
-        for k, v in final_reserved_chars.items():
-            if k in char_functions and v is not None:
-                # `*_suffix` characters don't need parsing functions
-                parse_line__unquoted_unicode[v] = char_functions[k]
-        self._parse_line__unquoted_unicode = parse_line__unquoted_unicode
+                parse_line[v] = char_functions[k]
+        self._parse_line = parse_line
 
 
         # Characters that can't appear in normal unquoted strings.
         #
-        # `list_item` (`+`) is only special in non-compact syntax, at the
+        # `list_item` (`*`) is only special in non-compact syntax, at the
         # beginning of a line, when followed by an indentation character (or
         # Unicode whitespace), so it is allowed otherwise.
         #
         # `literal_string` and `escaped_string` (quotation marks) could be
         # treated similarly in principle, but that would prevent them from
         # being used with an ASCII prefix as a shorthand type notation
-        # (`b"byte string"`) and could increase cognitive load for visual
-        # parsing.
+        # (`b"byte string"`) if that was ever desired in the future, and could
+        # increase cognitive load for visual parsing.
         #
         # The suffix characters are always safe, because they only
         # have special meaning when immediately following special characters.
@@ -1141,22 +1142,12 @@ class BespONDecoder(object):
         # complex.
         self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix', 'list_item') and v is not None)
         self._not_unquoted = set(self._not_unquoted_str)
-        self._not_unquoted_re = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
+        self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals)
+        self._end_unquoted_string_re__ascii = re.compile('[^{0}]'.format(re.escape(self._allowed_ascii)))
+        self._end_unquoted_string_re__unicode = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
+        self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
 
 
-        # Take care of `reserved_words`
-        if reserved_words is None:
-            self._reserved_words = defaults.RESERVED_WORDS
-        else:
-            for k in reserved_words:
-                if self._unicode_whitespace_re.search(k):
-                    raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
-            self._reserved_words = reserved_words
-
-        self._boolean_reserved_words_re = '|'.join(re.escape(k) for k, v in self._reserved_words.items() if v is True or v is False)
-
-
-        # Take care of special types besides `reserved_words`
         # Regex for integers, including hex, octal, and binary.
         pattern_int = r'''
                        [+-]? (?: [1-9](?:_[0-9]|[0-9])* |
@@ -1192,13 +1183,33 @@ class BespONDecoder(object):
         pattern_float = pattern_float.replace(' ', '').replace('\n', '')
         self._float_re = re.compile(pattern_float)
 
-        # Quick identification of strings for int/float checking
-        self._numeric_types_starting_chars = set('+-.0123456789')
-        self._numeric_types_ending_chars = set('.0123456789')
+
+        # Take care of `reserved_words`
+        if reserved_words is None:
+            self._reserved_words = defaults.RESERVED_WORDS
+        else:
+            for k in reserved_words:
+                if self._unicode_whitespace_re.search(k):
+                    raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
+                if self._int_re.match(k) or self._float_re.match(k):
+                    raise erring.ConfigError('"reserved_words" cannot contain words that match the pattern for integers or floats')
+            self._reserved_words = reserved_words
+
+        self._boolean_reserved_words_re = re.compile('|'.join(re.escape(k) for k, v in self._reserved_words.items() if v in (True, False)))
+
+
+        # Assemble a regex for matching all special unquoted values
+        reserved_words_lower_set = set([w.lower() for w in self._reserved_words])
+        pattern_reserved_words_case_insensitive = '|'.join(''.join('[{0}]'.format(re.escape(c+c.upper())) for c in w) + '$' for w in reserved_words_lower_set)
+        pattern_reserved_words_int_float = '(?P<reserved_words>{0})|(?P<int>{1})|(?P<float>{2})'.format(pattern_reserved_words_case_insensitive, pattern_int, pattern_float)
+        self._reserved_words_int_float_re = re.compile(pattern_reserved_words_int_float)
+        # Quick identification of strings for unquoted value checking
+        self._reserved_words_int_float_starting_chars = set('+-.0123456789' + ''.join(w[0] + w[0].upper() for w in reserved_words_lower_set))
+        self._reserved_words_int_float_ending_chars = set('.0123456789abcdefABCDEF' + ''.join(w[-1] + w[-1].upper() for w in reserved_words_lower_set))
 
 
         # Required form for all type names
-        pattern_type_key = r'[a-z](?:\:\:[a-z0-9]|\.[a-z0-9]|[a-z0-9])*'
+        pattern_type_key = r'[a-z_](?:\:\:[a-z0-9_]|\.[a-z0-9_]|[a-z0-9_])*'
         self._type_name_check_re = re.compile(pattern_type_key + '$')
         self._type_key_re = re.compile(pattern_type_key)
 
@@ -1372,8 +1383,15 @@ class BespONDecoder(object):
         # Check for characters that may not appear literally
         if self._unicodefilter.has_nonliterals(s):
             trace = self._unicodefilter.trace_nonliterals(s)
-            msg = '\n' + self._unicodefilter.format_nonliterals_trace(trace)
+            msg = '\n  Nonliterals traceback\n' + self._unicodefilter.format_trace(trace)
             raise erring.InvalidLiteralCharacterError(msg)
+        if self.only_ascii and self._unicodefilter.has_unicode(s):
+            trace = self._unicodefilter.trace_unicode(s)
+            msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
+            raise erring.InvalidLiteralCharacterError(msg)
+
+        # Store reference to string in case needed later
+        self._string = s
 
         # Create a generator for lines from the source, keeping newlines
         # Then parse to AST, and convert AST to Python objects
@@ -1394,6 +1412,18 @@ class BespONDecoder(object):
         may only contain a single object.  At the root level, a BespON file
         may only contain a single scalar, or a single collection type.
         '''
+        # Reset regex for finding end of unquoted strings, based on decoder
+        # settings.  This could have been reset during any previous parsing
+        # by a `(bespon ...)>`.
+        if self.unquoted_unicode:
+            self._end_unquoted_string_re = self._end_unquoted_string_re__unicode
+        else:
+            self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
+        # For the same reason, also reset all internal parsing to defaults
+        self._only_ascii__current = self.only_ascii
+        self._unquoted_strings__current = self.unquoted_strings
+        self._unquoted_unicode__current = self.unquoted_unicode
+
         self.state = State()
         self._unicodefilter.traceback = self.state
 
@@ -1407,18 +1437,16 @@ class BespONDecoder(object):
             elif line[0] == '\uFFFE':
                 raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state.traceback)
 
-        if unquoted_strings:
-        self._parse_line = self._parse_line__unquoted_ascii
-        else:
-
+        parse_line = self._parse_line
         while line is not None:
-            line = self._parse_line[line[:1]](line)
+            line = parse_line[line[:1]](line)
 
         self._ast.finalize()
 
         if not self._ast:
             raise erring.ParseError('There was no data to load', self.state)
 
+        self._string = None
         self.state = None
         self._unicodefilter.traceback = None
 
@@ -1427,6 +1455,49 @@ class BespONDecoder(object):
         else:
             self._ast.pythonize()
             return self._ast.root[0]
+
+
+    def _parser_directives(self, d):
+        '''
+        Process parser directives.
+
+        This has security implications, so it is important that all
+        implementations get it right.  A parser directive can never set
+        `only_ascii` to False, or set `unquoted_strings` and `unquoted_unicode`
+        to True, if that conflicts with the settings with which the decoder
+        was created.  Elevating to non-ASCII characters could cause issues
+        with some forms of data transmission.  Elevating quoting could increase
+        the potential for homoglyph issues or other security issues related
+        to Unicode.
+
+        It is important to keep in mind that `unquoted_strings` and
+        `unquoted_unicode` are separate and don't necessarily overlap.  It
+        would be possible to have unquoted Unicode characters in a keyword,
+        which would not count as a string that needs quoting.
+        '''
+        for k, v in d.items():
+            if k == 'only_ascii' and v in (True, False):
+                if v and not self.only_ascii:
+                    if self._unicodefilter.has_unicode(self._string):
+                        trace = self._unicodefilter.trace_unicode(self._string)
+                        msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
+                        raise erring.InvalidLiteralCharacterError(msg)
+                    self._only_ascii__current = True
+                elif not v and self.only_ascii:
+                    raise erring.ParseError('Parser directive has requested "only_ascii" = False, but decoder is set to use "only_ascii" = True', self.state.traceback)
+            elif k == 'unquoted_strings' and v in (True, False):
+                if v and not self.unquoted_strings:
+                    raise erring.ParseError('Parser directive has requested "unquoted_strings" = True, but decoder is set to use "unquoted_strings" = False', self.state.traceback)
+                elif not v and self.unquoted_strings:
+                    self._unquoted_strings__current = False
+            elif k == 'unquoted_unicode' and v in (True, False):
+                if v and not self.unquoted_unicode:
+                    raise erring.ParseError('Parser directive has requested "unquoted_unicode" = True, but decoder is set to use "unquoted_unicode" = False', self.state.traceback)
+                elif not v and self.unquoted_unicode:
+                    self._unquoted_unicode__current = False
+                    self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
+            else:
+                raise erring.ParseError('Invalid or unsupported parser directives', self.state.traceback)
 
 
     def _parse_line_get_next(self, line=None):
@@ -1581,6 +1652,7 @@ class BespONDecoder(object):
                     kvarg_list.append((next_key, True))
                 state.set_type(kvarg_list)
                 line = line[2:].lstrip(self._whitespace_str)
+                self._parse_line_continue_next()
                 break
             elif line[:1] == self._reserved_chars_separator:
                 if awaiting_key:
@@ -1606,6 +1678,7 @@ class BespONDecoder(object):
                     v = self._reserved_words[w]
                     awaiting_val = False
                     kvarg_list.append((next_key, v))
+                    next_key = None
                     line = line[m.end():].lstrip(self._whitespace_str)
                 else:
                     raise erring.ParseError('Invalid explicit type declaration, or type declaration using unsupported features', state.traceback)
@@ -2001,9 +2074,14 @@ class BespONDecoder(object):
     def _parse_line_unquoted_string(self, line):
         state = self.state
         check_kv = True
-        m = self._not_unquoted_re.search(line)
+        m = self._end_unquoted_string_re.search(line)
         if m:
             s = line[:m.start()].rstrip(self._whitespace_str)
+            if s == '':
+                if not self._unquoted_unicode__current and ord(line[:1]) >= 128:
+                    raise erring.ParseError('Encountered unquoted Unicode when "unquoted_unicode" = False', state.traceback)
+                else:
+                    raise erring.ParseError('Unquoted string of length zero; if you are seeing this message, there is a bug in the parser', state.traceback)
             line = line[m.start():]
             state.set_stringlike(s)
             state.at_line_start = False
@@ -2024,7 +2102,7 @@ class BespONDecoder(object):
                 s_list = [s_line_0]
                 len_indent = len(indent)
                 while line is not None and line and state.indent == indent:
-                    m = self._not_unquoted_re.search(line)
+                    m = self._end_unquoted_string_re.search(line)
                     if m:
                         if m.start() == 0:
                             break
@@ -2046,30 +2124,39 @@ class BespONDecoder(object):
                 s = self._unwrap_inline(s_list)
                 state.stringlike_obj = s
 
+        if s[0] in self._unicode_whitespace or s[-1] in self._unicode_whitespace:
+            raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters', state.traceback)
+
         # If typed string, update `stringlike_obj`
         # Could use `set_stringlike` after this, but the current approach
         # is more efficient for multi-line unquoted strings
         if state.type:
+            if not self._unquoted_strings__current and not self._reserved_words_int_float_re.match(s):
+                raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False')
             if state.type_obj in self.__bytes_parsers:
                 s = self._unicode_to_bytes(s)
             try:
                 state.stringlike_obj = self._string_parsers[state.type_obj](s)
-            except KeyError:
-                raise erring.ParseError('Unknown explicit type "{0}" applied to unquoted string-like object'.format(state.type), state.traceback_type)
             except Exception as e:
                 raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(state.type, e), state.traceback)
-        elif s in self._reserved_words:
-            state.stringlike_obj = self._reserved_words[s]
-        elif s[0] in self._numeric_types_starting_chars:
-            m_int = self._int_re.match(s)
-            if m_int:
-                state.stringlike_obj = int(s.replace('_', ''))
-            else:
-                m_float = self._float_re.match(s)
-                if m_float:
-                    state.stringlike_obj = float(s.replace('_', ''))
-        elif s[0] in self._unicode_whitespace or s[-1] in self._unicode_whitespace:
-            raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters', state.traceback)
+        elif s[0] in self._reserved_words_int_float_starting_chars and s[-1] in self._reserved_words_int_float_ending_chars:
+            m = self._reserved_words_int_float_re.match(s)
+            if m:
+                g = m.lastgroup
+                if g == 'reserved_words':
+                    try:
+                        s = self._reserved_words[s]
+                    except KeyError:
+                        raise erring.ParseError('Invalid capitalization for reserved word "{0}"'.format(s), state.traceback)
+                elif g == 'int':
+                    s = self._string_parsers['int'](s)
+                else:  # g == 'float'
+                    s = self._string_parsers['float'](s)
+                state.stringlike_obj = s
+            elif not self._unquoted_strings__current:
+                raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False', state.traceback)
+        elif not self._unquoted_strings__current:
+            raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False', state.traceback)
 
         if not check_kv:
             self._ast.append_stringlike()

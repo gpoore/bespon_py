@@ -448,6 +448,98 @@ def test_explicit_typing():
 
 
 
+def test_parser_directives():
+    dc = mdl.BespONDecoder(only_ascii=False, unquoted_strings=True, unquoted_unicode=True)
+
+    s = '''\
+    (bespon)>
+    * k = ÄäËëÏïÖöÜü
+    '''
+    assert(dc.decode(s) == [{'k': 'ÄäËëÏïÖöÜü'}])
+
+    with pytest.raises(err.InvalidLiteralCharacterError):
+        s = '''\
+        (bespon; only_ascii)>
+        * k = ÄäËëÏïÖöÜü
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.InvalidLiteralCharacterError):
+        s = '''\
+        (bespon; only_ascii = true)>
+        * k = ÄäËëÏïÖöÜü
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; unquoted_strings=false)>
+        * k = ÄäËëÏïÖöÜü
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; unquoted_unicode=false)>
+        * k = ÄäËëÏïÖöÜü
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        k =
+             (bespon)>  v
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; only_ascii; only_ascii)>
+        * k = v
+        '''
+        dc.decode(s)
+
+
+    dc = mdl.BespONDecoder(only_ascii=True, unquoted_strings=False, unquoted_unicode=False)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; only_ascii=false)>
+        * k = v
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; unquoted_strings=true)>
+        * k = v
+        '''
+        dc.decode(s)
+
+    with pytest.raises(err.ParseError):
+        s = '''\
+        (bespon; unquoted_unicode=true)>
+        * k = v
+        '''
+        dc.decode(s)
+
+
+    dc = mdl.BespONDecoder(only_ascii=False, unquoted_strings=False, unquoted_unicode=True)
+    with pytest.raises(err.ParseError):
+        s = '* k = ÄäËëÏïÖöÜü'
+        dc.decode(s)
+
+    dc = mdl.BespONDecoder(only_ascii=False, unquoted_strings=True, unquoted_unicode=False)
+    with pytest.raises(err.ParseError):
+        s = '* k = ÄäËëÏïÖöÜü'
+        dc.decode(s)
+
+    dc = mdl.BespONDecoder(only_ascii=False, unquoted_strings=False, unquoted_unicode=False)
+    with pytest.raises(err.ParseError):
+        s = '* k = ÄäËëÏïÖöÜü'
+        dc.decode(s)
+
+
 
 """
 def test_parse_str_esc():

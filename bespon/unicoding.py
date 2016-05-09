@@ -222,6 +222,12 @@ class UnicodeFilter(object):
         self.nonliterals_or_non_printable_non_whitespace_bytes_re = re.compile(r'[\\"{chars}]'.format(chars=re.escape(''.join(chr(n) for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_latin1))).encode('latin1'))
 
 
+        # Regexes for working with purely ASCII text
+        # Regex for finding non-ASCII
+        self.unicode_re = re.compile(r'[^\u0000-\u007f]')
+        # Regex for providing a trace of non-ASCII
+        self.ascii_less_newlines_re = re.compile(r'[{0}]+'.format(re.escape(''.join(chr(n) for n in range(128) if chr(n) not in self.nonliterals and chr(n) not in self.newline_chars))))
+
         # Spaces, indentation, and whitespace
         self.spaces = BESPON_SPACES
         self.spaces_str = ''.join(self.spaces)
@@ -571,9 +577,16 @@ class UnicodeFilter(object):
         return self.nonliterals_re.search(s)
 
 
+    def has_unicode(self, s):
+        '''
+        See whether a string contains any code points outside the ASCII range.
+        '''
+        return self.unicode_re.search(s)
+
+
     def trace_nonliterals(self, s):
         '''
-        Get the location of all code points in a string that are not allowed as
+        Get the location of code points in a string that are not allowed as
         literals.  Return a list of named tuples that contains the line numbers
         and code points.  Line numbers are given in two forms, one calculated
         using standard `\\r`, `\\r\\n`, `\\n` newlines, and one using all Unicode
@@ -591,13 +604,35 @@ class UnicodeFilter(object):
                 trace.append(NonliteralTrace(self.escape(nonlits), n-offset+1, n+1))
             if not len(line.rstrip('\r\n')) < len(line):
                 offset += 1
-            if len(trace) > 100:
+            if len(trace) > 20:
                 trace.append(NonliteralTrace('', '...', '...'))
                 break
         return trace
 
 
-    def format_nonliterals_trace(self, trace):
+    def trace_unicode(self, s):
+        '''
+        Get the location of code points in a string that are not ASCII, and
+        return the information necessary for creating a trace.
+        '''
+        ascii_newline_chars_str = ''.join(c for c in self.newline_chars if ord(c) < 128)
+        trace = []
+        # Keep track of how many lines didn't end with `\r`, `\n`, or `\r\n`
+        offset = 0
+        # Work with a copy of s in which all literals, except for newlines, are removed
+        for n, line in enumerate(self.ascii_less_newlines_re.sub('', s).splitlines(True)):
+            non_ascii = line.rstrip(ascii_newline_chars_str)
+            if non_ascii:
+                trace.append(NonliteralTrace(self.escape(non_ascii), n-offset+1, n+1))
+            if not len(line.rstrip('\r\n')) < len(line):
+                offset += 1
+            if len(trace) > 20:
+                trace.append(NonliteralTrace('', '...', '...'))
+                break
+        return trace
+
+
+    def format_trace(self, trace):
         '''
         Format a nonliterals trace.  Used with InvalidLiteralCharacterError.
         '''
