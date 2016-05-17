@@ -444,6 +444,8 @@ def test_explicit_typing():
         dc.decode('%%%comment%%% {\na=1}')
     with pytest.raises(err.ParseError):
         dc.decode('k =\n%%%comment%%% (b)> abc')
+    with pytest.raises(err.ParseError):
+        dc.decode('k = tRue')
 
 
 

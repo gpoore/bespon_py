@@ -1060,7 +1060,7 @@ class BespONDecoder(object):
                 if k not in defaults.RESERVED_CHARS:
                     raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
                 if v is not None and (not isinstance(v, str) or len(v) != 1):
-                    raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1')
+                    raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1 (on narrow Python builds, this limits the range of acceptable code points)')
                 if v in '+-._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('A'):
                     raise erring.ConfigError('"reserved_chars" cannot involve the plus, hyphen, period, underscore, or 0-9, a-z, A-Z')
             if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
@@ -1089,6 +1089,7 @@ class BespONDecoder(object):
         self._reserved_chars_end_dict = self._reserved_chars['end_dict']
         self._reserved_chars_end_type_with_suffix = self._reserved_chars['end_type'] + self._reserved_chars['end_type_suffix']
         self._reserved_chars_assign_key_val = self._reserved_chars['assign_key_val']
+        self._reserved_chars_block_suffix = self._reserved_chars['block_suffix']
 
         char_functions = {'comment':         self._parse_line_comment,
                           'start_type':      self._parse_line_start_type,
@@ -1115,32 +1116,33 @@ class BespONDecoder(object):
         self._parse_line = parse_line
 
 
-        # Characters that can't appear in normal unquoted strings.
+        # Characters that can't appear in normal unquoted strings.  This is
+        # all reserved characters except for the suffix characters.  The
+        # suffix characters are always safe, because they only have special
+        # meaning when immediately following special characters.
         #
-        # `list_item` (`*`) is only special in non-compact syntax, at the
-        # beginning of a line, when followed by an indentation character (or
-        # Unicode whitespace), so it is allowed otherwise.
-        #
-        # `literal_string` and `escaped_string` (quotation marks) could be
-        # treated similarly in principle, but that would prevent them from
-        # being used with an ASCII prefix as a shorthand type notation
-        # (`b"byte string"`) if that was ever desired in the future, and could
-        # increase cognitive load for visual parsing.
-        #
-        # The suffix characters are always safe, because they only
-        # have special meaning when immediately following special characters.
-        #
-        # It would be possible to have context-sensitive comment characters
-        # or key-value assignment characters, but that would significantly
-        # increase cognitive load.
+        # A case could be made for allowing some of the reserved characters
+        # unquoted.  `list_item` (`*`) only has an effect in non-inline syntax,
+        # at the beginning of a line, when followed by an indentation
+        # character.  Likewise, `literal_string` and `escaped_string`
+        # (quotation marks) only function as string escapes at the beginning
+        # of text.  The comment character could be required to be at the
+        # beginning of a line or be preceded by whitespace.  All of these
+        # would work in principle, but they also increase cognitive load.
+        # Instead of the user thinking "just quote it" when encountering a
+        # reserved character, the user may instead start thinking about
+        # the context and whether quoting is required.  Given that bespon
+        # goes to great lengths to provide powerful and convenient quoting,
+        # that would be undesirable.  The rules must be few and plain.
         #
         # The inline object delimiters and separator must always be special in
         # inline syntax, unless special context and nesting rules are used, in
         # which case cognitive load is also increased to undesirable levels.
         # It would be possible to allow them in non-inline syntax, but that
         # would make switching between inline and non-inline syntax more
-        # complex.
-        self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix', 'list_item') and v is not None)
+        # complex.  A primary design principle is that anything valid in one
+        # context must be valid in all.
+        self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix') and v is not None)
         self._not_unquoted = set(self._not_unquoted_str)
         self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals)
         self._end_unquoted_string_re__ascii = re.compile('[^{0}]'.format(re.escape(self._allowed_ascii)))
@@ -1193,6 +1195,10 @@ class BespONDecoder(object):
                     raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
                 if self._int_re.match(k) or self._float_re.match(k):
                     raise erring.ConfigError('"reserved_words" cannot contain words that match the pattern for integers or floats')
+                if not self.unquoted_unicode:
+                    m = self._unicodefilter.ascii_less_newlines_and_nonliterals_re.match(k)
+                    if not m or m.group(0) != k:
+                        raise erring.ConfigError('"reserved_words" cannot contain words with non-ASCII characters when "unquoted_unicode" = False')
             self._reserved_words = reserved_words
 
         self._boolean_reserved_words_re = re.compile('|'.join(re.escape(k) for k, v in self._reserved_words.items() if v in (True, False)))
@@ -1220,8 +1226,8 @@ class BespONDecoder(object):
                 for k, v in d.items():
                     if not isinstance(k, str) or not hasattr(v, '__call__'):
                         raise TypeError('All parser dicts must map Unicode strings to functions (callable)'.format(k, v))
-                    if any(k.startswith(p) for p in defaults.RESERVED_META_PREFIXES) or k in defaults.RESERVED_META_KEYWORDS:
-                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved meta keyword, or that begins with a reserved meta prefix'.format(k))
+                    if any(k.startswith(p) for p in defaults.RESERVED_TYPE_PREFIXES) or k in defaults.RESERVED_TYPE_KEYWORDS:
+                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved type keyword, or that begins with a reserved type prefix'.format(k))
                     if not self._type_name_check_re.match(k):
                         raise erring.ConfigError('User-defined parser "{0}" has a name that does not fit the required form for parser names; use a name of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
         if dict_parsers is None:
@@ -1240,9 +1246,9 @@ class BespONDecoder(object):
         if all(x is None for x in (dict_parsers, list_parsers, string_parsers)):
             self.__bytes_parsers = defaults._BYTES_PARSERS
         else:
+            if set(self._dict_parsers) & set(self._list_parsers) & set(self._string_parsers):
+                raise erring.ConfigError('Overlap between dict, list, and string parsers is not allowed')
             self.__bytes_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'bytes'])
-            if (set(self._dict_parsers) & set(self._list_parsers) & set(self._string_parsers)):
-                raise erring.ConfigError('Overlap between dict, list, and string parsers is not supported')
 
         # Need a way to look up parsers by category
         self._parsers = {'dict':   self._dict_parsers,
@@ -1251,32 +1257,34 @@ class BespONDecoder(object):
 
         if parser_aliases is None:
             self._parser_aliases = defaults.PARSER_ALIASES
+            for k, v in self._parser_aliases.items():
+                self._string_parsers[k] = self._string_parsers[v]
         else:
             self._parser_aliases = parser_aliases
-        for k, v in self._parser_aliases.items():
-            if not isinstance(k, str) or not self._type_name_check_re.match(k):
-                raise ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
-            found = False
-            if v in self._dict_parsers:
-                self._dict_parsers[k] = self._dict_parsers[v]
-                found = True
-            elif v in self._list_parsers:
-                self._list_parsers[k] = self._list_parsers[v]
-                found = True
-            elif v in self._string_parsers:
-                self._string_parsers[k] = self._string_parsers[v]
-                if v in self.__bytes_parsers:
-                    self.__bytes_parsers.update(k)
-                found = True
-            if not found:
-                raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
+            for k, v in self._parser_aliases.items():
+                if not isinstance(k, str) or not self._type_name_check_re.match(k):
+                    raise ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
+                found = False
+                if v in self._dict_parsers:
+                    self._dict_parsers[k] = self._dict_parsers[v]
+                    found = True
+                elif v in self._list_parsers:
+                    self._list_parsers[k] = self._list_parsers[v]
+                    found = True
+                elif v in self._string_parsers:
+                    self._string_parsers[k] = self._string_parsers[v]
+                    if v in self.__bytes_parsers:
+                        self.__bytes_parsers.update(k)
+                    found = True
+                if not found:
+                    raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
 
         # Need a way to look up category for a given parser
         # Note that parsers can't overlap multiple categories
         parser_cats = {}
-        for c, d in self._parsers.items():
-            for k in d:
-                parser_cats[k] = c
+        for cat, dct in self._parsers.items():
+            for k in dct:
+                parser_cats[k] = cat
         self._parser_cats = parser_cats
 
         # Set default parsers in each category
@@ -1284,24 +1292,36 @@ class BespONDecoder(object):
         self._list_parsers[None] = self._list_parsers['list']
         self._string_parsers[None] = self._string_parsers['str']
 
+
         # Dict of regexes for identifying closing delimiters.  Automatically
         # generates needed regex on the fly.  Regexes for opening delimiters
         # aren't needed; performed as pure string operations.
         def gen_closing_delim_regex(delim):
             c = delim[0]
             if c == self._reserved_chars_escaped_string:
-                if delim == '"':
-                    p = r'(?:\\.|[^"])*(")'.format(c=re.escape(c), n=len(delim))
+                if delim == self._reserved_chars_escaped_string:
+                    p = r'(?:\\.|[^{c}])*({c})'.format(c=re.escape(c))
                 else:
-                    p = r'(?:\\.|[^"])*({c}{{{n}}}(?!{c})/*)'.format(c=re.escape(c), n=len(delim))
+                    p = r'(?:\\.|[^{c}])*({c}{{{n}}}(?!{c}){s}*)'.format(c=re.escape(c), n=len(delim), s=re.escape(self._reserved_chars_block_suffix))
             elif delim == self._reserved_chars_literal_string:
                 p = "'"
-            elif c == '|':
-                p = r'{c}{f}{{{n}}}(?!{f})/*'.format(c=re.escape(c), f=re.escape(delim[-1]), n=len(delim)-1)
             else:
-                p = r'(?<!{c}){c}{{{n}}}(?!{c})/*'.format(c=re.escape(c), n=len(delim))
+                p = r'(?<!{c}){c}{{{n}}}(?!{c}){s}*'.format(c=re.escape(c), n=len(delim), s=re.escape(self._reserved_chars_block_suffix))
             return re.compile(p)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
+
+
+        # Regexes for working with unquoted keys and with keypaths
+        pattern_unquoted_key = r'[^\.{uws}{na}\d][^\.{uws}{na}]*'.format(uws=re.escape(self._unicode_whitespace_str),
+                                                                         na=re.escape(self._not_unquoted_str))
+        pattern_keypath_element = r'''
+                                   (?: {uk} |
+                                       \[ \* | (?:[+-]?(?:0|[1-9][0-9]*)) \] |
+                                       \{{ (?:[^\.{uws}{na}]+ | (?: ) | ) \}}
+                                   )
+                                   '''.format(uk=pattern_unquoted_key,
+                                                      )
+        pattern_keypath = r'{ke}(?:\.{ke})*'.format(ke=pattern_keypath_element)
 
 
 

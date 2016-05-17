@@ -226,7 +226,7 @@ class UnicodeFilter(object):
         # Regex for finding non-ASCII
         self.unicode_re = re.compile(r'[^\u0000-\u007f]')
         # Regex for providing a trace of non-ASCII
-        self.ascii_less_newlines_re = re.compile(r'[{0}]+'.format(re.escape(''.join(chr(n) for n in range(128) if chr(n) not in self.nonliterals and chr(n) not in self.newline_chars))))
+        self.ascii_less_newlines_and_nonliterals_re = re.compile(r'[{0}]+'.format(re.escape(''.join(chr(n) for n in range(128) if chr(n) not in self.nonliterals and chr(n) not in self.newline_chars))))
 
         # Spaces, indentation, and whitespace
         self.spaces = BESPON_SPACES
@@ -620,7 +620,7 @@ class UnicodeFilter(object):
         # Keep track of how many lines didn't end with `\r`, `\n`, or `\r\n`
         offset = 0
         # Work with a copy of s in which all literals, except for newlines, are removed
-        for n, line in enumerate(self.ascii_less_newlines_re.sub('', s).splitlines(True)):
+        for n, line in enumerate(self.ascii_less_newlines_and_nonliterals_re.sub('', s).splitlines(True)):
             non_ascii = line.rstrip(ascii_newline_chars_str)
             if non_ascii:
                 trace.append(NonliteralTrace(self.escape(non_ascii), n-offset+1, n+1))

@@ -44,12 +44,14 @@ RESERVED_WORDS = {'true': True, 'TRUE': True, 'True': True,
                   'nan': float('nan'), 'NAN': float('nan'), 'NaN': float('nan')}
 
 
-RESERVED_META_PREFIXES = ['bespon']
+RESERVED_TYPE_PREFIXES = ['bespon']
 
 
-RESERVED_META_KEYWORDS = ['type', 'schema', 'meta',
-                          'label', 'labelref', 'pathref', 'ref',
+RESERVED_TYPE_KEYWORDS = ['only_ascii', 'unquoted_strings', 'unquoted_unicode',
+                          'type', 'schema', 'meta',
+                          'label', 'ref', 'labelref', 'pathref',
                           'copy', 'copy.deep', 'copy.shallow',
+                          'duplicates', 'duplicate_keys',
                           'template', 'path']
 
 
