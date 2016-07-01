@@ -393,7 +393,7 @@ Decimal floating point number, which represents decimal numbers exactly.  The |d
 
 \subsubsection{Rational (\texttt{rational})}
 
-Rational number.  The |rational| type must use the |int| regex, followed by optional whitespace, followed by |/|, followed by optional whitespace, followed by the |int| regex.
+Rational number.  The |rational| type must use the |int| regex, followed by |/|,  followed by the |int| regex.
 
 
 \subsubsection{Complex (\texttt{complex})}
@@ -622,10 +622,10 @@ A section ends at the next section.  Returning to root level is possible by usin
 
 
 
-\section{Advanced options and types:  newlines, labels, overwriting, references, copying}
+\section{Advanced options and types}
 \label{sec:advanced-options}
 
-All advanced options and types should be included in an implementation, but may be omitted due to the added complexity.  When an unsupported advanced option or type is encountered, an error must be raised.
+Implementations are encouraged to include advanced types and options, but this is not required due to the added complexity.  When an unsupported advanced option or type is encountered, an error must be raised.
 
 \subsection{Advanced options}
 
@@ -633,13 +633,13 @@ The explicit type declaration syntax may also be used for specifying advanced op
 \begin{Verbatim}[commandchars=\\\{\}]
 (\meta{type name}, \meta{key-value options})>
 \end{Verbatim}
-All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be |none|, |true|, |false|, or quoted or unquoted Unicode strings (but no strings with literal indentation and newlines).  Several option are defined by default.  When an option is given that is incompatible with a type, an error must be raised.
+All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be |true|, |false|, or quoted or unquoted Unicode strings (but no strings with literal indentation and newlines).  Several options are defined by default.  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type name} may be omitted for implicitly typed objects.
 
 \paragraph{newline}
-This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points/sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as an escaped string.
+This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points/sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted escaped string.
 
 \paragraph{label}
-This gives the next object a label, which can later be used in creating references.  Labels must be unicode strings.
+This gives the next object a label, which can later be used in creating references.  Labels must be Unicode strings.
 
 \paragraph{overwrite}
 This determines whether elements within a collection type may be overwritten.  This accepts boolean options.
@@ -647,6 +647,10 @@ This determines whether elements within a collection type may be overwritten.  T
 
 \subsection{Advanced types}
 Advanced types are applied to keypaths and create references or copies of the object referred to by the keypath.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more periods |.|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
+
+
+\paragraph{keypath}
+Abstract representation of a keypath.
 
 \paragraph{ref\_path}
 This creates a reference to the object referred to by a following keypath.
@@ -666,6 +670,15 @@ This creates a deepcopy of the object referred to by a following label.
 \paragraph{shallowcopy\_label}
 This creates a shallowcopy of the object referred to by a following label.
 
+\paragraph{merge}
+This merges a list of objects.  Use |overwrite| to allow objects further down the list to overwrite data from objects further up the list.  All objects must have the same general type (either dict-like or list-like).  Dict-like objects are merged by key, while list-like objects are merged by index (which will always involve overwriting).  Merging dict-like objects will result in a dict, while merging list-like objects will result in a list.  To create another type, simply use |merge::|\vmeta{type}.  The order of dict key insertion is maintained in the intermediate output of a merge, so it is possible to convert the output to something like an ordered dict.  To create merges that do not contain any elements of the original objects, merge deepcopies.
+
+\paragraph{del}
+This takes a two-element list consisting of a dict and a list of keys, or a list and a list of indices, or any collection and a list of explicitly typed keypaths.  The result is a shallow copy of the dict or list with the keys or indices removed.  Use |del::|\vmeta{type} to change the type of the result.
+
+\paragraph{join}
+This takes a list of lists, and combines all list in order end-to-end to form a new list.  |join::|\vmeta{type} may be used to specify the type of the result.
+
 
 \subsection{Resolving overwriting and references}
 
@@ -681,7 +694,9 @@ An entire dataset may be ``typed'' by a parser directive of the form
 \begin{Verbatim}[commandchars=\\\{\}]
 (bespon, \meta{key-value options})>
 \end{Verbatim}
-Defining type names beginning with ``bespon'' is not allowed; these are reserved for potential future use in \bespon\ derivatives.
+When a parser is initialized, a number of parsing settings are given initial settings.  Parser directives allow the parsing settings to be modified.  Directives may restrict settings from their initial values to use a more strict approach.  Directives may also request broader settings than the initial values, in which case an error must be raised.
+
+Parser directives are not required.  When a parser directive is used, it must be the very first thing in a file or string after any BOM is stripped.  Defining custom types with names beginning with ``bespon'' is not allowed; these are reserved for potential future use in \bespon\ derivatives.
 
 \paragraph{unquoted\_strings}
 This boolean option determines whether any unquoted strings are allowed.  True by default.  When this option is false, unquoted reserved words and unquoted implicitly typed objects (|none|, booleans, numbers, etc.) are still allowed.  Type names and type options are still used unquoted.  All of these are matched by regex or other means, and there is no danger of ambiguity.  Only text that would have otherwise become Unicode string data must be quoted.
@@ -691,7 +706,9 @@ This boolean option determines whether code points beyond the ASCII range may ap
 
 \paragraph{only\_ascii}  Only allows unescaped characters in the ASCII range.  False by default.  May be useful when Unicode security is a significant concern.
 
-An implementation must use the default values for |unquoted_strings|, |unquoted_unicode|, and |only_ascii| unless other values are specified.  A parser directive can never turn |unquoted_strings| or |unquoted_unicode| on when the implementation has it off, or turn |only_ascii| off when the implementation has it on.  A parser directive must only restrict parsing relative to what the implementation allows with current settings; a parser directive must never cause less strict parsing than what the implementation allows with current settings.  Doing so could have security implications.  Any parser directive that conflicts with current implementation settings must result in an error.
+\paragraph{ints}  Allow integers.  True by default.  If false, all strings that match the integer regex are treated as floats.
+
+An implementation must use the default values for all directives unless other values are specified.  A parser directive can never turn |unquoted_strings| or |unquoted_unicode| or |ints| on when the implementation has it off, or turn |only_ascii| off when the implementation has it on.  A parser directive must only restrict parsing relative to what the implementation allows with current settings; a parser directive must never cause less strict parsing than what the implementation allows with its initial settings.  Doing so could have security implications.  Any parser directive that conflicts with current implementation settings must result in an error, which should explain how the error may be resolved and mention potential security implications.
 
 
 

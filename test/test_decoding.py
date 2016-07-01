@@ -88,12 +88,27 @@ def test_int_re():
     assert(all(dc._int_re.match(str(random.randint(-1000000, 1000000))) for n in range(1000)))
     assert(all(dc._int_re.match(hex(random.randint(-1000000, 1000000))) for n in range(1000)))
 
+    assert(dc._invalid_int_re.match('01'))
+    assert(dc._invalid_int_re.match('0XABCDEF0123456789'))
+    assert(dc._invalid_int_re.match('0O01234567'))
+    assert(dc._invalid_int_re.match('0B1_1_0'))
+
+    with pytest.raises(err.ParseError):
+        dc.decode('01')
+    with pytest.raises(err.ParseError):
+        dc.decode('0XABCDEF0123456789')
+    with pytest.raises(err.ParseError):
+        dc.decode('0O01234567')
+    with pytest.raises(err.ParseError):
+        dc.decode('0B1_1_0')
+
 
 def test_float_re():
     dc = mdl.BespONDecoder()
     assert(dc._float_re.match('0.'))
     assert(dc._float_re.match('.0'))
     assert(dc._float_re.match('0e0'))
+    assert(dc._float_re.match('0E0'))
     assert(dc._float_re.match('+0e0'))
     assert(dc._float_re.match('-0e0'))
     assert(dc._float_re.match('0e+0'))
@@ -122,6 +137,7 @@ def test_float_re():
     assert(not dc._float_re.match('12314.233e_352'))
     assert(not dc._float_re.match('12314.233e352_'))
     assert(dc._float_re.match('0x3.a7p10'))
+    assert(dc._float_re.match('0x3.a7P10'))
     assert(dc._float_re.match('0x3p10'))
     assert(dc._float_re.match('0x3.p10'))
     assert(dc._float_re.match('0x.a7p10'))
@@ -138,7 +154,22 @@ def test_float_re():
     assert(all(dc._float_re.match(str(random.uniform(-1e9, 1e9))) for n in range(1000)))
     assert(all(dc._float_re.match(float.hex(random.uniform(-1e9, 1e9))) for n in range(1000)))
 
+    assert(dc.decode('12') == 12)
+    assert(dc.decode('1_2') == 12)
+    assert(dc.decode('-0.12') == -0.12)
+    assert(dc.decode('3.14e5') == 3.14e5)
+    assert(dc.decode('0x.a7p10') == float.fromhex('0x.a7p10'))
 
+    assert(dc._invalid_float_re.match('00.'))
+    assert(dc._invalid_float_re.match('01e1'))
+    assert(dc._invalid_float_re.match('0X3.a7p10'))
+
+    with pytest.raises(err.ParseError):
+        dc.decode('00.')
+    with pytest.raises(err.ParseError):
+        dc.decode('01e1')
+    with pytest.raises(err.ParseError):
+        dc.decode('0X3.a7p10')
 
 
 def test_decode_raw_ast():

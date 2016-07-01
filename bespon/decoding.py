@@ -1005,7 +1005,7 @@ class BespONDecoder(object):
         # In sanity checks, it is important to keep in mind that
         # `unquoted_strings` and `unquoted_unicode` are separate and don't
         # necessarily overlap.  It would be possible to have unquoted Unicode
-        # characters in a keyword, which would not count as a string that
+        # characters in a reserved word, which would not count as a string that
         # needs quoting.
         if only_ascii and unquoted_unicode:
             raise erring.ConfigError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
@@ -1020,12 +1020,12 @@ class BespONDecoder(object):
         self._unquoted_unicode__current = unquoted_unicode
 
 
+        if dialect is not None and not isinstance(dialect, str):
+            raise erring.ConfigError('"dialect" must be None or a Unicode string')
         if reserved_chars is None and reserved_words is None:
             self.dialect = dialect or 'bespon'
-        elif dialect is not None:
-            self.dialect = dialect
         else:
-            raise erring.ConfigError('A dialect name must be specified when constructing a custom parser with "reserved_chars" or "reserved_words"; this is no longer a standard BespON parser')
+            self.dialect = dialect or 'bespon.custom'
 
 
         # Create a UnicodeFilter instance
@@ -1043,7 +1043,7 @@ class BespONDecoder(object):
         self._whitespace_str = self._unicodefilter.whitespace_str
         self._unicode_whitespace = self._unicodefilter.unicode_whitespace
         self._unicode_whitespace_str = self._unicodefilter.unicode_whitespace_str
-        self._unicode_whitespace_re = re.compile('|'.join(re.escape(c) for c in self._unicode_whitespace))
+        self._unicode_whitespace_re = re.compile('[{0}]'.format(re.escape(self._unicode_whitespace_str)))
 
 
         arg_dicts = (reserved_chars, reserved_words, dict_parsers, list_parsers, string_parsers, parser_aliases)
@@ -1061,8 +1061,9 @@ class BespONDecoder(object):
                     raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
                 if v is not None and (not isinstance(v, str) or len(v) != 1):
                     raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1 (on narrow Python builds, this limits the range of acceptable code points)')
-                if v in '+-._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('A'):
-                    raise erring.ConfigError('"reserved_chars" cannot involve the plus, hyphen, period, underscore, or 0-9, a-z, A-Z')
+                if v in '+-._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('Z'):
+                    # Don't allow alphanumerics, or characters used in defining digits, to be reserved chars
+                    raise erring.ConfigError('"reserved_chars" cannot include the plus, hyphen, period, underscore, or 0-9, a-z, A-Z')
             if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
                 raise erring.ConfigError('"reserved_chars" contains duplicate mappings to a single code point')
             # Need a `defaultdict`, so that don't have to worry about whether
@@ -1080,6 +1081,7 @@ class BespONDecoder(object):
             if final_reserved_chars['assign_key_val'] is None:
                 raise erring.ConfigError('Inconsistent "reserved_chars"; must define "assign_key_val"')
         self._reserved_chars = final_reserved_chars
+
         self._reserved_chars_literal_string = self._reserved_chars['literal_string']
         self._reserved_chars_escaped_string = self._reserved_chars['escaped_string']
         self._reserved_chars_list_item = self._reserved_chars['list_item']
@@ -1151,39 +1153,72 @@ class BespONDecoder(object):
 
 
         # Regex for integers, including hex, octal, and binary.
+        # It's easier to write out regex with whitespace but no comments, and
+        # then replace whitespace with empty string, than to worry about using
+        # `re.VERBOSE` later, when combining into a large regex.
         pattern_int = r'''
-                       [+-]? (?: [1-9](?:_[0-9]|[0-9])* |
-                                 0x [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* |
-                                 0o [0-7](?:_[0-7]|[0-7])* |
-                                 0b [01](?:_[01]|[01])* |
-                                 0
-                             )
-                       $
+                       (?P<num_int_base10> [+-]?[1-9](?:_[0-9]|[0-9])* $ | [+-]?0 $ ) |
+                       (?P<num_int_base16> [+-]?0x [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* $ ) |
+                       (?P<num_int_base8> [+-]?0o [0-7](?:_[0-7]|[0-7])* $ ) |
+                       (?P<num_int_base2> [+-]?0b [01](?:_[01]|[01])* $ )
                        '''
-        # Easier if don't have to worry about `re.VERBOSE` later, when
-        # combining into a large regex
         pattern_int = pattern_int.replace(' ', '').replace('\n', '')
         self._int_re = re.compile(pattern_int)
 
+        # Catch leading zeros, uppercase X, O, B
+        pattern_invalid_int = r'''
+                               (?P<invalid_int>
+                                  [+-]? (?: 0+(?:_[0-9]|[0-9])* |
+                                            0X [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* |
+                                            0O [0-7](?:_[0-7]|[0-7])* |
+                                            0B [01](?:_[01]|[01])*
+                                        )
+                                  $
+                               )
+                               '''
+        pattern_invalid_int = pattern_invalid_int.replace(' ', '').replace('\n', '')
+        self._invalid_int_re = re.compile(pattern_invalid_int)
+
         # Regex for floats, including hex.
         pattern_float = r'''
-                         [+-]? (?: (?: \. [0-9](?:_[0-9]|[0-9])* (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                         (?P<num_float_base10>
+                             [+-]? (?: \. [0-9](?:_[0-9]|[0-9])* (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
                                        (?:[1-9](?:_[0-9]|[0-9])*|0)
                                           (?: \. (?:[0-9](?:_[0-9]|[0-9])*)? (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
                                               [eE][+-]?[0-9](?:_[0-9]|[0-9])*
                                           )
-                                   ) |
-                                   0x (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                   ) $
+                         ) |
+                         (?P<num_float_base16>
+                             [+-]? 0x (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
                                           [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
                                              (?: \. (?:[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*)? (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
                                                  [pP][+-]?[0-9](?:_[0-9]|[0-9])*
                                              )
-                                      )
-                               )
-                         $
+                                      ) $
+                         )
                          '''
         pattern_float = pattern_float.replace(' ', '').replace('\n', '')
         self._float_re = re.compile(pattern_float)
+
+        pattern_invalid_float = r'''
+                                 (?P<invalid_float>
+                                    [+-]? (?: (?: 0+(?:_[0-9]|[0-9])
+                                                  (?: \. (?:[0-9](?:_[0-9]|[0-9])*)? (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                                      [eE][+-]?[0-9](?:_[0-9]|[0-9])*
+                                                  )
+                                              ) |
+                                              0X (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                                     [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
+                                                        (?: \. (?:[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*)? (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
+                                                            [pP][+-]?[0-9](?:_[0-9]|[0-9])*
+                                                        )
+                                                 )
+                                          ) $
+                                 )
+                                 '''
+        pattern_invalid_float = pattern_invalid_float.replace(' ', '').replace('\n', '')
+        self._invalid_float_re = re.compile(pattern_invalid_float)
 
 
         # Take care of `reserved_words`
@@ -1193,8 +1228,8 @@ class BespONDecoder(object):
             for k in reserved_words:
                 if self._unicode_whitespace_re.search(k):
                     raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
-                if self._int_re.match(k) or self._float_re.match(k):
-                    raise erring.ConfigError('"reserved_words" cannot contain words that match the pattern for integers or floats')
+                if self._int_re.match(k) or self._invalid_int_re.match(k) or self._float_re.match(k) or self._invalid_float_re.match(k):
+                    raise erring.ConfigError('"reserved_words" cannot contain words that match the pattern for integers or floats, or the pattern for invalid integers or floats')
                 if not self.unquoted_unicode:
                     m = self._unicodefilter.ascii_less_newlines_and_nonliterals_re.match(k)
                     if not m or m.group(0) != k:
@@ -1206,18 +1241,18 @@ class BespONDecoder(object):
 
         # Assemble a regex for matching all special unquoted values
         reserved_words_lower_set = set([w.lower() for w in self._reserved_words])
-        pattern_reserved_words_case_insensitive = '|'.join(''.join('[{0}]'.format(re.escape(c+c.upper())) for c in w) + '$' for w in reserved_words_lower_set)
-        pattern_reserved_words_int_float = '(?P<reserved_words>{0})|(?P<int>{1})|(?P<float>{2})'.format(pattern_reserved_words_case_insensitive, pattern_int, pattern_float)
-        self._reserved_words_int_float_re = re.compile(pattern_reserved_words_int_float)
+        pattern_reserved_words_case_insensitive = '(?P<reserved_words>{0})'.format('|'.join(''.join('[{0}]'.format(re.escape(c+c.upper())) for c in w) + '$' for w in reserved_words_lower_set))
+        pattern_reserved_words_int_float_invalid = '{r}|{i}|{f}|{inv_i}|{inv_f}'.format(r=pattern_reserved_words_case_insensitive, i=pattern_int, f=pattern_float, inv_i=pattern_invalid_int, inv_f=pattern_invalid_float)
         # Quick identification of strings for unquoted value checking
+        self._reserved_words_int_float_invalid_re = re.compile(pattern_reserved_words_int_float_invalid)
         self._reserved_words_int_float_starting_chars = set('+-.0123456789' + ''.join(w[0] + w[0].upper() for w in reserved_words_lower_set))
         self._reserved_words_int_float_ending_chars = set('.0123456789abcdefABCDEF' + ''.join(w[-1] + w[-1].upper() for w in reserved_words_lower_set))
 
 
         # Required form for all type names
-        pattern_type_key = r'[a-z_](?:\:\:[a-z0-9_]|\.[a-z0-9_]|[a-z0-9_])*'
-        self._type_name_check_re = re.compile(pattern_type_key + '$')
-        self._type_key_re = re.compile(pattern_type_key)
+        pattern_type_key = r'[a-zA-Z][0-9a-zA-Z_-]*(?:\:\:[a-zA-Z][0-9a-zA-Z_-]*|\.[a-zA-Z][0-9a-zA-Z_-]*)*$'
+        self._type_name_check_re = re.compile(pattern_type_key)
+        self._type_key_re = re.compile(pattern_type_key.rstrip('$'))
 
 
         # Take care of parsers and parser aliases
@@ -1226,8 +1261,8 @@ class BespONDecoder(object):
                 for k, v in d.items():
                     if not isinstance(k, str) or not hasattr(v, '__call__'):
                         raise TypeError('All parser dicts must map Unicode strings to functions (callable)'.format(k, v))
-                    if any(k.startswith(p) for p in defaults.RESERVED_TYPE_PREFIXES) or k in defaults.RESERVED_TYPE_KEYWORDS:
-                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved type keyword, or that begins with a reserved type prefix'.format(k))
+                    if any(k.startswith(p) for p in defaults.RESERVED_TYPE_PREFIXES) or k in defaults.RESERVED_TYPES:
+                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved type name, or that begins with a reserved type prefix'.format(k))
                     if not self._type_name_check_re.match(k):
                         raise erring.ConfigError('User-defined parser "{0}" has a name that does not fit the required form for parser names; use a name of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
         if dict_parsers is None:
@@ -1245,10 +1280,12 @@ class BespONDecoder(object):
 
         if all(x is None for x in (dict_parsers, list_parsers, string_parsers)):
             self.__bytes_parsers = defaults._BYTES_PARSERS
+            self.__num_parsers = defaults._NUM_PARSERS
         else:
             if set(self._dict_parsers) & set(self._list_parsers) & set(self._string_parsers):
                 raise erring.ConfigError('Overlap between dict, list, and string parsers is not allowed')
             self.__bytes_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'bytes'])
+            self.__num_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'num'])
 
         # Need a way to look up parsers by category
         self._parsers = {'dict':   self._dict_parsers,
@@ -1263,8 +1300,10 @@ class BespONDecoder(object):
             self._parser_aliases = parser_aliases
             for k, v in self._parser_aliases.items():
                 if not isinstance(k, str) or not self._type_name_check_re.match(k):
-                    raise ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
+                    raise erring.ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
                 found = False
+                if k in self._dict_parsers or k in self._list_parsers or k in self._string_parsers:
+                    raise erring.ConfigError('Parse alias "{0}" is already a type name'.format(k))
                 if v in self._dict_parsers:
                     self._dict_parsers[k] = self._dict_parsers[v]
                     found = True
@@ -1312,7 +1351,7 @@ class BespONDecoder(object):
 
 
         # Regexes for working with unquoted keys and with keypaths
-        pattern_unquoted_key = r'[^\.{uws}{na}\d][^\.{uws}{na}]*'.format(uws=re.escape(self._unicode_whitespace_str),
+        pattern_unquoted_key = r'[^\d\.{uws}{na}][^\.{uws}{na}]*'.format(uws=re.escape(self._unicode_whitespace_str),
                                                                          na=re.escape(self._not_unquoted_str))
         pattern_keypath_element = r'''
                                    (?: {uk} |
@@ -1320,7 +1359,8 @@ class BespONDecoder(object):
                                        \{{ (?:[^\.{uws}{na}]+ | (?: ) | ) \}}
                                    )
                                    '''.format(uk=pattern_unquoted_key,
-                                                      )
+                                              uws=re.escape(self._unicode_whitespace_str),
+                                              na=re.escape(self._not_unquoted_str))
         pattern_keypath = r'{ke}(?:\.{ke})*'.format(ke=pattern_keypath_element)
 
 
@@ -2151,7 +2191,7 @@ class BespONDecoder(object):
         # Could use `set_stringlike` after this, but the current approach
         # is more efficient for multi-line unquoted strings
         if state.type:
-            if not self._unquoted_strings__current and not self._reserved_words_int_float_re.match(s):
+            if not self._unquoted_strings__current and not self._reserved_words_int_float_invalid_re.match(s):
                 raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False')
             if state.type_obj in self.__bytes_parsers:
                 s = self._unicode_to_bytes(s)
@@ -2160,7 +2200,7 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(state.type, e), state.traceback)
         elif s[0] in self._reserved_words_int_float_starting_chars and s[-1] in self._reserved_words_int_float_ending_chars:
-            m = self._reserved_words_int_float_re.match(s)
+            m = self._reserved_words_int_float_invalid_re.match(s)
             if m:
                 g = m.lastgroup
                 if g == 'reserved_words':
@@ -2168,10 +2208,12 @@ class BespONDecoder(object):
                         s = self._reserved_words[s]
                     except KeyError:
                         raise erring.ParseError('Invalid capitalization for reserved word "{0}"'.format(s), state.traceback)
-                elif g == 'int':
-                    s = self._string_parsers['int'](s)
-                else:  # g == 'float'
-                    s = self._string_parsers['float'](s)
+                elif g.startswith('num_int'):
+                    s = self._string_parsers['int'](s, g.replace('_', '.'))
+                elif g.startswith('num_float'):
+                    s = self._string_parsers['float'](s, g.replace('_', '.'))
+                else:
+                    raise erring.ParseError('Invalid {0} literal'.format(g.split('_', 1)[1]), state.traceback)
                 state.stringlike_obj = s
             elif not self._unquoted_strings__current:
                 raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False', state.traceback)

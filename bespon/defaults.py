@@ -47,12 +47,8 @@ RESERVED_WORDS = {'true': True, 'TRUE': True, 'True': True,
 RESERVED_TYPE_PREFIXES = ['bespon']
 
 
-RESERVED_TYPE_KEYWORDS = ['only_ascii', 'unquoted_strings', 'unquoted_unicode',
-                          'type', 'schema', 'meta',
-                          'label', 'ref', 'labelref', 'pathref',
-                          'copy', 'copy.deep', 'copy.shallow',
-                          'duplicates', 'duplicate_keys',
-                          'template', 'path']
+RESERVED_TYPES = ['schema', 'meta', 'labelref', 'pathref',
+                  'copy', 'shallowcopy', 'deepcopy']
 
 
 DICT_PARSERS = {'dict':  dict,
@@ -62,15 +58,33 @@ LIST_PARSERS = {'list':  list,
                 'set':   set,
                 'tuple': tuple}
 
-STRING_PARSERS = {'int':          int,
-                  'float':        float,
-                  'str':          str,
-                  'bytes':        bytes,
-                  'bytes.base16': base64.b16decode,
-                  'bytes.base64': base64.b64decode}
+_int_dict = {'num.int.base2':  lambda s: int(s, 2),
+             'num.int.base8':  lambda s: int(s, 8),
+             'num.int.base10': int,
+             'num.int.base16': lambda s: int(s, 16)}
 
-PARSER_ALIASES = {'b':   'bytes',
-                  'b16': 'bytes.base16',
-                  'b64': 'bytes.base64'}
+def _int(s, type_name):
+    return _int_dict[type_name](s.replace('_', ''))
+
+_float_dict = {'num.float.base10': float,
+               'num.float.base16': float.fromhex}
+
+def _float(s, type_name):
+    return _float_dict[type_name](s.replace('_', ''))
+
+STRING_PARSERS = {'num.int':         _int,
+                  'num.float':       _float,
+                  'str':             str,
+                  'bytes':           bytes,
+                  'bytes.base16':    base64.b16decode,
+                  'bytes.base64':    base64.b64decode}
+
+PARSER_ALIASES = {'int':   'num.int',
+                  'float': 'num.float',
+                  'b':     'bytes',
+                  'b16':   'bytes.base16',
+                  'b64':   'bytes.base64'}
 
 _BYTES_PARSERS = set(['bytes', 'b', 'bytes.base16', 'b16', 'bytes.base64', 'b64'])
+
+_NUM_PARSERS = set(['num.int', 'int', 'num.float', 'float'])
