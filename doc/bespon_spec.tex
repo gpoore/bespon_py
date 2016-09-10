@@ -1,17 +1,12 @@
 \documentclass[11pt]{article}
 
-%\usepackage[utf8]{inputenc}
-\usepackage{CJKutf8}
-
 \usepackage[T1]{fontenc}
-\usepackage[greek, english]{babel}
 \usepackage{fourier}
 
 \usepackage[margin=1in]{geometry}
 
 \usepackage{amsmath, amssymb}
-\usepackage{fancyvrb}
-\usepackage{upquote}
+\usepackage{fvextra}
 
 \usepackage[svgnames]{xcolor}
 \usepackage{tcolorbox}
@@ -87,7 +82,7 @@ The creation of new formats is often criticized (requisite \href{https://xkcd.co
 \begin{description}
 \item[Comments]  JSON doesn't allow them, but they are useful in configuration.
 
-\item[Round-tripping]  If there are going to be comments, we better be able to round-trip them.  Otherwise, why have them?  Most formats that do have comments have few if any implementations that round-trip comments, and even those can have significant limitations.  While we're at it, we might as well be able to round-trip exact layout, including whitespace and indentation.
+\item[Round-tripping]  If there are going to be comments, we better be able to round-trip them, at least in simple cases.  Otherwise, we will always have to update configuration by hand.  Most formats that do have comments have few if any implementations that round-trip comments.  While we're at it, we might as well be able to round-trip exact layout, including whitespace and indentation---again, at least for simple cases.
 
 \item[Trailing commas]  JSON doesn't allow |{"k": "v",}|.
 
@@ -103,19 +98,19 @@ key2: ...
 \end{Verbatim}
 The |6| after the \verbpipe\ indicates that the text is indented by six spaces \emph{relative to the indentation} of |key1|, and the |+| means that trailing empty lines should be kept rather than discarded (which makes the string content dependent on the relative position of |key2|).  The result is text with literal newlines with an overall indentation of two spaces but a first line indented by four spaces, and with a trailing empty line consisting of |\n|.
 
-TOML has triple-quoted strings that preserve newlines.  This allows trailing empty lines to be clearly indicated.  It also allows clear indication of indentation, but with the significant disadvantage that \emph{any} indentation is counted as part of the string; the string literal itself cannot be indented without the indentation becoming part of the actual string content.  This is a common problem with multiline string literals, and \bespon\ provides a solution.
+TOML has triple-quoted strings that preserve newlines.  This allows trailing empty lines to be clearly indicated.  It also allows clear indication of indentation, but with the significant disadvantage that \emph{any} indentation is counted as part of the string; the string literal itself cannot be indented without the indentation becoming part of the actual string content.  This is a common problem with multiline string literals.  \bespon\ provides a solution.
 
-\item[Both integers and (proper) floats]  JSON just has a number type, with no |inf| or |nan|.  TOML has both integers and floats, but lacks |inf| and |nan|.  If we're going to have separate integers and floats, we might as well have decimal, hex, octal, and binary integer literals, and decimal and hex float literals.
+\item[Both integers and (proper) floats]  JSON just has a number type, with no |inf| or |nan|.  TOML has both integers and floats, but lacks |inf| and |nan|.  If we're going to have separate integers and floats, we might as well have decimal, hex, octal, and binary integer literals, and decimal and hex float literals.  At the same time, all of this should be handled sensibly for languages such as JavaScript and Perl that lack an integer type.
 
-\item[Explicit typing]  JSON and TOML have no support for special or user-defined types, unless implementations provide features beyond the specification.
+\item[Explicit typing]  JSON and TOML have no support for special or user-defined types unless a convention is agreed upon or unless an implementation provides features beyond the specification.
 
 \item[Unquoted strings]  It would be convenient to omit quotation marks, at least in simple cases.  But since that increases the potential for ambiguity with keywords and implicit typing, it should be possible to require quoting.
 
-\item[Strict reserved words]  If unquoted strings are allowed, the potential for ambiguity between reserved words and strings increases.  Reserved words should only be allowed to appear in a form with accepted capitalization; appearance with any other capitalization should trigger an error.  In contrast, YAML's |True| is boolean true, but |TRue| is the string |TRue|.
+\item[Strict reserved words]  If unquoted strings are allowed, the potential for ambiguity between reserved words and strings increases.  Reserved words should only be allowed to appear in a form with accepted capitalization; appearance with any other capitalization should trigger an error.  In contrast, YAML's |True| is boolean true, but |TRue| is the string |TRue|.  Also, the list of reserved words should be minimal.  No YAML |yes|/|no| |on|/|off| |true|/|false|.
 
 \item[Control of overwriting] JSON permits duplicate keys.  The YAML spec says that keys must be unique.  Parsers for both JSON and YAML commonly allow later keys to overwrite earlier keys.  TOML prohibits duplicate keys.  Duplicate keys should be prohibited by default, but there should be a way to enable them given the convenience of overwriting in a configuration context.  Undefined or ambiguous behavior, whether due to specification or implementation, is unacceptable.
 
-\item[A small list of special characters] In YAML, almost all non-alphanumeric ASCII characters have a special meaning, which is context-dependent in many cases.  For example, |#| begins a comment, but only if preceded by a whitespace character.  The number of special characters should be kept to an easy-to-remember minimum, and as far as possible, they should not be context-dependent.  
+\item[A small list of special characters] In YAML, almost all non-alphanumeric ASCII characters have a special meaning, which is context-dependent in many cases.  For example, |#| starts a comment, but only if preceded by a whitespace character.  The number of special characters should be kept to an easy-to-remember minimum, and as far as possible, they should not be context-dependent.  
 
 \item[Simple representation of deeply nested data structures]  TOML has INI-style sections that allow keypaths of the form |key.subkey.subsubkey|.  This provides a convenient, compact representation of nested dictionaries.  A similar syntax is needed that also allows some elements in the path to be lists rather than dictionaries, so that arbitrary nested data structures may be represented in a compact manner.
 
@@ -138,9 +133,9 @@ The words \textit{may}, \textit{should}, and \textit{must} in the description be
 
 \bespon\ is specified at the level of Unicode strings.
 
-In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.  When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  It must check for a byte-order mark (BOM), and discard it if present.
+In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.  When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check for a byte-order mark (BOM), and discard it if present.
 
-Once data is in the form of a Unicode string or stream, it must be validated according to the following procedure before processing.  Implementations may choose to validate all at once or a chunk at a time immediately before processing.
+Once data is in the form of a Unicode string or stream, by default it must be validated according to the following procedure before processing.  Implementations may choose to validate all at once or a chunk at a time immediately before processing.  An implementation may provide an option that allows a less strict validation (allows some or all disallowed code points to appear as literals), but this must not be the default.
 
 \paragraph{Newline normalization}  The sequence |\r\n| (U+000D U+000A) must be normalized to |\n| (U+000A).  
 
@@ -154,9 +149,7 @@ Once data is in the form of a Unicode string or stream, it must be validated acc
 
 \item Unpaired UTF-16 surrogates (U+D800 -- U+DFFF) are prohibited.  In other words, all code points that are not Unicode scalar values are prohibited.
 \end{itemize}
-The list of disallowed code points is current as of Unicode 9.0 (01-Jun-2016 draft).  Barring unforseen circumstances, the list will be expanded only under two conditions:  (1) additional newline code points are defined, or (2) additional code points are added (or existing code points are identified) that pose a security concern similar to that of the bidi overrides.
-
-An implementation may provide an option that allows some or all of the disallowed code points to appear as literals, but all of these code points must be prohibited by default.
+The list of disallowed code points is current as of Unicode 9.0.0 (2016-06-01).  Barring unforseen circumstances, the list will be expanded only under two conditions:  (1) additional newline code points are defined, or (2) additional code points are added (or existing code points are identified) that pose a security concern similar to that of the bidi overrides.
 
 In dumping data, an implementation must by default ensure that the dumped data is valid for loading with a default configuration.  If an implementation dumps data in binary form, it must encode the data with UTF-8 unless an encoding is specified.  If an implementation encodes data to binary, it may convert |\n| to |\r\n| in a system-dependent manner during the encoding.
 
@@ -166,10 +159,10 @@ In dumping data, an implementation must by default ensure that the dumped data i
 \section{Character class definitions}
 The specification is defined in terms of several classes of characters.
 \begin{description}
-\item[Spaces:]  One or more of the space U+0020 (| |).
+\item[Spaces:]  One or more of the space U+0020 \begingroup\fvset{showspaces}(| |)\endgroup.
 \item[Indentation:]  One or more spaces or horizontal tabs U+0009 (|\t|).
 \item[Newlines:]  One or more of the line feed U+000A (|\n|).
-\item[Whitespace:]  A run of indentation or newlines.
+\item[Whitespace:]  A continuous run of indentation or newlines.
 \item[Unicode whitespace:]  Unicode code points with the White\_Space property.  This covers the 25 code points U+0009 -- U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 -- U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000.
 \end{description}
 
@@ -181,7 +174,7 @@ The specification is defined in terms of several classes of characters.
 
 \bespon\ defines core data types that must be defined in every implementation unless the implementation language lacks a comparable type.
 
-If a language lacks an integer type, then by default it must interpret all integers as floats when loading data.  Implementations should provide an option to raise an error instead.  Such a language must only dump floats by default.  Implementations may provide a mechanism for the user to specify that some numbers are to be dumped as integers instead.  When \bespon\ is used as an interchange format between languages, and not all languages have integers, then it is recommended that all numbers be sent as floats, with explicit post-processing to integers as necessary.  A parser directive (\cref{sec:parser-directive}) may be used to enforce that all numbers are floats.
+If a language lacks an integer type, then by default it must interpret all integers as floats when loading data.  Implementations should provide an option to raise an error instead.  Such a language must only dump floats by default.  Implementations may provide a mechanism for the user to specify that some numbers are to be dumped as integers instead.  When \bespon\ is used as an interchange format between languages, and not all languages have integers, then it is recommended that all numbers be sent as floats, with explicit post-processing to integers as necessary.  A parser directive (\cref{sec:parser-directive}) may be used to enforce that all numbers are floats in a cross-language context.
 
 If a language lacks any other core type and it is not practical to implement the missing type, then that type must be omitted.  An error must be raised whenever that type is encountered while loading data.  When dumping data, the missing type must not be dumped by default.
 

@@ -29,7 +29,7 @@ RESERVED_CHARS = {'comment': '%',
                   'end_dict': '}',
                   'escaped_string': '"',
                   'literal_string': "'",
-                  'separator': ';',
+                  'separator': ',',
                   'assign_key_val': '=',
                   'list_item': '*',
                   'block_suffix': '/'}
