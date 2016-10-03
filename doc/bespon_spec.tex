@@ -119,13 +119,13 @@ TOML has triple-quoted strings that preserve newlines.  This allows trailing emp
 
 \item[Strict reserved words]  If unquoted strings are allowed, the potential for ambiguity between reserved words and strings increases.  Reserved words should only be allowed to appear in a form with accepted capitalization; appearance with any other capitalization should trigger an error.  In contrast, YAML's |True| is boolean true, but |TRue| is the string |TRue|.  Also, the list of reserved words should be minimal.  No YAML |yes|/|no| |on|/|off| |true|/|false|.
 
-\item[Control of overwriting] JSON permits duplicate keys.  The YAML spec says that keys must be unique.  Parsers for both JSON and YAML commonly allow later keys to overwrite earlier keys.  TOML prohibits duplicate keys.  Duplicate keys should be prohibited by default, but there should be a way to enable them given the convenience of overwriting in a configuration context.  Undefined or ambiguous behavior, whether due to specification or implementation, is unacceptable.
+\item[Unique keys] JSON permits duplicate keys.  The YAML spec says that keys must be unique.  Parsers for both JSON and YAML commonly allow later keys to overwrite earlier keys.  TOML prohibits duplicate keys.  Key overwriting should be prohibited, but there should be a way to copy data structures to provide an alternative to overwriting.  Undefined or ambiguous behavior, whether due to specification or implementation, is unacceptable.
 
 \item[A small list of special characters] In YAML, almost all non-alphanumeric ASCII characters have a special meaning, which is context-dependent in many cases.  For example, |#| starts a comment, but only if preceded by a whitespace character.  The number of special characters should be kept to an easy-to-remember minimum, and as far as possible, they should not be context-dependent.  
 
 \item[Simple representation of deeply nested data structures]  TOML has INI-style sections that allow keypaths of the form |key.subkey.subsubkey|.  This provides a convenient, compact representation of nested dictionaries.  A similar syntax is needed that also allows some elements in the path to be lists rather than dictionaries, so that arbitrary nested data structures may be represented in a compact manner.
 
-\item[Labels, referencing, and copying]  For convenient configuration, it should be possible to label data structures and then reference or copy them later.
+\item[Labels, aliases, and copying]  For convenient configuration, it should be possible to label data structures and then create aliases to them or copy them later.  Both deep and shallow copies should be possible.  Copying provides most of the advantages of overwriting with less of the complexity and potential for errors or unintended consequences.
 
 \item[Decent performance even when completely implemented in an interpreted language]  Pure Python implementations of YAML have a reputation for being slow.  It should be possible to implement \bespon\ in Python and other interpreted languages while achieving decent performance.  This will simplify the process of creating implementations for multiple languages, and should promote broader adoption.
 \end{description}
@@ -196,7 +196,7 @@ If a language lacks any other core type and it is not practical to implement the
 
 Many types, such as integers, floats, and booleans, are implicitly typed.  All types are also given a type name for use in explicit typing; some types are only available through explicit typing.  The syntax for explicit typing is
 \begin{Verbatim}[commandchars=\\\{\}]
-(\meta{type name})> \meta{quoted or unquoted string}
+(\meta{type})> \meta{quoted or unquoted string}
 \end{Verbatim}
 For example, |(float)> 1.23e4|.  In the discussion of types below, the type name for explicit typing is given in parentheses after the description of each type.  The syntax for explicit typing is also used to define advanced features; these are discussed in detail in \cref{sec:advanced-options}.
 
@@ -331,7 +331,7 @@ A base64 string is an explicitly typed Unicode string that is decoded to a byte 
 
 \subsection{Collection types}
 
-Collection core types are core types that are collections of other objects.  Collection types may contain scalar objects and collection objects.  By default, collection elements must not be overwritten once created; an attempt to overwrite must result in an error.
+Collection core types are core types that are collections of other objects.  Collection types may contain scalar objects and collection objects.  Collection elements must not be overwritten once created; an attempt to overwrite must result in an error.
 
 An empty collection type is not allowed to be indicated solely by an explicit type declaration.  For example,
 \begin{Verbatim}
@@ -359,7 +359,7 @@ is required.
 
 A list is an ordered collection of objects.  Lists are heterogeneous; list elements may be of any type.
 
-Lists are zero-indexed with integers.  List elements may also be referenced using negative integers, where |-1| is the last element in the list, |-2| is the second-to-last element, etc.  For additional information about using list indexing, see the discussion of keypaths (\cref{sec:keypath}).
+Lists are zero-indexed with integers.  List elements may also be accessed using negative integers, where |-1| is the last element in the list, |-2| is the second-to-last element, etc.  For additional information about using list indexing, see the discussion of keypaths (\cref{sec:keypath}).
 
 In indentation-based form, each list element is denoted with an asterisk U+002A (|*|).  The |*| must be the first non-whitespace character on the line and must be indented relative to any parent object, and the list element content must be separated from the |*| by whitespace and be indented relative to it.  For example,
 \begin{Verbatim}
@@ -595,7 +595,7 @@ This notation is convenient for working with alphanumeric keys that begin with a
 
 \paragraph{Lists}
 
-List elements are referenced in one of two ways.  Using |*| adds a new list element, while using |[|\vmeta{decimal integer}|]| allows pre-existing list elements to be accessed by index.  For example,
+List elements are accessed in one of two ways.  Using |*| adds a new list element, while using |[|\vmeta{decimal integer}|]| allows pre-existing list elements to be accessed by index.  For example,
 \begin{Verbatim}
 key.* = value
 \end{Verbatim}
@@ -656,9 +656,9 @@ is equivalent to
 key  = {subkey = [value1, value2]}
 \end{Verbatim}
 
-The solidus (slash) U+002F (|/|) is not allowed by itself unquoted in a normal keypath (|{/}|, |{'/'}|, etc.).  It is used in keypath references to denote the root data level.  In these situations, it is only allowed as the first element in a keypath.
+The solidus (slash) U+002F (|/|) is not allowed by itself unquoted in a normal keypath (|{/}|, |{'/'}|, etc.).  It is used in keypath aliases to denote the root data level.  In these situations, it is only allowed as the first element in a keypath.
 
-The caret U+005E (|^|) is not allowed by itself unquoted in a normal keypath.  It is used in keypath references to refer to higher relative levels in the data structure.  It is only allowed as the first element in a keypath (|^.key|, |^^.key|, etc.).  Each additional |^| in a sequence indicates going up in the data structure by another level.
+The caret U+005E (|^|) is not allowed by itself unquoted in a normal keypath.  It is used in keypath aliases to refer to higher relative levels in the data structure.  It is only allowed as the first element in a keypath (|^.key|, |^^.key|, etc.).  Each additional |^| in a sequence indicates going up in the data structure by another level.
 
 \section{Sections}
 
@@ -676,7 +676,7 @@ The contents of a section may have the same indentation level as the section.
 
 Sections are only allowed at root level.  The opening equals sign |=| must have indentation consistent with any preceding data that sets the root-level indentation.
 
-A section ends at the next section.  Returning to root level is possible by using |==={1,n}/|.  Because of the special use of the slash here and in keypaths used as path references, a literal unquoted slash is not allowed in a keypath.
+A section ends at the next section.  Returning to root level is possible by using |==={1,n}/|.  Because of the special use of the slash here and in keypaths used as path aliases, a literal unquoted slash is not allowed in a keypath.
 
 
 
@@ -689,58 +689,67 @@ Implementations are encouraged to include advanced types and options, but this i
 
 The explicit type declaration syntax may also be used for specifying advanced options:
 \begin{Verbatim}[commandchars=\\\{\}]
-(\meta{type\_name}, \meta{key-value options})>
+(\meta{type}, \meta{key-value options})>
 \end{Verbatim}
-All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be boolean or Unicode strings (quoted or unquoted, but no block strings).  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type\_name} may be omitted for implicitly typed objects.
+All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be boolean or Unicode strings (quoted or unquoted, but no block strings).  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type} may be omitted for implicitly typed objects.
 
 \paragraph{newline}
-This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points/sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted escaped string.  This option only applies to Unicode strings, byte strings, or custom types applied to Unicode strings.
+This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).
 
 \paragraph{label}
-This gives the next object a label, which can later be used in a label reference.  Labels must be Unicode strings.
+This gives an object a label, which can later be used to reference the object in a label alias.  Labels must be Unicode strings.  Unquoted ASCII strings meeting an identifier style regex |[a-zA-Z][a-zA-Z0-9_-]*| should be preferred.
 
-\paragraph{overwrite}
-This determines whether elements within a collection type may be overwritten.  This accepts boolean values.
 
-When |overwrite=true| for a collection, this is inherited by all collections it contains.
+\paragraph{shallowinit}
+
+This provides initialization for collection types, using one or more existing collection objects.  It is only valid for collection types.  It comes in two variants. |shallowinit.path| takes a keypath or an inline list of keypaths.  |shallowinit.label| takes a label or an inline list of labels.  All referenced objects must have the same type as \vmeta{type}, or be untyped (have the default type).  For a dict-like object, |shallowinit| must only reference dict-like objects, and similarly for list-like objects.  For a dict-like object, |shallowinit| adds all of the keys in the referenced objects to the dict-like object, with the keys referring to their original values.  This is effectively a ``shallow merge'' in which duplicate keys are not allowed.  For a list-like object, |shallowinit| adds all of the values in the referenced collections to the object.  This is effectively initialization by list extension, or shallow list flattening.
+
+
+\paragraph{deepinit}
+
+This is the deepcopy version of |shallowinit|.  The resulting object contains deepcopies of all referenced key-value pairs (dict-like) or elements (list-like).
+
+
+\paragraph{shallowdefault}
+
+This allows default values to be specified for a collection type.  It comes in two variants. |shallowdefault.path| takes a keypath or a list of keypaths.  |shallowdefault.label| takes a label or a list of labels.  All referenced objects must have the same type as \vmeta{type}, or be untyped (have the default type).  For a dict-like object, |shallowdefault| must only reference dict-like objects, and simililarly for list-like objects.  After a collection is fully assembled, 
+
+
+\paragraph{deepdefault}
+
+This is a version of |shallowmerge| in which merging takes place at all depths, rather than just one level deep.
+
+
+\paragraph{recursivemerge}
+
 
 
 \subsection{Advanced types}
-Advanced types are applied to keypaths and create references or copies of the object referred to by a keypath.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more carats |^|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
+Advanced types are applied to keypaths and create aliases or copies of the object referred to by a keypath.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more carats |^|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
+
+Shallow copies of collection types must produce new collection objects that reference the members of the original collection.  Shallow copies of scalar types may produce new scalar objects or reference the original object, in an implementation- and language-specific manner.  Whether scalar types are immutable as far as copying is concerned is left up to the implementation and its language.  The behavior of copies must be documented by an implementation.
+
+\paragraph{alias.path}
+This creates an alias to the object referred to by a following keypath.
+
+\paragraph{alias.label}
+This creates an alias to the object referred to by a following label.
+
+\paragraph{deepcopy.path}
+This creates a deep copy of the object referred to by a following keypath.
+
+\paragraph{shallowcopy.path}
+This creates a shallow copy of the object referred to by a following keypath.
+
+\paragraph{deepcopy.label}
+This creates a deep copy of the object referred to by a following label.
+
+\paragraph{shallowcopy.label}
+This creates a shallow copy of the object referred to by a following label.
 
 
-\paragraph{keypath}
-Abstract representation of a keypath.
 
-\paragraph{ref\_path}
-This creates a reference to the object referred to by a following keypath.
-
-\paragraph{ref\_label}
-This creates a reference to the object referred to by a following label.
-
-\paragraph{deepcopy\_path}
-This creates a deepcopy of the object referred to by a following keypath.
-
-\paragraph{shallowcopy\_path}
-This creates a shallowcopy of the object referred to by a following keypath.
-
-\paragraph{deepcopy\_label}
-This creates a deepcopy of the object referred to by a following label.
-
-\paragraph{shallowcopy\_label}
-This creates a shallowcopy of the object referred to by a following label.
-
-\paragraph{merge}
-This merges a list of objects.  Use |overwrite| to allow objects further down the list to overwrite data from objects further up the list.  All objects must have the same general type (either dict-like or list-like).  Dict-like objects are merged by key, while list-like objects are merged by index (which will always involve overwriting).  Merging dict-like objects will result in a dict, while merging list-like objects will result in a list.  To create another type, simply use |merge::|\vmeta{type}.  The order of dict key insertion is maintained in the intermediate output of a merge, so it is possible to convert the output to something like an ordered dict.  To create merges that do not contain any elements of the original objects, merge deepcopies.
-
-\paragraph{del}
-This takes a two-element list consisting of a dict and a list of keys, or a list and a list of indices, or any collection and a list of explicitly typed keypaths.  The result is a shallow copy of the dict or list with the keys or indices removed.  Use |del::|\vmeta{type} to change the type of the result.
-
-\paragraph{join}
-This takes a list of lists, and combines all list in order end-to-end to form a new list.  |join::|\vmeta{type} may be used to specify the type of the result.
-
-
-\subsection{Resolving overwriting and references}
+\subsection{Resolving aliases and copies}
 
 
 
