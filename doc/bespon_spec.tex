@@ -693,65 +693,97 @@ The explicit type declaration syntax may also be used for specifying advanced op
 \end{Verbatim}
 All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be boolean or Unicode strings (quoted or unquoted, but no block strings).  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type} may be omitted for implicitly typed objects.
 
-\paragraph{newline}
-This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).
+
+\subsubsection{General options}
 
 \paragraph{label}
 This gives an object a label, which can later be used to reference the object in a label alias.  Labels must be Unicode strings.  Unquoted ASCII strings meeting an identifier style regex |[a-zA-Z][a-zA-Z0-9_-]*| should be preferred.
 
 
-\paragraph{shallowinit}
+\subsubsection{Options for string-like objects}
 
-This provides initialization for collection types, using one or more existing collection objects.  It is only valid for collection types.  It comes in two variants. |shallowinit.path| takes a keypath or an inline list of keypaths.  |shallowinit.label| takes a label or an inline list of labels.  All referenced objects must have the same type as \vmeta{type}, or be untyped (have the default type).  For a dict-like object, |shallowinit| must only reference dict-like objects, and similarly for list-like objects.  For a dict-like object, |shallowinit| adds all of the keys in the referenced objects to the dict-like object, with the keys referring to their original values.  This is effectively a ``shallow merge'' in which duplicate keys are not allowed.  For a list-like object, |shallowinit| adds all of the values in the referenced collections to the object.  This is effectively initialization by list extension, or shallow list flattening.
+\paragraph{newline}
+This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).
+
+
+\subsubsection{Mutually exclusive options}
+
+\paragraph{init}
+
+This provides initialization for collection types, using one or more existing collection objects.  It is only valid for collection types.  It comes in two variants. |init.path| takes a keypath or an inline list of keypaths.  |init.label| takes a label or an inline list of labels.  All init objects for a collection with type \vmeta{type} must have the same type as \vmeta{type}, or be untyped with a default type that is compatible with \vmeta{type}.  For a dict-like object, |init| must only contain dict-like objects, and similarly for list-like objects.  For a dict-like object, |init| adds all of the keys in the init objects to the dict-like object, with the keys referring to their original values.  This is effectively a ``shallow merge'' in which duplicate keys are not allowed.  For a list-like object, |init| adds all of the elements in the init objects to the list-like object, \emph{before} the object's own elements are added.  This is effectively initialization by list extension, with the objects in the init list undergoing shallow list flattening.  In both cases, the init objects are not copied; only new aliases to their contents are created.
+
+When a list-like collection object uses |init|, if a keypath is used to add elements by index, the index of the final collection, post-initialization, must be used.  For this reason, adding elements by keypath index is discouraged, and keypaths of the form \vmeta{path}|.*| should be preferred.  Using an index means that data depends on the specific number of elements provided by |init|.
 
 
 \paragraph{deepinit}
 
-This is the deepcopy version of |shallowinit|.  The resulting object contains deepcopies of all referenced key-value pairs (dict-like) or elements (list-like).
+This is the deep copy version of |init|.  The resulting object contains deep copies of the contents of all |init| objects.
 
 
-\paragraph{shallowdefault}
+\paragraph{default}
 
-This allows default values to be specified for a collection type.  It comes in two variants. |shallowdefault.path| takes a keypath or a list of keypaths.  |shallowdefault.label| takes a label or a list of labels.  All referenced objects must have the same type as \vmeta{type}, or be untyped (have the default type).  For a dict-like object, |shallowdefault| must only reference dict-like objects, and simililarly for list-like objects.  After a collection is fully assembled, 
+This allows default values to be specified for a collection type.  It comes in two variants. |default.path| takes a keypath or an inline list of keypaths.  |default.label| takes a label or an inline list of labels.  All default objects must have the same type as \vmeta{type}, or be untyped with a compatible default type.  After a collection with |default| is fully assembled, the default objects are checked to insert missing key-value pairs (dict-like) or elements (list-like).  For a dict-like object, the list of keypaths or labels is traversed in order, and all missing keys are inserted.  Existing key-value pairs are not overwritten, since |default| provides only \emph{default} fallback values, and \bespon\ does \emph{not} allow overwriting.  The treatment of dict-like objects is effectively a ``shallow merge.''  For a list-like object, the list of keypaths or labels is traversed in order, and all elements in the default objects are appended.  This is effectively a list extension, or shallow list flattening.  For a list-like object, |init| and |default| provide identical results, except that elements from the init/default objects are inserted first in |init| and last in |default|; elements are not combined by index.
 
 
 \paragraph{deepdefault}
 
-This is a version of |shallowmerge| in which merging takes place at all depths, rather than just one level deep.
+This is the deep copy version of |default|.  The resulting object contains deep copies of the contents of all |default| objects.
 
 
-\paragraph{recursivemerge}
+\paragraph{recmerge}
+
+This performs a recursive merge.  It comes in two variants. |recmerge.path| takes a keypath or an inline list of keypaths.  |recmerge.label| takes a label or an inline list of labels.  Starting with the original collection object, a recursive merge is performed at all levels (only collection objects are merged).  A dict-like object can only be merged into another dict-like object, and only if the first dict-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  Merging is performed by inserting missing key-value pairs; existing keys are never overwritten, but if their values are collection types, then merging is performed recursively.  A list-like object can only be be merged into another list-like object, and only if the first list-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  List merging is performed as list extension; lists are not combined by index.
+
+All collections that are merged appear in the final data structure alone.  All collections that are not merged are aliased.
+
+
+\paragraph{deeprecmerge}
+
+This is the deep copy version of |recmerge|.  The resulting object contains deepcopies of all merged collections, regardless of whether a given collection was merged.
 
 
 
 \subsection{Advanced types}
 Advanced types are applied to keypaths and create aliases or copies of the object referred to by a keypath.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more carats |^|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
 
-Shallow copies of collection types must produce new collection objects that reference the members of the original collection.  Shallow copies of scalar types may produce new scalar objects or reference the original object, in an implementation- and language-specific manner.  Whether scalar types are immutable as far as copying is concerned is left up to the implementation and its language.  The behavior of copies must be documented by an implementation.
+Shallow copies of collection types must produce new collection objects containing aliases of the members of the original collection.  Shallow copies of scalar types may produce new scalar objects or alias the original object, in an implementation- and language-specific manner.  Whether scalar types are immutable as far as copying is concerned is left up to the implementation and the programming language.  The behavior of copies must be documented by an implementation.
 
 \paragraph{alias.path}
-This creates an alias to the object referred to by a following keypath.
+This creates an alias to the object referred to by a keypath.
 
 \paragraph{alias.label}
-This creates an alias to the object referred to by a following label.
+This creates an alias to the object referred to by a label.
+
+\paragraph{copy.path}
+This creates a shallow copy of the object referred to by a keypath.
 
 \paragraph{deepcopy.path}
-This creates a deep copy of the object referred to by a following keypath.
+This creates a deep copy of the object referred to by a keypath.
 
-\paragraph{shallowcopy.path}
-This creates a shallow copy of the object referred to by a following keypath.
+\paragraph{copy.label}
+This creates a shallow copy of the object referred to by a label.
 
 \paragraph{deepcopy.label}
-This creates a deep copy of the object referred to by a following label.
-
-\paragraph{shallowcopy.label}
-This creates a shallow copy of the object referred to by a following label.
+This creates a deep copy of the object referred to by a label.
 
 
 
-\subsection{Resolving aliases and copies}
 
+\subsection{Resolving aliases, copies, and dependent collections}
 
+Aliases are only resolved once the aliased object is resolved, with the exception that circular aliases may be resolved in ``simultaneously'' with their targets.  If this is impossible, then an implementation must raise an error.  For example, suppose that an implementation adds support for an immutable |tuple| collection type, as exists in Python.  Then this could not be resolved:
+\begin{Verbatim}
+(tuple, label=t)> [1, 2, 3, (alias.label)> t]
+\end{Verbatim}
+The tuple must exist before the 4th element in it can alias the tuple, but once the tuple exists it cannot be modified to contain an alias to itself.  In contrast, this case would be possible with a mutable |list|, as exists in Python:
+\begin{Verbatim}
+(list, label=t)> [1, 2, 3, (alias.label)> t]
+\end{Verbatim}
+In this case, the list would be created with a \bespon\ alias object as its last element, and then the alias could be resolved since it is in a mutable data structure.  In a mutable collection object that may only contain specified types, a placeholder object could be inserted until the alias is resolved.  Mutability is key for resolving these sorts of circular aliases.
+
+Copies are only performed on objects after they have been fully resolved.  This means that when a copy of a collection object containing an alias is made, the alias must have already been resolved.  Thus, a deep copy will copy everything, including everything that is aliased; it will result in a deep copy of the aliased object, rather than a copy of the alias itself.  It is prohibited to create a copy of an object that itself contains an alias of the copy that is to be created.
+
+A dependent collection is any collection with |init|, |default|, |recmerge|, or the deep copy equivalents.  A dependent collection is only resolved once all of the dependencies are resolved.  Thus, collections in |init|, |default|, or |recmerge| are prohibited from containing aliases to the dependent collection.
 
 
 
@@ -759,37 +791,43 @@ This creates a shallow copy of the object referred to by a following label.
 \section{Parser directives}
 \label{sec:parser-directive}
 
+Parser directives allow a dataset to require parsing according to a different set of rules than the defaults.  When a parser is initialized, a number of parsing settings are given initial (typically default) settings.  Parser directives allow these settings to be modified.  Directives may restrict settings from their initial values to use a more strict approach.  Directives may also request broader settings than the defaults, in which case an error must be raised if the requested settings exceed those allowed by the parser.
+
 An entire dataset may be ``typed'' by a parser directive of the form
 \begin{Verbatim}[commandchars=\\\{\}]
 (bespon, \meta{key-value options})>
 \end{Verbatim}
-When a parser is initialized, a number of parsing settings are given initial settings.  Parser directives allow the parsing settings to be modified.  Directives may restrict settings from their initial values to use a more strict approach.  Directives may also request broader settings than the initial values, in which case an error must be raised.
+Only a single parser directive is allowed in a dataset, and it must appear before any data and before any comments; it may only be preceeded by whitespace.  This ensures that it is at the beginning of a dataset, where it may be easily inspected.  Because of the existence of parser directives and special \bespon\ types, implementations that allow user-defined types must prohibit custom types with names starting with the literal string |bespon|.
 
-Parser directives are not required.  When a parser directive is used, it must be the very first thing in a file or string after any BOM is stripped.  Defining custom types with names beginning with ``bespon'' is not allowed; these are reserved for potential future use in \bespon\ derivatives.
+An implementation is not required to implement parser directives, but any implementation that does not must note this in its documentation and must raise an informative error when a parser directive is encountered.  
 
 \paragraph{unquoted\_strings}
-This boolean option determines whether any unquoted strings are allowed.  True by default.  When this option is false, unquoted reserved words and unquoted implicitly typed objects (|none|, booleans, numbers, etc.) are still allowed.  Type names and type options are still used unquoted.  All of these are matched by regex or other means, and there is no danger of ambiguity.  Only text that would have otherwise become Unicode string data must be quoted.
+This boolean option determines whether any unquoted strings (typed or untyped) are allowed.  True by default.  When this option is false, unquoted reserved words and unquoted implicitly typed objects (|none|, booleans, numbers, etc.) are still allowed.  Type names and type options are still used unquoted.  All of these are matched by regex or other means, and there is no danger of ambiguity.  Only text that would have otherwise become Unicode string data before any explicit typing must be quoted.
 
 \paragraph{unquoted\_unicode}
-This boolean option determines whether code points beyond the ASCII range may appear unquoted.  False by default.  Note that enabling unquoted Unicode has security implications, since the full Unicode range contains many characters that closely resemble ASCII characters or are invisible or nearly invisible.
+This boolean option determines whether code points beyond the ASCII range may appear unquoted.  False by default.  Note that enabling unquoted Unicode has security implications, since the full Unicode range contains many characters that closely resemble ASCII characters or are invisible or nearly invisible, potentially in a font- and editor-dependent manner.  Unquoted strings are restricted to the ASCII range by default because of the incredible complexity of attempting to allow unquoted Unicode while completely avoiding \href{http://unicode.org/reports/tr36/}{visual spoofing and associated security issues}.
 
 \paragraph{only\_ascii}  Only allows unescaped characters in the ASCII range.  False by default.  May be useful when Unicode security is a significant concern.
 
 \paragraph{ints}  Allow integers.  True by default.  If false, all strings that match the integer regex are treated as floats.
 
-An implementation must use the default values for all directives unless other values are specified.  A parser directive can never turn |unquoted_strings| or |unquoted_unicode| or |ints| on when the implementation has it off, or turn |only_ascii| off when the implementation has it on.  A parser directive must only restrict parsing relative to what the implementation allows with current settings; a parser directive must never cause less strict parsing than what the implementation allows with its initial settings.  Doing so could have security implications.  Any parser directive that conflicts with current implementation settings must result in an error, which should explain how the error may be resolved and mention potential security implications.
+An implementation must use the default values for all directive settings unless other values are specified by the user.  A parser directive can never turn |unquoted_strings| or |unquoted_unicode| or |ints| on when the implementation has it off, or turn |only_ascii| off when the implementation has it on.  A parser directive must only restrict parsing relative to what the implementation allows with current settings; a parser directive must never cause less strict parsing than what the implementation allows with its initial settings.  Doing so could have security implications.  Any parser directive that conflicts with current implementation settings must result in an error, which should explain how the error may be resolved and mention potential security implications.  Any acceptable parsing directive affects the parsing of the data set in which it occurs, but the parser must reset settings to their original values before parsing any additional datasets.
 
+A \bespon\ dataset that uses |unquoted_strings|, |unquoted_unicode|, |only_ascii|, or |ints| is not required to have a parser directive.  All parties working with a given dataset may agree to non-default parser settings and thus omit the explicit parser directive.  However, this is discouraged, since such a file will result in an error when loaded by a default implementation if a more permissive setting is required (|unquoted_unicode|), and could result in unintended behavior otherwise (|unquoted_strings|, |only_ascii|, |ints|).
 
 
 \section{Implementation considerations}
 
-An implementation must provide a programmatic way to determine which types have built-in support.
+An implementation must provide a programmatic way to determine which types have built-in support, and whether they are mutable.
 
-An implementation should provide means of adding additional, user-defined types for use with explicit typing.  A dictionary mapping type names to parsing functions may be a convenient way to define additional types.  By default, all type names must match the regex
+An implementation should provide means of adding additional, user-defined types for use with explicit typing.  A dict mapping type names to parsing functions may be a convenient way to define additional types.  By default, all type names must match the regex
 \begin{Verbatim}
-[a-zA-Z][0-9a-zA-Z_-]*(?:\:\:[a-zA-Z][0-9a-zA-Z_-]*|\.[a-zA-Z][0-9a-zA-Z_-]*)*$
+[a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))*
+   (?:\:\: [a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))* | 
+      \.[a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))*
+   )*$
 \end{Verbatim}
-This ensures that type names are suitable for use with the |unquoted_strings| parser directive.  Type names are never quoted, so they must match an identifier-style regex to prevent ambiguity with implicitly typed objects.  In addition to matching the regex, type names must not match regexes and associated patterns for all types that are implicitly typed, including reserved words.  Libaries are encouraged to use type names of the form \vmeta{lib name}|::|\vmeta{type} for library-specific types that are not defined in the \bespon\ specification and whose interpretation is not immediately obvious.  
+Type names are never quoted, so they must match an identifier-style regex to avoid any potential ambiguity with implicitly typed objects.  In addition to matching the regex, type names must not match regexes and associated patterns for all types that are implicitly typed, including reserved words.  Libaries are encouraged to use type names of the form \vmeta{lib\_name}|::|\vmeta{type} for library-specific types that are not defined in the \bespon\ specification and whose interpretation is not immediately obvious.  
 
 An implementation should provide an option for registering a post-processing function for Unicode strings.  This would receive Unicode strings before they are stored in final form, and would make it convenient to add additional implicitly typed objects for custom usage.
 
@@ -1249,7 +1287,7 @@ Below, JSON, YAML, and TOML examples are provided with corresponding \bespon\ re
 The JSON example is from \href{https://en.wikipedia.org/wiki/JSON}{Wikipedia}.  The YAML example is also from \href{https://en.wikipedia.org/wiki/YAML}{Wikipedia}.  The TOML example is from the \href{https://github.com/toml-lang/toml}{TOML GitHub page}.
 
 
-\section{Compact form}
+\section{Inline form}
 
 
 \begin{tcolorbox}{}
@@ -1287,25 +1325,25 @@ The JSON example is from \href{https://en.wikipedia.org/wiki/JSON}{Wikipedia}.  
 
 \begin{Verbatim}
 {
-  firstName = John;
-  lastName = Smith;
-  age = 25;
+  firstName = John,
+  lastName = Smith,
+  age = 25,
   address = {
-    streetAddress = 21 2nd Street;
-    city = New York;
-    state = NY;
-    postalCode = "10021"
-  };
+    streetAddress = 21 2nd Street,
+    city = New York,
+    state = NY,
+    postalCode = '10021'
+  },
   phoneNumber = [
     {
-      type = home;
+      type = home,
       number = 212 555-1234
-    };
+    },
     {
-      type = fax;
+      type = fax,
       number = 646 555-4567
     }
-  ];
+  ],
   gender = {
     type = male
   }
@@ -1373,18 +1411,18 @@ customer =
     family_name =  Gale
 
 items =
-    + part_no =   A4786
-      descrip =   Water Bucket (Filled)
+    * part_no =   A4786
+      descrip =   'Water Bucket (Filled)'
       price =     1.47
       quantity =  4
 
-    + part_no =   E1628
-      descrip =   High Heeled "Ruby" Slippers
+    * part_no =   E1628
+      descrip =   'High Heeled "Ruby" Slippers'
       size =      8
       price =     133.7
       quantity =  1
 
-bill-to =
+bill-to = 
     street = '''
              123 Tornado Alley
              Suite 16
@@ -1392,7 +1430,7 @@ bill-to =
     city =   East Centerville
     state =  KS
 
-ship-to = (copy)> bill-to
+ship-to = (alias.path)> bill-to
 
 specialDelivery = 
     Follow the Yellow Brick
@@ -1459,27 +1497,27 @@ owner =
   dob = <some number>
 
 database =
-  server = 192.168.1.1
-  ports = [8001; 8001; 8002]
+  server = '192.168.1.1'
+  ports = [8001, 8001, 8002]
   connection_max = 5000
   enabled = true
 
 servers =
 
   alpha = 
-    ip = 10.0.0.1
+    ip = '10.0.0.1'
     dc = eqdc10
 
   beta =
-    ip = 10.0.0.2
+    ip = '10.0.0.2'
     dc = eqdc10
 
 clients =
-  data = [ [gamma; delta]; [1; 2] ]
+  data = [ [gamma, delta], [1, 2] ]
 
 % Line breaks are generally OK
 hosts = [
-  alpha;
+  alpha,
   omega
 ]
 \end{Verbatim}
@@ -1488,7 +1526,7 @@ hosts = [
 
 
 
-\section{INI-style form}
+\section{Section-style form}
 
 
 
@@ -1547,13 +1585,13 @@ first_name =  Dorothy
 family_name = Gale
 
 === items
-+ part_no =  A4786
-  descrip =  Water Bucket (Filled)
+* part_no =  A4786
+  descrip =  'Water Bucket (Filled)'
   price =    1.47
   quantity = 4
 
-+ part_no =  E1628
-  descrip =  High Heeled "Ruby" Slippers
+* part_no =  E1628
+  descrip =  'High Heeled "Ruby" Slippers'
   size =     8
   price =    133.7
   quantity = 1
@@ -1565,8 +1603,8 @@ street = '''
          '''/
 city =  East Centerville
 state = KS
-
-ship-to = (copy)> bill-to
+===/
+ship-to = (alias.path)> bill-to
 
 specialDelivery =
     Follow the Yellow Brick
@@ -1579,89 +1617,6 @@ specialDelivery =
 \end{tcolorbox}
 
 
-
-
-\begin{tcolorbox}{}
-\fvset{fontsize=\footnotesize}
-\begin{multicols}{2}
-
-\centering \textbf{TOML}
-\begin{Verbatim}[formatcom=\color{DarkGreen}]
-# This is a TOML document.
-
-title = "TOML Example"
-
-[owner]
-name = "Tom Preston-Werner"
-dob = 1979-05-27T07:32:00-08:00
-
-[database]
-server = "192.168.1.1"
-ports = [ 8001, 8001, 8002 ]
-connection_max = 5000
-enabled = true
-
-[servers]
-
-  [servers.alpha]
-  ip = "10.0.0.1"
-  dc = "eqdc10"
-
-  [servers.beta]
-  ip = "10.0.0.2"
-  dc = "eqdc10"
-
-[clients]
-data = [ ["gamma", "delta"], [1, 2] ]
-
-# Line breaks are OK when inside arrays
-hosts = [
-  "alpha",
-  "omega"
-]
-\end{Verbatim}
-\columnbreak
-\centering \textbf{BespON}
-
-\begin{Verbatim}
-% This is a BespON document.
-
-title = BespON Example
-
-=== owner
-name = Geoffrey Poore
-dob = <some number>
-
-=== database
-server = 192.168.1.1
-ports = [ 8001; 8001; 8002 ]
-connection_max = 5000
-enabled = true
-
-=== servers
-
-  === alpha
-  ip = 10.0.0.1
-  dc = eqdc10
-
-  === beta
-  ip = 10.0.0.2
-  dc = eqdc10
-
-=== clients
-data = [ [gamma; delta]; [1; 2] ]
-
-% Line breaks are generally OK
-hosts = [
-  alpha;
-  omega
-]
-\end{Verbatim}
-\end{multicols}
-\end{tcolorbox}
-
-
-Another TOML comparison, using a different \bespon\ approach, is below.
 
 \begin{tcolorbox}{}
 \fvset{fontsize=\footnotesize}
@@ -1715,8 +1670,8 @@ name = Geoffrey Poore
 dob = <some number>
 
 === database
-server = 192.168.1.1
-ports = [ 8001; 8001; 8002 ]
+server = '192.168.1.1'
+ports = [ 8001, 8001, 8002 ]
 connection_max = 5000
 enabled = true
 
@@ -1725,15 +1680,16 @@ ip = 10.0.0.1
 dc = eqdc10
 
 === _.beta
-ip = 10.0.0.2
+ip = '10.0.0.2'
 dc = eqdc10
 
 === clients.data
 [ [gamma; delta]; [1; 2] ]
 
+=== _.hosts
 % Line breaks are generally OK
-hosts = [
-  alpha;
+[
+  alpha,
   omega
 ]
 \end{Verbatim}
