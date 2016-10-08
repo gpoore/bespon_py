@@ -97,20 +97,18 @@ def test_string_constants():
     assert(len(mdl.UNICODE_NEWLINES) == 8)
     assert(len(mdl.UNICODE_NEWLINE_CHARS) == 7)
 
-    assert(len(mdl.BESPON_NEWLINES) == 3)
+    assert(len(mdl.BESPON_NEWLINES) == 1)
 
     assert(mdl.UNICODE_CC == unicode_cc)
 
-    assert(len(mdl.BESPON_CC_LITERALS) == 3)
+    assert(len(mdl.BESPON_CC_LITERALS) == 2)
 
     assert(len(mdl.UNICODE_BIDI_OVERRIDES) == 2)
 
     assert(len(mdl.UNICODE_SURROGATES) == 2048)
 
-    # Cc minus `\t`, `\r`, `\n`; plus newlines `\u2028` and `\u2029` (other
-    # newlines covered in Cc); plus bidi overrides and surrogates
-    assert(len(mdl.BESPON_NONLITERALS_LESS_SURROGATES) == (65-3) + (7-3-2) + 2)
-    assert(len(mdl.BESPON_NONLITERALS) == (65-3) + (7-3-2) + 2 + 2048)
+    # Cc minus `\t` and `\n`, plus newlines and bidi overrides
+    assert(len(mdl.BESPON_NONLITERALS_LESS_SURROGATES) == (65-2) + (7-1-4) + 2)
 
     assert(len(mdl.UNICODE_ZS) == 17)
     assert(len(mdl.UNICODE_WHITESPACE) == 17 + 7 + 1)
@@ -148,12 +146,12 @@ def test_UnicodeFilter_defaults():
     # keydefaultdicts, so any assertions about their lengths must be made
     # before they are ever used; using the dicts will add elements
     uf = mdl.UnicodeFilter()
-    assert(uf.nonliterals == mdl.BESPON_NONLITERALS)
-    assert('\r\n' not in uf.nonliterals)
+    assert(uf.nonliterals_less_surrogates == mdl.BESPON_NONLITERALS_LESS_SURROGATES)
+    assert('\r\n' not in uf.nonliterals_less_surrogates)
 
     assert(uf.newlines == mdl.BESPON_NEWLINES)
     assert(uf.newline_chars == set(''.join(mdl.BESPON_NEWLINES)))
-    assert(len(uf.newline_chars) == len(mdl.BESPON_NEWLINES) - 1)
+    assert(len(uf.newline_chars) == len(mdl.BESPON_NEWLINES))
     assert(len(uf.newline_chars_str) == len(uf.newline_chars) and all(x in uf.newline_chars for x in uf.newline_chars_str))
 
     assert(uf.short_escapes == mdl.BESPON_SHORT_ESCAPES)
@@ -188,19 +186,19 @@ def test_UnicodeFilter_public_methods():
     uf = mdl.UnicodeFilter(brace_escapes=False)
     if not NARROW_BUILD:
         s_raw = '\\ \'\"\a\b\x1b\f\n\r\t\v/\u2028\u2029\u0101\U00100101'
-        s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\u2028\\u2029\u0101\U00100101'
+        s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\\r\t\\v/\\u2028\\u2029\u0101\U00100101'
         s_esc_inline = '\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\u2028\\u2029\u0101\U00100101'
     else:
         s_raw = '\\ \'\"\a\b\x1b\f\n\r\t\v/\u2028\u2029\u0101'
-        s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\u2028\\u2029\u0101'
+        s_esc = '\\\\ \'\"\\a\\b\\x1b\\f\n\\r\t\\v/\\u2028\\u2029\u0101'
         s_esc_inline = '\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\u2028\\u2029\u0101'
     assert(uf.escape('\\') == '\\\\')
     assert(uf.escape(s_raw) == s_esc)
     assert(uf.escape(s_raw, inline=True) == s_esc_inline)
     assert(uf.unescape(s_esc) == s_raw)
     assert(uf.unescape(s_esc_inline) == s_raw)
-    assert(all(uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals))
-    assert(all(not uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) not in uf.nonliterals))
+    assert(all(uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) in uf.nonliterals_less_surrogates))
+    assert(all(not uf.has_nonliterals(chr(n)) for n in range(0, 512) if chr(n) not in uf.nonliterals_less_surrogates))
 
     uf = mdl.UnicodeFilter(literals='\v\f\u0085\u2028\u2029')
     assert(all(uf.unescape('\\'+eol) == '' for eol in uf.newlines))
@@ -208,7 +206,7 @@ def test_UnicodeFilter_public_methods():
 
     uf = mdl.UnicodeFilter()
     b_raw = b'\\ \'\"\a\b\x1b\f\n\r\t\v/\x13\xaf\xff'
-    b_esc = b'\\\\ \'\"\\a\\b\\x1b\\f\n\r\t\\v/\\x13\\xaf\\xff'
+    b_esc = b'\\\\ \'\"\\a\\b\\x1b\\f\n\\r\t\\v/\\x13\\xaf\\xff'
     b_esc_inline = b'\\\\ \'\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\x13\\xaf\\xff'
     b_esc_maximal = b'\\\\\\x20\'\\"\\a\\b\\x1b\\f\\n\\r\\t\\v/\\x13\\xaf\\xff'
     assert(uf.unescape_bytes(b_esc) == b_raw)
@@ -274,6 +272,7 @@ def test_UnicodeFilter_errors():
 
     with pytest.raises(err.ConfigError):
         mdl.UnicodeFilter(literals='\uD800')
+    '''
     mdl.UnicodeFilter(literals='\uD800', unpaired_surrogates=True)
     for n in range(0xD800, 0xDFFF+1):
         with pytest.raises(err.UnicodeSurrogateError):
@@ -283,3 +282,4 @@ def test_UnicodeFilter_errors():
     for f in (uf._escape_unicode_char_ubrace, uf._escape_unicode_char_xubrace, uf._escape_unicode_char_xuU, uf._escape_unicode_char_uU):
         with pytest.raises(err.UnicodeSurrogateError):
             f('\uD800')
+    '''

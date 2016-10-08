@@ -703,7 +703,7 @@ This gives an object a label, which can later be used to reference the object in
 \subsubsection{Options for string-like objects}
 
 \paragraph{newline}
-This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).
+This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed for Unicode strings, and only |\r|, |\n|, and |\r\n| are allowed for byte strings.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).  This option is applied \emph{before} any backslash-escaping is applied, because it is meant to replace literal newlines that appear in text, rather than perform a general substitution of newlines in text.
 
 
 \subsubsection{Mutually exclusive options}

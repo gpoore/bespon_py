@@ -1031,7 +1031,7 @@ class BespONDecoder(object):
         # Create a UnicodeFilter instance
         # Provide shortcuts to some of its attributes
         self._unicodefilter = unicoding.UnicodeFilter(**kwargs)
-        self._nonliterals = self._unicodefilter.nonliterals
+        self._nonliterals_less_surrogates = self._unicodefilter.nonliterals_less_surrogates
         self._newlines = self._unicodefilter.newlines
         self._newline_chars = self._unicodefilter.newline_chars
         self._newline_chars_str = self._unicodefilter.newline_chars_str
@@ -1146,7 +1146,7 @@ class BespONDecoder(object):
         # context must be valid in all.
         self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix') and v is not None)
         self._not_unquoted = set(self._not_unquoted_str)
-        self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals)
+        self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals_less_surrogates)
         self._end_unquoted_string_re__ascii = re.compile('[^{0}]'.format(re.escape(self._allowed_ascii)))
         self._end_unquoted_string_re__unicode = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
         self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
