@@ -1031,6 +1031,7 @@ class BespONDecoder(object):
         # Create a UnicodeFilter instance
         # Provide shortcuts to some of its attributes
         self._unicodefilter = unicoding.UnicodeFilter(**kwargs)
+        self._literals = self._unicodefilter.literals
         self._nonliterals_less_surrogates = self._unicodefilter.nonliterals_less_surrogates
         self._newlines = self._unicodefilter.newlines
         self._newline_chars = self._unicodefilter.newline_chars
@@ -1146,7 +1147,10 @@ class BespONDecoder(object):
         # context must be valid in all.
         self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix') and v is not None)
         self._not_unquoted = set(self._not_unquoted_str)
-        self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals_less_surrogates)
+        if self._literals is not None:
+            self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) in self._nonliterals_less_surrogates)
+        else: 
+            self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals_less_surrogates)
         self._end_unquoted_string_re__ascii = re.compile('[^{0}]'.format(re.escape(self._allowed_ascii)))
         self._end_unquoted_string_re__unicode = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
         self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
@@ -1425,7 +1429,7 @@ class BespONDecoder(object):
         '''
         Encode a Unicode string to bytes.
         '''
-        s = self._unicodefilter.unicode_to_ascii_newlines(s)
+        s = self._unicodefilter.non_ascii_to_ascii_newlines(s)
         try:
             s_bytes = s.encode('ascii')
         except UnicodeEncodeError as e:
@@ -1445,8 +1449,8 @@ class BespONDecoder(object):
             trace = self._unicodefilter.trace_nonliterals(s)
             msg = '\n  Nonliterals traceback\n' + self._unicodefilter.format_trace(trace)
             raise erring.InvalidLiteralCharacterError(msg)
-        if self.only_ascii and self._unicodefilter.has_unicode(s):
-            trace = self._unicodefilter.trace_unicode(s)
+        if self.only_ascii and self._unicodefilter.has_non_ascii(s):
+            trace = self._unicodefilter.trace_nonliterals(s)
             msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
             raise erring.InvalidLiteralCharacterError(msg)
 
@@ -1538,8 +1542,8 @@ class BespONDecoder(object):
         for k, v in d.items():
             if k == 'only_ascii' and v in (True, False):
                 if v and not self.only_ascii:
-                    if self._unicodefilter.has_unicode(self._string):
-                        trace = self._unicodefilter.trace_unicode(self._string)
+                    if self._unicodefilter.has_non_ascii(self._string):
+                        trace = self._unicodefilter.trace_nonliterals(self._string)
                         msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
                         raise erring.InvalidLiteralCharacterError(msg)
                     self._only_ascii__current = True
@@ -1954,7 +1958,7 @@ class BespONDecoder(object):
     def _parse_line_resolve_quoted_string(self, line, s, delim):
         state = self.state
         if state.type and state.type_obj in self.__bytes_parsers:
-            s = self._unicodefilter.unicode_to_ascii_newlines(s)
+            s = self._unicodefilter.non_ascii_to_ascii_newlines(s)
             s = self._unicode_to_bytes(s)
             if delim[0] == '"':
                 s = self._unicodefilter.unescape_bytes(s)

@@ -284,16 +284,16 @@ def test_decode_inline_syntax():
     assert(dc.decode('{"a"="b"}') == {'a': 'b'})
     assert(dc.decode('{a=b}') == {'a': 'b'})
 
-    assert(dc.decode('["a"; "b"]') == ['a', "b"])
-    assert(dc.decode('[a; b]') == ['a', 'b'])
-    assert(dc.decode('{"a"="b"; "c"="d"}') == {'a': 'b', 'c': 'd'})
-    assert(dc.decode('{a=b; c=d}') == {'a': 'b', 'c': 'd'})
+    assert(dc.decode('["a", "b"]') == ['a', "b"])
+    assert(dc.decode('[a, b]') == ['a', 'b'])
+    assert(dc.decode('{"a"="b", "c"="d"}') == {'a': 'b', 'c': 'd'})
+    assert(dc.decode('{a=b, c=d}') == {'a': 'b', 'c': 'd'})
 
-    assert(dc.decode('["a"; ["a"]]') == ['a', ['a']])
+    assert(dc.decode('["a", ["a"]]') == ['a', ['a']])
     assert(dc.decode('{"a"={"b"="c"}}') == {'a': {'b': 'c'}})
 
-    assert(dc.decode('{"a"= 1; "b"= {"c"= 3; "d"= 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
-    assert(dc.decode('{a = 1; b = {c = 3; d = 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+    assert(dc.decode('{"a"= 1, "b"= {"c"= 3, "d"= 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
+    assert(dc.decode('{a = 1, b = {c = 3, d = 4}}') == {'a': 1, 'b': {'c': 3, 'd': 4}})
 
 
 
@@ -329,27 +329,27 @@ def test_decode_vs_json_yaml():
     '''
     s_bespon_inline = '''\
     {
-      firstName = John;
-      lastName = Smith;
-      isAlive = true;
-      age = 25;
+      firstName = John,
+      lastName = Smith,
+      isAlive = true,
+      age = 25,
       address = {
-        streetAddress = 21 2nd Street;
-        city = New York;
-        state = NY;
+        streetAddress = 21 2nd Street,
+        city = New York,
+        state = NY,
         postalCode = 10021-3100
-      };
+      },
       phoneNumbers = [
         {
-          type = home;
+          type = home,
           number = 212 555-1234
-        };
+        },
         {
-          type = office;
+          type = office,
           number = 646 555-4567
         }
-      ];
-      children = [];
+      ],
+      children = [],
       spouse = null
     }
     '''
@@ -464,8 +464,8 @@ def test_explicit_typing():
     assert(dc.decode('(odict)> {a=b}') == collections.OrderedDict({'a': 'b'}))
     assert(dc.decode('(odict)>\na=b') == collections.OrderedDict({'a': 'b'}))
     assert(dc.decode('(odict)>\n a=b') == collections.OrderedDict({'a': 'b'}))
-    assert(dc.decode('(set)>[1; 2; 3]') == set([1, 2, 3]))
-    assert(dc.decode('(set)> [1; 2; 3]') == set([1, 2, 3]))
+    assert(dc.decode('(set)>[1, 2, 3]') == set([1, 2, 3]))
+    assert(dc.decode('(set)> [1, 2, 3]') == set([1, 2, 3]))
     assert(dc.decode('(set)>\n* 1\n* 2\n* 3') == set([1, 2, 3]))
     assert(dc.decode('(set)>\n * 1\n * 2\n * 3') == set([1, 2, 3]))
 
@@ -492,28 +492,28 @@ def test_parser_directives():
 
     with pytest.raises(err.InvalidLiteralCharacterError):
         s = '''\
-        (bespon; only_ascii)>
+        (bespon, only_ascii)>
         * k = ÄäËëÏïÖöÜü
         '''
         dc.decode(s)
 
     with pytest.raises(err.InvalidLiteralCharacterError):
         s = '''\
-        (bespon; only_ascii = true)>
+        (bespon, only_ascii = true)>
         * k = ÄäËëÏïÖöÜü
         '''
         dc.decode(s)
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; unquoted_strings=false)>
+        (bespon, unquoted_strings=false)>
         * k = ÄäËëÏïÖöÜü
         '''
         dc.decode(s)
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; unquoted_unicode=false)>
+        (bespon, unquoted_unicode=false)>
         * k = ÄäËëÏïÖöÜü
         '''
         dc.decode(s)
@@ -527,7 +527,7 @@ def test_parser_directives():
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; only_ascii; only_ascii)>
+        (bespon, only_ascii, only_ascii)>
         * k = v
         '''
         dc.decode(s)
@@ -537,21 +537,21 @@ def test_parser_directives():
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; only_ascii=false)>
+        (bespon, only_ascii=false)>
         * k = v
         '''
         dc.decode(s)
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; unquoted_strings=true)>
+        (bespon, unquoted_strings=true)>
         * k = v
         '''
         dc.decode(s)
 
     with pytest.raises(err.ParseError):
         s = '''\
-        (bespon; unquoted_unicode=true)>
+        (bespon, unquoted_unicode=true)>
         * k = v
         '''
         dc.decode(s)

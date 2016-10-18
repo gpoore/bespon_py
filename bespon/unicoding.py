@@ -190,7 +190,7 @@ class UnicodeFilter(object):
                 if opt is not None:
                     if not isinstance(opt, str) and not all(isinstance(x, str) for x in opt):
                         raise erring.ConfigError('"literals" and "nonliterals" must be None, or a Unicode string, or a sequence of Unicode strings')
-                    if any(len(x) != 1 for x in opt):
+                    if len(opt) == 0 or any(len(x) != 1 for x in opt):
                         if NARROW_BUILD:
                             raise erring.ConfigError('Only single code points can be given in "literals" and "nonliterals", and code points above U+FFFF are not supported on narrow Python builds')
                         else:
@@ -265,7 +265,12 @@ class UnicodeFilter(object):
         self.escaped_string_delim_chars_str = ''.join(sorted(self.escaped_string_delim_chars, key=ord))
         
 
-        # Regexes for working with nonliterals.
+        # Regexes for working with nonliterals.  Regardless of whether 
+        # literals or nonliterals are specified, regexes are designed to 
+        # find code points that aren't allowed in various contexts.  Either
+        # `literals` or `nonliterals_less_surrogates` is guaranteed to 
+        # contain one or more code points, so the regexes won't fail due to 
+        # `{chars}` being replaced with the empty string. 
         if self.literals is not None: 
             lits_re_esc_str = re.escape(''.join(sorted(self.literals, key=ord)))
         else:
@@ -309,6 +314,8 @@ class UnicodeFilter(object):
         self.nonliterals_or_backslash_bytes_re = re.compile(r'[\\{chars}]'.format(chars=nonliterals_bytes_re_esc_str).encode('latin1'))
         self.nonliterals_or_backslash_newlines_tab_bytes_re = re.compile(r'[\\{newlines}\t{chars}]'.format(chars=nonliterals_bytes_re_esc_str, newlines=re.escape(self.newline_chars_ascii_str)).encode('latin1'))
         nonliterals_or_non_printable_non_whitespace_bytes_re_esc_str = re.escape(''.join(chr(n) for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_str))
+        # Regex for nonliterals or non-printable chars is designed to work
+        # even if `escaped_string_delim_chars` is the empty string.
         esdc_re_esc = re.escape(''.join(self.escaped_string_delim_chars))
         self.nonliterals_or_non_printable_non_whitespace_backslash_delim_bytes_re = re.compile(r'[\\{chars}{esdc}]'.format(chars=nonliterals_or_non_printable_non_whitespace_bytes_re_esc_str, esdc=esdc_re_esc).encode('latin1'))
 
@@ -329,10 +336,16 @@ class UnicodeFilter(object):
                         raise erring.ConfigError('"spaces" and "indents" must be Unicode strings or sequences of single Unicode code points')
                     if len(opt) == 0:
                         raise erring.ConfigError('"spaces" and "indents" cannot be empty Unicode strings or sequences')
-            self.spaces = spaces or BESPON_SPACES
+            if spaces is None:
+                self.spaces = BESPON_SPACES
+            else:
+                self.spaces = set(spaces)
             if self.spaces - UNICODE_ZS:
                 raise erring.ConfigError('"spaces" must only contain code points with Unicode General_Category Zs')
-            self.indents = indents or BESPON_INDENTS
+            if indents is None:
+                self.indents = BESPON_INDENTS
+            else:
+                self.indents = set(indents)
             if self.indents - UNICODE_ZS - set('\t'):
                 raise erring.ConfigError('"indents" must only contain code points with Unicode General_Category Zs, or the horizontal tab (\t)')
         if not self._default_codepoints:
@@ -430,27 +443,29 @@ class UnicodeFilter(object):
 
         # Dict for escaping code points that may not appear literally.
         # For lookup in conjunction with regex.
-        self.escape_dict = tooling.keydefaultdict(self._escape_unicode_char)
+        self._escape_dict = tooling.keydefaultdict(self._escape_unicode_char)
         # Copy over any relevant short escapes
-        self.escape_dict.update(self.short_escapes)
+        self._escape_dict.update(self.short_escapes)
 
         
         # The binary escape dicts are similar to the Unicode equivalents.
         # Only `\xHH` escapes are used.
-        self.escape_bytes_dict = {chr(n).encode('latin1'): '\\x{0:02x}'.format(n).encode('ascii') for n in range(256)}
-        self.escape_bytes_dict.update(self.short_escapes_bytes)
+        self._escape_bytes_dict = {chr(n).encode('latin1'): '\\x{0:02x}'.format(n).encode('ascii') for n in range(256)}
+        self._escape_bytes_dict.update(self.short_escapes_bytes)
 
 
         # Dicts for unescaping with current settings.  Used for looking up
         # backlash escapes found by `re.sub()`.  Start with all short escapes;
         # the factory functions add escapes as they are requested.
-        self.unescape_dict = tooling.keydefaultdict(self._unescape_unicode_char, self.short_unescapes)
-        self.unescape_bytes_dict = tooling.keydefaultdict(self._unescape_byte, self.short_unescapes_bytes)
+        self._unescape_dict = tooling.keydefaultdict(self._unescape_unicode_char, self.short_unescapes)
+        self._unescape_bytes_dict = tooling.keydefaultdict(self._unescape_byte, self.short_unescapes_bytes)
 
 
-        # Regex for replacing all non-ASCII newlines
-        # No need for special treatment of `\r\n`, because in ASCII range
-        self.non_ascii_newlines_re = re.compile('[{0}]'.format(self.newline_chars_non_ascii_str))
+        # Regex for replacing all non-ASCII newlines in text that has already
+        # been filtered so that it only contains allowed literal newlines.  
+        # Only created if non-ASCII newlines are actually allowed as literals.
+        if self.newline_chars_non_ascii:
+            self.non_ascii_newlines_re = re.compile('[{0}]'.format(self.newline_chars_non_ascii_str))
 
 
     def _escape_unicode_char_xubrace(self, c):
@@ -566,7 +581,7 @@ class UnicodeFilter(object):
         Within a string, replace all code points that are not allowed to 
         appear literally with their escaped counterparts.
         '''
-        d = self.escape_dict
+        d = self._escape_dict
         if inline:
             r = self.nonliterals_or_backslash_newlines_tab_re
         else:
@@ -581,7 +596,7 @@ class UnicodeFilter(object):
         counterparts.
         '''
         # Maximal is everything that inline is, and more
-        d = self.escape_bytes_dict
+        d = self._escape_bytes_dict
         if maximal:
             r = self.nonliterals_or_non_printable_non_whitespace_backslash_delim_bytes_re
         elif inline:
@@ -596,7 +611,7 @@ class UnicodeFilter(object):
         Within a string, replace all backslash escapes with the
         corresponding code points.
         '''
-        d = self.unescape_dict
+        d = self._unescape_dict
         return self.unescape_re.sub(lambda m: d[m.group(0)], s)
 
 
@@ -605,7 +620,7 @@ class UnicodeFilter(object):
         Within a binary string, replace all backslash escapes with the
         corresponding bytes.
         '''
-        d = self.unescape_bytes_dict
+        d = self._unescape_bytes_dict
         return self.unescape_bytes_re.sub(lambda m: d[m.group(0)], s)
 
 
@@ -640,7 +655,8 @@ class UnicodeFilter(object):
         while len(trace) < 20 and n < len(s):
             m = self.nonliterals_re.search(s, pos=n)
             if m:
-                for nl in self.unicode_newlines_re.finditer(s, pos=n, endpos=m.start()):
+                for m_nl in self.unicode_newlines_re.finditer(s, pos=n, endpos=m.start()):
+                    nl = m_nl.group(0)
                     unicode_lines += 1
                     if nl.lstrip('\r\n') == '':
                          ascii_lines += 1
@@ -674,8 +690,11 @@ class UnicodeFilter(object):
         return ''.join(m)
 
 
-    def unicode_to_ascii_newlines(self, s):
+    def non_ascii_to_ascii_newlines(self, s):
         '''
         Replace all non-ASCII newlines with `\n`.
         '''
-        return self.non_ascii_newlines_re.sub('\n', s)
+        if self.newline_chars_non_ascii:
+            return self.non_ascii_newlines_re.sub('\n', s)
+        else:
+            return s

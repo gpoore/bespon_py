@@ -12,6 +12,9 @@ build/
 *experiments/
 *.bbl
 *.blg
+.coverage
+htmlcov/
+coverage*
 
 
 # Windows image file caches
