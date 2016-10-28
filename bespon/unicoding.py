@@ -127,11 +127,6 @@ UNICODE_WHITESPACE_VISUALLY_CONFUSABLE = set(['\u115F', '\u1160', '\u3164', '\uF
 NonliteralTrace = collections.namedtuple('NonliteralTrace', ['chars', 'lineno', 'unicode_lineno'])
 
 
-# Structure for creating tracebacks.  Such an object will typically be passed
-# in from the outside, but otherwise a default object is needed.
-Traceback = collections.namedtuple('Traceback', ['source', 'start_lineno', 'end_lineno'])
-
-
 
 
 class UnicodeFilter(object):
@@ -139,20 +134,18 @@ class UnicodeFilter(object):
     Check strings for literal code points that are not allowed,
     backslash-escape and backslash-unescape strings, etc.
     '''
-    def __init__(self, traceback=None,
+    def __init__(self, state=None,
                  only_ascii=False, unpaired_surrogates=False,
                  brace_escapes=True, x_escapes=True, 
                  literals=None, nonliterals=None,
                  spaces=None, indents=None,
                  short_escapes=None, short_unescapes=None,
                  escaped_string_delim_chars=None):
-        # If a traceback object is provided, enhanced tracebacks are possible
-        if traceback is not None:
-            if not all(hasattr(traceback, attr) for attr in ('source', 'start_lineno', 'end_lineno')):
-                raise erring.ConfigError('Invalid traceback object lacks appropriate attrs')
-            self.traceback = traceback
-        else:
-            self.traceback = Traceback('<unknown>', '?', '?')
+        # If a state object is provided, enhanced tracebacks are possible
+        if state is not None:
+            if not all(hasattr(state, attr) for attr in ('source', 'start_lineno', 'start_column', 'end_lineno', 'end_column')):
+                raise erring.ConfigError('Invalid "state" lacks appropriate attrs')
+        self.state = state
 
         for opt in (only_ascii, unpaired_surrogates, brace_escapes, x_escapes):
             if opt not in (True, False):
@@ -235,9 +228,13 @@ class UnicodeFilter(object):
         self.newline_chars_ascii_str = ''.join(sorted(self.newline_chars_ascii, key=ord))
         self.newline_chars_non_ascii = set(c for c in self.newline_chars if ord(c) >= 128)
         self.newline_chars_non_ascii_str = ''.join(sorted(self.newline_chars_non_ascii, key=ord))
-        # Regex for finding all Unicode newlines.
-        # Reverse sort so that `\r\n` is first.
+        # Regexes for finding and counting newlines.  Reverse sort 
+        # newline sets so that `\r\n` is first when present.
+        self.newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(self.newlines, reverse=True)))
+        self.rn_newlines_re = re.compile('\r\n|\r|\n')
         self.unicode_newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
+        self.latin1_newlines_bytes_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True) if len(x) == 2 or ord(x) < 256).encode('latin1'))
+        
         # Bytes are always dealt with via a nonliterals set
         if self.literals is not None:
             self.nonliterals_bytes_str = set(chr(n) for n in range(256) if n >= 128 or chr(n) not in self.literals)
@@ -282,37 +279,38 @@ class UnicodeFilter(object):
                 self.nonliterals_re = re.compile(r'[^{chars}]'.format(chars=lits_re_esc_str))
                 # Regexes for escaping nonliterals
                 self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]'.format(chars=lits_re_esc_str))
-                self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t]|[^{chars}]'.format(chars=lits_re_esc_str, newlines=newlines_re_esc_str))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str))
             else:
                 self.nonliterals_re = re.compile(r'[{chars}]'.format(chars=nonlits_re_esc_str))
                 self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}]'.format(chars=nonlits_re_esc_str))
-                self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t{chars}]'.format(chars=nonlits_re_esc_str, newlines=newlines_re_esc_str))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}]'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str))
         else:
             if NARROW_BUILD:
                 surrogates_pattern = r'[\uD800-\uDBFF](?=[^\uDC00-\uDFFF]|$)|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]'
+                self.unpaired_surrogate_re = re.compile(surrogates_pattern)
                 if literals is not None:
                     self.nonliterals_re = re.compile(r'[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
                     self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t]|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, newlines=newlines_re_esc_str, surr=surrogates_pattern))
+                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str, surr=surrogates_pattern))
                 else:
                     self.nonliterals_re = re.compile(r'[{chars}]|{surr}'.format(chars=nonlits_re_esc_str, surr=surrogates_pattern))
                     self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}]|{surr}'.format(chars=nonlits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t{chars}]|{surr}'.format(chars=nonlits_re_esc_str, newlines=newlines_re_esc_str, surr=surrogates_pattern))
+                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}]|{surr}'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str, surr=surrogates_pattern))
             else:
                 if literals is not None:
                     self.nonliterals_re = re.compile(r'[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
                     self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
-                    self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t]|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str, newlines=newlines_re_esc_str))
+                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str))
                 else:
                     self.nonliterals_re = re.compile(r'[{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str))
                     self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str))
-                    self.nonliterals_or_backslash_newlines_tab_re = re.compile(r'[\\{newlines}\t{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, newlines=newlines_re_esc_str))
+                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str))
         # Regexes for working with nonliterals in binary.  Since a set of
         # bytes nonliterals already exists, and surrogates are outside the 
         # bytes range, this is much simpler.
         nonliterals_bytes_re_esc_str = re.escape(''.join(sorted(self.nonliterals_bytes_str, key=ord)))
         self.nonliterals_or_backslash_bytes_re = re.compile(r'[\\{chars}]'.format(chars=nonliterals_bytes_re_esc_str).encode('latin1'))
-        self.nonliterals_or_backslash_newlines_tab_bytes_re = re.compile(r'[\\{newlines}\t{chars}]'.format(chars=nonliterals_bytes_re_esc_str, newlines=re.escape(self.newline_chars_ascii_str)).encode('latin1'))
+        self.nonliterals_or_backslash_newline_chars_tab_bytes_re = re.compile(r'[\\{nl_chars}\t{chars}]'.format(chars=nonliterals_bytes_re_esc_str, nl_chars=re.escape(self.newline_chars_ascii_str)).encode('latin1'))
         nonliterals_or_non_printable_non_whitespace_bytes_re_esc_str = re.escape(''.join(chr(n) for n in range(256) if not 0x21 <= n <= 0x7E or chr(n) in self.nonliterals_bytes_str))
         # Regex for nonliterals or non-printable chars is designed to work
         # even if `escaped_string_delim_chars` is the empty string.
@@ -417,6 +415,14 @@ class UnicodeFilter(object):
             unescape_re_pattern = '|'.join(x for x in unescape_re_pattern.split('|') if not x.startswith(r'\\x'))
         if not brace_escapes:
             unescape_re_pattern = '|'.join(x for x in unescape_re_pattern.split('|') if not x.startswith(r'\\u\\{{'))
+        # Need regex for tracking down any invalid unescapes.  This is 
+        # assembled from the `unescape_re_pattern` before it is finalized,
+        # to maintain uniformity.
+        valid_long_unescape_pattern = ''.join(x[2:] for x in unescape_re_pattern.replace(r'|\\.|\\', '').split('|'))
+        valid_long_unescape_pattern = valid_long_unescape_pattern.format(spaces=re.escape(self.spaces_str), newlines='|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
+        valid_short_unescape_pattern = r'[{0}]'.format(re.escape(''.join(x[1:] for x in self.short_unescapes)))
+        invalid_unescape_re_pattern = r'\\(?!{vl}|{vs}).?'.format(vl=valid_long_unescape_pattern, vs=valid_short_unescape_pattern)
+        self.invalid_unescape_re = re.compile(invalid_unescape_re_pattern, re.DOTALL)
         # For typed strings with specified newlines, the default newline `\n`
         # may be replaced with any other valid Unicode newline sequence, even
         # with default nonliterals.  Thus, escaping must handle any 
@@ -424,8 +430,12 @@ class UnicodeFilter(object):
         # literals.  The same logic applies to the binary case.
         unescape_re_pattern = unescape_re_pattern.format(spaces=re.escape(self.spaces_str), newlines='|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
         self.unescape_re = re.compile(unescape_re_pattern, re.DOTALL)
+        
         unescape_bytes_re_pattern = r'\\x[0-9a-fA-F]{2}|\\\x20*(?:\r\n|\r|\n)|\\.|\\'.encode('ascii')
         self.unescape_bytes_re = re.compile(unescape_bytes_re_pattern, re.DOTALL)
+        valid_long_unescape_bytes_pattern = r'x[0-9a-fA-F]{2}|\x20*(?:\r\n|\r|\n)'
+        valid_short_unescape_bytes_pattern = valid_short_unescape_pattern
+        self.invalid_unescape_bytes_re = re.compile(r'\\(?!{vl}|{vs}).?'.format(vl=valid_long_unescape_bytes_pattern, vs=valid_short_unescape_bytes_pattern).encode('ascii'), re.DOTALL)
 
 
         # Set function for escaping Unicode characters, based on whether 
@@ -465,7 +475,18 @@ class UnicodeFilter(object):
         # been filtered so that it only contains allowed literal newlines.  
         # Only created if non-ASCII newlines are actually allowed as literals.
         if self.newline_chars_non_ascii:
-            self.non_ascii_newlines_re = re.compile('[{0}]'.format(self.newline_chars_non_ascii_str))
+            self.non_ascii_newline_chars_re = re.compile('[{0}]'.format(self.newline_chars_non_ascii_str))
+
+    @property
+    def traceback(self):
+        '''
+        Generate a traceback object from current state.
+        '''
+        state = self.state
+        if state is None:
+            return None
+        else:
+            return erring.Traceback(state.source, state.start_lineno, state.start_column, state.end_lineno, state.end_column)
 
 
     def _escape_unicode_char_xubrace(self, c):
@@ -478,7 +499,7 @@ class UnicodeFilter(object):
             e = '\\x{0:02x}'.format(n)
         else:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
+                raise erring.UnicodeSurrogateError(c, '\\u{0:04x}'.format(n))
             e = '\\u{{{0:0x}}}'.format(n)
         return e
 
@@ -493,7 +514,7 @@ class UnicodeFilter(object):
             e = '\\x{0:02x}'.format(n)
         elif n < 65536:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
+                raise erring.UnicodeSurrogateError(c, '\\u{0:04x}'.format(n))
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -506,7 +527,7 @@ class UnicodeFilter(object):
         '''
         n = ord(c)
         if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-            raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
+            raise erring.UnicodeSurrogateError(c, '\\u{0:04x}'.format(n))
         return '\\u{{{0:0x}}}'.format(n)
 
 
@@ -518,7 +539,7 @@ class UnicodeFilter(object):
         n = ord(c)
         if n < 65536:
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError('\\u{0:04x}'.format(n), self.traceback)
+                raise erring.UnicodeSurrogateError(c, '\\u{0:04x}'.format(n))
             e = '\\u{0:04x}'.format(n)
         else:
             e = '\\U{0:08x}'.format(n)
@@ -541,7 +562,7 @@ class UnicodeFilter(object):
         try:
             n = int(s[2:].strip('{}'), 16)
             if 0xD800 <= n <= 0xDFFF and not self.unpaired_surrogates:
-                raise erring.UnicodeSurrogateError(s, self.traceback)
+                raise erring.EscapedUnicodeSurrogateError(s, s)
             v = chr(n)
         except ValueError:
             # Check for the pattern `\\<spaces><newline>`.
@@ -549,11 +570,15 @@ class UnicodeFilter(object):
             if s[-1] in self.newline_chars:
                 v = ''
             else:
-                raise erring.UnknownEscapeError(s, self.traceback)
+                if 0x21 <= ord(s[-1]) <= 0x7E:
+                    s_esc = s
+                else:
+                    s_esc = '\<U+{0:0x}>'.format(ord(s[-1]))
+                raise erring.UnknownEscapeError(s, s_esc)
         return v
 
 
-    def _unescape_byte(self, s):
+    def _unescape_byte(self, b):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
         to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return 
@@ -566,13 +591,16 @@ class UnicodeFilter(object):
         remaining short escapes `\\<byte>` at this point are unrecognized.
         '''
         try:
-            v = chr(int(s[2:], 16)).encode('latin1')
+            v = chr(int(b[2:], 16)).encode('latin1')
         except ValueError:
             # Make sure we have the full pattern `\\<spaces><newline>`
-            if s[-1] in (b'\r', b'\n'):
+            if b[-1] in (b'\r', b'\n'):
                 v = b''
             else:
-                raise erring.UnknownEscapeError(s.decode('latin1'), self.traceback)
+                b_esc = b.decode('latin1')
+                if not (0x21 <= ord(b_esc[-1]) <= 0x7E):
+                    b_esc = '\<0x{0:02x}>'.format(ord(b_esc[-1]))
+                raise erring.UnknownEscapeError(b, b_esc)
         return v
 
 
@@ -583,13 +611,37 @@ class UnicodeFilter(object):
         '''
         d = self._escape_dict
         if inline:
-            r = self.nonliterals_or_backslash_newlines_tab_re
+            r = self.nonliterals_or_backslash_newline_chars_tab_re
         else:
             r = self.nonliterals_or_backslash_re
-        return r.sub(lambda m: d[m.group(0)], s)
+        try:
+            v = r.sub(lambda m: d[m.group(0)], s)
+        except erring.UnicodeSurrogateError as e:
+            c_raw = e.codepoint_raw
+            c_esc = e.codepoint_esc
+            if NARROW_BUILD:
+                m = self.unpaired_surrogate_re.search(s)
+                n = m.start()
+            else:
+                n = s.find(c_raw)
+            lineno = 1
+            n_line_start = 0
+            for m in self.rn_newlines_re.finditer(s, endpos=n):
+                lineno += 1
+                n_line_start = m.end()
+            col = n - n_line_start + 1
+            state = self.state
+            if state is None:
+                tb = erring.Traceback('<string>', lineno, col)
+            elif lineno == 1:
+                tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
+            else:
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+            raise erring.UnicodeSurrogateError(c_raw, c_esc, tb)
+        return v
 
 
-    def escape_bytes(self, s, inline=False, maximal=False):
+    def escape_bytes(self, b, inline=False, maximal=False):
         '''
         Within a binary string, replace all bytes whose corresponding Latin-1
         code points are not allowed to appear literally with their escaped
@@ -600,10 +652,12 @@ class UnicodeFilter(object):
         if maximal:
             r = self.nonliterals_or_non_printable_non_whitespace_backslash_delim_bytes_re
         elif inline:
-            r = self.nonliterals_or_backslash_newlines_tab_bytes_re
+            r = self.nonliterals_or_backslash_newline_chars_tab_bytes_re
         else:
             r = self.nonliterals_or_backslash_bytes_re
-        return r.sub(lambda m: d[m.group(0)], s)
+        # Unlike `escape()`, there aren't any errors to be caught here.  The
+        # `_escape_bytes_dict` covers all possible bytes.
+        return r.sub(lambda m: d[m.group(0)], b)
 
 
     def unescape(self, s):
@@ -612,16 +666,72 @@ class UnicodeFilter(object):
         corresponding code points.
         '''
         d = self._unescape_dict
-        return self.unescape_re.sub(lambda m: d[m.group(0)], s)
+        try:
+            v = self.unescape_re.sub(lambda m: d[m.group(0)], s)
+        except (erring.EscapedUnicodeSurrogateError, erring.UnknownEscapeError) as e:
+            e_raw = e.escape_raw
+            e_esc = e.escape_esc
+            for m in self.unescape_re.finditer(s):
+                if m.group(0) == e_raw:
+                    n = m.start()
+                    break
+            lineno = 1
+            n_line_start = 0
+            # Use Unicode newlines for line count, since whatever literal 
+            # newlines are allowed can be replaced with arbitrary Unicode 
+            # newlines before unescaping occurs. 
+            for m in self.unicode_newlines_re.finditer(s, endpos=n):
+                lineno += 1
+                n_line_start = m.end()
+            col = n - n_line_start + 1
+            state = self.state
+            if state is None:
+                tb = erring.Traceback('<string>', lineno, col)
+            elif lineno == 1:
+                tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
+            else:
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+            if isinstance(e, erring.EscapedUnicodeSurrogateError):
+                raise erring.EscapedUnicodeSurrogateError(e_raw, e_esc, tb)
+            else:
+                raise erring.UnknownEscapeError(e_raw, e_esc, tb)
+        return v
 
 
-    def unescape_bytes(self, s):
+    def unescape_bytes(self, b):
         '''
         Within a binary string, replace all backslash escapes with the
         corresponding bytes.
         '''
         d = self._unescape_bytes_dict
-        return self.unescape_bytes_re.sub(lambda m: d[m.group(0)], s)
+        try:
+            v = self.unescape_bytes_re.sub(lambda m: d[m.group(0)], b)
+        except erring.UnknownEscapeError as e:
+            e_raw = e.escape_raw
+            e_esc = e.escape_esc
+            for m in self.unescape_bytes_re.finditer(b):
+                if m.group(0) == e_raw:
+                    n = m.start()
+                    break
+            lineno = 1
+            n_line_start = 0
+            # Any literal byte newlines (Latin 1 range) correspond to literal
+            # string newlines that appeared in the string representation
+            # of the byte literal, so they should be counted in determining
+            # line numbers.  
+            for m in self.latin1_newlines_bytes_re.finditer(b, endpos=n):
+                lineno += 1
+                n_line_start = m.end()
+            col = n - n_line_start + 1
+            state = self.state
+            if state is None:
+                tb = erring.Traceback('<string>', lineno, col)
+            elif lineno == 1:
+                tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
+            else:
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+            raise erring.UnknownEscapeError(e_raw, e_esc, tb)
+        return v
 
 
     def has_nonliterals(self, s):
@@ -695,6 +805,6 @@ class UnicodeFilter(object):
         Replace all non-ASCII newlines with `\n`.
         '''
         if self.newline_chars_non_ascii:
-            return self.non_ascii_newlines_re.sub('\n', s)
+            return self.non_ascii_newline_chars_re.sub('\n', s)
         else:
             return s
