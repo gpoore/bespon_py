@@ -36,10 +36,10 @@ class Traceback(object):
     '''
     def __init__(self, source, start_lineno, start_column, end_lineno=None, end_column=None):
         self.source = source
-        self.start_lineno = start_lineno
-        self.start_column = start_column
-        self.end_lineno = end_lineno or start_lineno
-        self.end_column = end_column or start_column
+        self.start_lineno = int(start_lineno)
+        self.start_column = int(start_column)
+        self.end_lineno = int(end_lineno) if end_lineno is not None else start_lineno
+        self.end_column = int(end_column) if end_column is not None else start_column
 
 
 

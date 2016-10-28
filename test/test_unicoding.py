@@ -14,6 +14,7 @@ from __future__ import (division, print_function, absolute_import,
 
 import sys
 import os
+import collections
 
 if sys.version_info.major == 2:
     str = unicode
@@ -52,6 +53,16 @@ unicode_zs = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(
 # current Unicode, but was in Unicode 4.0-6.3, which applies to Python 2.7's
 # `re` implementation.
 unicode_whitespace = set([chr(n) for n in range(MAX_CODE_POINT) if unicode_whitespace_re.match(chr(n)) and n not in range(0x1C, 0x1F+1) and n != 0x180e])
+
+
+class State(object):
+    def __init__(self, source, start_lineno, start_column, end_lineno=None, end_column=None, indent=None):
+        self.source = source
+        self.start_lineno = int(start_lineno)
+        self.start_column = int(start_column)
+        self.end_lineno = int(end_lineno) if end_lineno is not None else start_lineno
+        self.end_column = int(end_column) if end_column is not None else start_column
+        self.indent = indent or ''
 
 
 
@@ -94,14 +105,6 @@ def test_NonliteralTrace():
     t = mdl.NonliteralTrace('chars', 1, 2)
     assert(len(t) == 3)
     assert(t.chars == 'chars' and t.lineno == 1 and t.unicode_lineno == 2)
-
-
-
-
-def test_Traceback():
-    t = mdl.Traceback('source', '1', '2')
-    assert(len(t) == 3)
-    assert(t.source == 'source' and t.start_lineno == '1' and t.end_lineno == '2')
 
 
 
@@ -270,10 +273,110 @@ def test_UnicodeFilter_errors():
     for n in range(0xD800, 0xDFFF+1):
         with pytest.raises(err.UnicodeSurrogateError):
             uf._escape_unicode_char(chr(n))
-        with pytest.raises(err.UnicodeSurrogateError):
+        with pytest.raises(err.EscapedUnicodeSurrogateError):
             uf.unescape('\\u{0:04x}'.format(n))
     for func in (uf._escape_unicode_char_ubrace, uf._escape_unicode_char_xubrace, uf._escape_unicode_char_xuU, uf._escape_unicode_char_uU):
         with pytest.raises(err.UnicodeSurrogateError):
             func('\uD800')
         with pytest.raises(err.UnicodeSurrogateError):
             func('\uDFFF')
+
+
+def test_UnicodeFilter_tracebacks():
+    uf = mdl.UnicodeFilter()
+    
+    # In escape, only `\r`, `\n`, and `\r\n` are counted as newlines in
+    # traceback message.
+    e_surrogate_data = [('\uD800', 'line 1:1:'), 
+                        ('xx\uDFFF', 'line 1:3:'),
+                        ('\r\n\v\r\f\n\u0085\u2028\u2029x\uD800', 'line 4:5:'),
+                        ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\uD800', 'line 4:26:')]
+    for s, p in e_surrogate_data:
+        msg = None
+        try:
+            uf.escape(s)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    
+    uf.state = State('src', 5, 2, indent='\x20\x20\x20')
+    e_surrogate_data = [('\uD800', 'line 5:2:'), 
+                        ('xx\uDFFF', 'line 5:4:'),
+                        ('\r\n\v\r\f\n\u0085\u2028\u2029x\uD800', 'line 8:8:'),
+                        ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\uD800', 'line 8:29:')]
+    for s, p in e_surrogate_data:
+        msg = None
+        try:
+            uf.escape(s)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    uf.state = None
+
+    
+    # In unescape, all Unicode newlines are counted as newlines, since any
+    # of them may appear after a `newline` specification in explicit typing.
+    u_surrogate_data = [('\\uD800', 'line 1:1:'), 
+                        ('xx\\uDFFF', 'line 1:3:'),
+                        ('\r\n\v\r\f\n\u0085\u2028\u2029x\\uD800', 'line 9:2:'),
+                        ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\\uD800', 'line 9:2:')]
+    u_string_data = [('\\Q', 'line 1:1:'), 
+                     ('xx\\Q', 'line 1:3:'),
+                     ('\r\n\v\r\f\n\u0085\u2028\u2029x\\Q', 'line 9:2:'),
+                     ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\\Q', 'line 9:2:')]
+    for s, p in u_surrogate_data + u_string_data:
+        msg = None
+        try:
+            uf.unescape(s)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    
+    uf.state = State('src', 5, 2, indent='\x20\x20\x20')
+    u_surrogate_data = [('\\uD800', 'line 5:2:'), 
+                        ('xx\\uDFFF', 'line 5:4:'),
+                        ('\r\n\v\r\f\n\u0085\u2028\u2029x\\uD800', 'line 13:5:'),
+                        ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\\uD800', 'line 13:5:')]
+    u_string_data = [('\\Q', 'line 5:2:'), 
+                     ('xx\\Q', 'line 5:4:'),
+                     ('\r\n\v\r\f\n\u0085\u2028\u2029x\\Q', 'line 13:5:'),
+                     ('a\r\nab\vabc\rabcd\fabcde\nabcdef\u0085abcdefg\u2028abcdefgh\u2029x\\Q', 'line 13:5:')]
+    for s, p in u_surrogate_data + u_string_data:
+        msg = None
+        try:
+            uf.unescape(s)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    uf.state = None
+
+
+    # In bytes unescape, all newlines in Latin 1 range are counted, since any
+    # of them may appear after a `newline` specification in explicit typing.
+    u_bytes_data = [(b'\\Q', 'line 1:1:'), 
+                    (b'xx\\Q', 'line 1:3:'),
+                    (b'\r\n\v\r\f\n\x85\x28\x29x\\Q', 'line 7:4:'),
+                    (b'a\r\nab\vabc\rabcd\fabcde\nabcdef\x85abcdefg\x28abcdefgh\x29x\\Q', 'line 7:19:')]
+    for b, p in u_bytes_data:
+        msg = None
+        try:
+            uf.unescape_bytes(b)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    
+    uf.state = State('src', 5, 2, indent='\x20\x20\x20')
+    u_bytes_data = [(b'\\Q', 'line 5:2:'), 
+                    (b'xx\\Q', 'line 5:4:'),
+                    (b'\r\n\v\r\f\n\x85\x28\x29x\\Q', 'line 11:7:'),
+                    (b'a\r\nab\vabc\rabcd\fabcde\nabcdef\x85abcdefg\x28abcdefgh\x29x\\Q', 'line 11:22:')]
+    for b, p in u_bytes_data:
+        msg = None
+        try:
+            uf.unescape_bytes(b)
+        except err.BespONException as e:
+            msg = str(e)
+        assert(p in msg)
+    uf.state = None
+    
+    

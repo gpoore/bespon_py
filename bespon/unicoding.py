@@ -143,7 +143,7 @@ class UnicodeFilter(object):
                  escaped_string_delim_chars=None):
         # If a state object is provided, enhanced tracebacks are possible
         if state is not None:
-            if not all(hasattr(state, attr) for attr in ('source', 'start_lineno', 'start_column', 'end_lineno', 'end_column')):
+            if not all(hasattr(state, attr) for attr in ('source', 'start_lineno', 'start_column', 'end_lineno', 'end_column', 'indent')):
                 raise erring.ConfigError('Invalid "state" lacks appropriate attrs')
         self.state = state
 
@@ -233,7 +233,7 @@ class UnicodeFilter(object):
         self.newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(self.newlines, reverse=True)))
         self.rn_newlines_re = re.compile('\r\n|\r|\n')
         self.unicode_newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
-        self.latin1_newlines_bytes_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True) if len(x) == 2 or ord(x) < 256).encode('latin1'))
+        self.latin1_newlines_bytes_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True) if ord(x[0]) < 256 and ord(x[-1]) < 256).encode('latin1'))
         
         # Bytes are always dealt with via a nonliterals set
         if self.literals is not None:
@@ -636,7 +636,7 @@ class UnicodeFilter(object):
             elif lineno == 1:
                 tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
             else:
-                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col+len(state.indent))
             raise erring.UnicodeSurrogateError(c_raw, c_esc, tb)
         return v
 
@@ -690,7 +690,7 @@ class UnicodeFilter(object):
             elif lineno == 1:
                 tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
             else:
-                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col+len(state.indent))
             if isinstance(e, erring.EscapedUnicodeSurrogateError):
                 raise erring.EscapedUnicodeSurrogateError(e_raw, e_esc, tb)
             else:
@@ -729,7 +729,7 @@ class UnicodeFilter(object):
             elif lineno == 1:
                 tb = erring.Traceback(state.source, state.start_lineno, state.start_column+col-1)
             else:
-                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col)
+                tb = erring.Traceback(state.source, state.start_lineno+lineno-1, col+len(state.indent))
             raise erring.UnknownEscapeError(e_raw, e_esc, tb)
         return v
 
