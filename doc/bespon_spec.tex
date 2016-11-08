@@ -128,6 +128,8 @@ TOML has triple-quoted strings that preserve newlines.  This allows trailing emp
 \item[Labels, aliases, and copying]  For convenient configuration, it should be possible to label data structures and then create aliases to them or copy them later.  Both deep and shallow copies should be possible.  Copying provides most of the advantages of overwriting with less of the complexity and potential for errors or unintended consequences.
 
 \item[Decent performance even when completely implemented in an interpreted language]  Pure Python implementations of YAML have a reputation for being slow.  It should be possible to implement \bespon\ in Python and other interpreted languages while achieving decent performance.  This will simplify the process of creating implementations for multiple languages, and should promote broader adoption.
+
+\item[Sensible handling of right-to-left characters]  JSON, YAML, and TOML (as well as other formats like CSV) can descend into visual gibberish in the presence of right-to-left characters, at least in most text editors.  Furthermore, these formats allow literal bidirectional formatting characters, increasing the potential for security risks.  A human-editable format should allow right-to-left characters while ensuring meaningful visual layout in standard editors.
 \end{description}
 
 
@@ -146,26 +148,43 @@ The words \textit{may}, \textit{should}, and \textit{must} in the description be
 
 In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.
 
-When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check for a Unicode byte-order mark (BOM), and discard it if present.
+When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check the start of the string for a Unicode byte order mark (BOM), and discard it if present.
 
-Once data is in the form of a Unicode string or stream, by default it must be validated according to the following procedure before processing.  Implementations may choose to validate all at once before processing or a chunk at a time during processing.  An implementation may provide an option that allows a less strict validation (allows some or all disallowed code points to appear as literals), but this must not be the default.
+Once data is in the form of a Unicode string or stream, it must be validated according to the following procedure.  Implementations may choose to validate all at once before processing or a chunk at a time during processing.  An implementation may provide an option that allows a less strict validation (allows some or all disallowed code points to appear as literals), but this must not be the default.
 
-\paragraph{Newline normalization}  The sequence |\r\n| (U+000D U+000A) must be normalized to |\n| (U+000A).  
+\paragraph{Newline normalization}  The sequence |\r\n| (U+000D U+000A) must be normalized to |\n| (U+000A).
+
+Note that |\r| not followed by |\n| is not normalized.  An isolated |\r| should only have the meaning of a newline in some legacy applications.  In contemporary software, an isolated |\r| might be used in terminal applications to return to the beginning of the current line for overwriting.  Because of the potential ambiguity in the meaning of an isolated |\r|, it is not allowed to appear literally.
 
 \paragraph{Disallowed code points}  The string or stream must be checked for code points that are not allowed.  These code points may be represented in escaped form, but must not appear literally.  The presence of any of these code points must result in an error.
 \begin{itemize}
-\item All code points with Unicode category ``Other, Control'' (Cc)\footnote{``Other, Control'' includes the range U+0000 to U+001F (ord 0--31), the character U+007F (ord 127, ``DELETE''), and U+0080 to U+009F (ord 128--159).} are prohibited, with the exception of line feed U+000A (|\n|) and horizontal tab U+0009 (|\t|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters (such as the null byte) have security implications.
+\item All code points with Unicode category ``Other, Control'' (Cc)\footnote{``Other, Control'' includes the ranges U+0000 through U+001F, and U+007F through U+009F.} are prohibited, with the exception of line feed U+000A (|\n|) and horizontal tab U+0009 (|\t|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters, such as the null byte, have security implications.
 
-\item All code points treated as newlines in the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are prohibited, with the exception of line feed U+000A (|\n|).  This includes vertical tab U+000B (|\v|), form feed U+000C (|\f|), carriage returns U+000D (|\r|), and next line U+0085 (NEL), which are already covered under the ``Other, Control'' category.  It also includes line separator U+2028 and paragraph separator U+2029.  These characters are prohibited to ensure that newline treatment is uniform and to guarantee that the use of any newlines beyond line feed U+000A (|\n|) is explicit.
+\item All 7 code points treated as newlines in the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are prohibited, with the exception of line feed U+000A (|\n|).  This includes vertical tab U+000B (|\v|), form feed U+000C (|\f|), carriage returns U+000D (|\r|), and next line U+0085 (NEL), which are already covered under the ``Other, Control'' category.  It also includes line separator U+2028 and paragraph separator U+2029.  These characters are prohibited to ensure that newline treatment is uniform and to guarantee that the use of any newlines beyond line feed U+000A (|\n|) is explicit.
 
-\item Two code points in the Unicode Bidi\_Control formatting characters must not appear as literals:  left-to-right override U+202D and right-to-left override U+202E.  Bidi override characters can be a security concern in general, and are particularly problematic in a configuration format designed for manual editing.  \href{http://unicode.org/reports/tr36/}{Unicode Technical Report \#36}, ``Unicode Security Considerations,'' recommends that overrides never be allowed in IRIs.
+\item All 12 code points with Unicode property \href{http://unicode.org/reports/tr9/}{Bidi\_Control} are prohibited: U+061C, U+200E through U+200F, U+202A through U+202E, and U+2066 through U+2069.  Bidi override characters can be a security concern in general, and are particularly problematic in a configuration format designed for manual editing.  
 
-\item Unpaired UTF-16 surrogates (U+D800 -- U+DFFF) are prohibited.  In other words, all code points that are not Unicode scalar values are prohibited.
+\href{http://unicode.org/reports/tr36/}{Unicode Technical Report \#36}, ``Unicode Security Considerations,'' recommends that overrides never be allowed in IRIs.  However, even the implicit directional marks can have a potent effect when operating on punctuation characters.  For example,
+\begin{Verbatim}
+{"a"="b\u200f", $=!, "\u200fe"="f"}
+\end{Verbatim}
+renders as
+\begin{Verbatim}
+{"a"="b" ,!=$ ,"e"="f"}
+\end{Verbatim}
+in many text editors.
+
+It would be possible to restrict the use of bidi control characters to multiline string literals, which have delimiters on separate lines from the actual string content.  Even in that context, however, the characters could be used to visually spoof the ending delimiter of the string, and the existence of one or more additional elements that are not actually present.  Thus, these code points are completely prohibited as literals.
+
+\item Unicode surrogates (U+D800 -- U+DFFF) are prohibited, except when they are properly paired in conjunction with a 16-bit string implementation.  In other words, all code points that are not Unicode scalar values are prohibited.  Note that escaped surrogates must be prohibited by default as well; only escaped scalar values are allowed by default.
+
+\item The \href{http://www.unicode.org/faq/utf_bom.html#bom1}{byte order mark} (BOM) U+FEFF and the non-character ``reversed BOM'' U+FFFE are prohibited, with the exception that the first code point in a string may be the BOM, in which case it is discarded, as mentioned previously.
+
+\item The 66 \href{http://www.unicode.org/faq/private_use.html#noncharacters}{noncharacters} are prohibited:  U+FDD0..U+FDEF; U+FFFE (already covered with BOM) and U+FFFF; and the last two code points of each of the 16 supplementary planes (U+1FFFE, U+1FFFF, U+2FFFE, U+2FFFF, ... U+10FFFE, U+10FFFF).  If these were allowed as literals, they could result in ambiguous encoding (U+FFFE) or interfere with sentinels in a manner similar to U+0000 (U+FFFF, etc.).
 \end{itemize}
 The list of disallowed code points is current as of Unicode 9.0.0 (2016-06-01).  Barring unforseen circumstances, the list will be expanded only under two conditions:  (1) additional newline code points are defined, or (2) additional code points are added (or existing code points are identified) that pose a security concern similar to that of the bidi overrides.
 
 In dumping data, an implementation must by default ensure that the dumped data is valid for loading with a default configuration.  If an implementation dumps data in binary form, it must encode the data with UTF-8 unless an encoding is specified.  If an implementation encodes data to binary, it may convert |\n| to |\r\n| in a system-dependent manner during the encoding.
-
 
 
 
@@ -296,7 +315,7 @@ The exact behavior of a quoted escaped string depends on the quotation mark deli
 \item Three or more adjacent quotation marks |"""{1,n}| represent the beginning of a string in which any sequence of quotation marks |"| of a different length than the delimiters may appear literally, without escaping.\footnote{Requiring that the delimiters be longer than any internal sequence of quotation marks would have had the advantage that quoting a \bespon\ string including its delimiters would be as simple as adding longer delimiters.  However, this would also have the severe disadvantage of requiring extremely long delimiters for a string that contains a long sequence of quotation marks but no quotation marks otherwise.}  The string ends at the next sequence of quotation marks that is the same length as the opening sequence.  The treatment of newlines and leading whitespace depends on the ending delimiter.
     \begin{itemize}
     \item If the string ends with |"""{1,n}|, the string is treated just like the |"| case, with the exception that sequences of |"| of other lengths may appear literally.
-    \item If the string ends with |"""{1,n}/|, the opening and closing delimiters must be on lines separate from the actual string content, and those lines do not contribute to the string content.  All newlines are preserved, and a newline character or characters besides |\n| may be specified via explicit typing (\cref{sec:advanced-options}).  All lines must be indented to at least the level of the closing delimiter, except for lines consisting solely of whitespace; all indentation in common with the closing delimiter is stripped.  The opening delimiter must be at the same indentation level as the closing delimiter unless it is not at the beginning of the line, in which case indentation rules apply (\cref{sec:indentation}).
+    \item If the string ends with |"""{1,n}/|, the opening and closing delimiters must be on lines separate from the actual string content, and those lines do not contribute to the string content.  All newlines are preserved, and a newline character or characters besides |\n| may be specified via explicit typing (\cref{sec:advanced-options-and-types:options}).  All lines must be indented to at least the level of the closing delimiter, except for lines consisting solely of whitespace; all indentation in common with the closing delimiter is stripped.  The opening delimiter must be at the same indentation level as the closing delimiter unless it is not at the beginning of the line, in which case indentation rules apply (\cref{sec:indentation}).
     \item If the string ends with |"""{1,n}//|, the string is treated exactly like the |"""{1,n}/| case, except that the final newline is stripped.  More than two slashes |/| immediately after the quotation marks that end a multiline string must result in an error.
     \end{itemize}
 \end{itemize}
@@ -389,13 +408,11 @@ Trailing commas are allowed.
 \subsection{Dictionary (\texttt{dict})}
 \label{sec:type:dict}
 
-A dictionary is an associative array that maps objects with scalar types to objects with arbitrary types.  Keys must be unique and duplicate keys are not allowed by default.
+A dictionary is an associative array that maps objects with scalar types to objects with arbitrary types.  Keys must be unique and duplicate keys are not allowed.
 
 Dictionary keys must be scalar types by default, since these will have the best cross-language support.  When possible, it is recommended that only Unicode strings be used as keys.  Some languages perform type coercion on some non-string keys.  For example, Python treats |True|, |1|, and |1.0| as identical keys; |False|, |0|, and |0.0| are also treated as identical.  In addition, using floats as keys can be problematic due to rounding errors.
 
 Additional restrictions are placed on unquoted strings that are used as dict keys, regardless of any built-in or custom typing applied to the strings.  These unquoted strings must not contain the period or full stop U+002E (|.|), since the period is reserved for keypaths (\cref{sec:keypath}).  Strings that contain a literal period must be quoted.  The only exception is that an implementation must allow periods in extended or user-defined numerical types, which must be explicitly typed (unless the implementation allows a regex to be specified to enable implicit typing, in which case it is allowing custom behavior beyond the \bespon\ spec).
-
-An implementation may provide an option to enable collection types as keys, but this must not be the default.  If an implementation supports collection keys, its documentation must explain how mutable collection types are handled (for example, whether they are hashed by identity or by content).
 
 In indentation-based form, a dict key must be at the beginning of a line.  The only exception is that a key may follow a |*| if the dict is in a list (since the |*| does not affect start-of-line state).  The key is separated from the value by an equals sign U+003D (|=|), which must be on the same line as the end of the key.  For example,
 \begin{Verbatim}
@@ -409,7 +426,7 @@ In inline form, the beginning and end of a dict are denoted by curly braces U+00
 \end{Verbatim}
 Trailing commas are allowed.
 
-
+Key can be explicitly typed, but cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}).  Quoted keys can used the |newline| advanced type option (\cref{sec:advanced-options-and-types:options}).  Keys cannot use the |label| advanced type option (\cref{sec:advanced-options-and-types:options}), to maintain symmetry with advanced types not being allowed.
 
 
 \section{Extended types}
@@ -500,6 +517,34 @@ If the opening delimiter of a multiline comment is at the beginning of a line, t
 
 
 
+\section{Support for right-to-left languages and private-use characters}
+\label{sec:right-to-left}
+
+The Unicode bidirectional algorithm (\href{http://unicode.org/reports/tr9/}{Unicode Standard Annex \#9}) specifies the handling of text that flows from right to left, such as Arabic and Hebrew.  Code points with bidirectional character types R (Right-to-Left) and AL (Right-to-Left Arabic) will affect the flow of surrounding characters whose bidi type is not in the Strong category, such as digits and punctuation marks.  This can produce visually confusing or even visually meaningless results when working with data.  For example, consider this list, which is valid in JSON, YAML, and TOML both with and without the Unicode escapes:
+\begin{Verbatim}
+["Text", "\u05d0", "\u05d1", "123", "456"]
+\end{Verbatim}
+The literal list, with the Unicode escapes replaced with Hebrew characters, is
+\begin{Verbatim}[commandchars=\\\{\}, mathescape]
+["Text", "$\aleph$", "$\beth$", "123", "456"]
+\end{Verbatim}
+Due to the bidirectional display algorithm, however, in many text editors this renders as
+\begin{Verbatim}[commandchars=\\\{\}, mathescape]
+["Text", "456" ,"123" ,"$\beth$" ,"$\aleph$"]
+\end{Verbatim}
+The only indication that something is amiss is that the spaces appear before rather than after the commas.  But this may eliminated simply by swapping these characters in the string definition.
+
+Because of the usability and security implications of right-to-left text, \bespon\ adds special rules for working with it.  Any string (quoted or unquoted) or comment that contains right-to-left code points cannot be followed on the same line by anything except for closing delimiters (string, comment, or collection) or an equals sign (for strings that are keys).  In other words, no text-based element can ever follow an element that contains right-to-left code points.  This prevents delimiters and other special characters from being surrounded by right-to-left characters, with the overall span being visually reversed as a result.
+
+This approach to right-to-left text makes working with it more difficult than left-to-right text.  That is not ideal, but it seems to be the only solution that is guaranteed to prevent ambiguity under typical circumstances.
+
+The rules for code points with bidi types R and AL are also applied to all code points in the \href{http://www.unicode.org/faq/private_use.html}{Private Use Areas} (U+E000 through U+F8FF, U+F0000 through U+FFFFD, and U+100000 through  U+10FFFD).  These code points should be very rare, and their use for right-to-left languages even rarer.  However, this approach ensures that even in that eventuality, there is no danger of ambiguity.  (For an example of PUA usage with bidi type R, see \href{http://scripts.sil.org/cms/scripts/page.php?item_id=SILPUAassignments}{SIL Corporate PUA Assignments}.)
+
+
+
+
+
+
 
 \section{Indentation}
 \label{sec:indentation}
@@ -581,7 +626,7 @@ In inline form, the rules for relative indentation within a string must still be
 \section{Keypaths}
 \label{sec:keypath}
 
-\bespon\ provides a compact keypath notation for working with deeply nested objects.  In dict keys, the period U+002E (|.|) is a special character that separates path elements; it is not allowed to appear literally except in numbers or quoted strings.  Thus,
+\bespon\ provides a compact keypath notation for working with deeply nested objects.  In dict keys, the period U+002E (|.|) is a special character that separates path elements; it is not allowed to appear literally except in numbers or quoted string-like objects.  Thus,
 \begin{Verbatim}
 key.subkey = value
 \end{Verbatim}
@@ -590,6 +635,8 @@ is equivalent to
 key = {subkey = value}
 \end{Verbatim}
 The elements in a keypath must be valid unquoted strings and must not contain Unicode whitespace, unless escaping is performed as described below.  Indentation characters are allowed before and after periods, but this is discouraged.  An entire keypath must fit on a single line; line breaks are not allowed within keypaths.
+
+Elements of a keypath may be explicitly typed, using the escaping syntax described below.  However, elements of a keypath cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}), and elements of a keypath cannot have advanced type options (|newline|, due to being on a single line, and |label|, due to being keys/indices; \cref{sec:advanced-options-and-types:options}).  This keeps keypaths explicit by preventing complicated keypaths consisting of nested keypaths or aliases.  It is always immediately clear what a keypath refers to; there is never any uncertainty regarding whether an alias or copy will, when resolved, result in a key or index collision.
 
 This notation is convenient for working with alphanumeric keys that begin with an alphabetic character or otherwise do not fit the pattern for a number, but what of lists, numerical keys, and keys that are reserved words or include special characters?
 
@@ -681,11 +728,12 @@ A section ends at the next section.  Returning to root level is possible by usin
 
 
 \section{Advanced options and types}
-\label{sec:advanced-options}
+\label{sec:advanced-options-and-types}
 
 Implementations are encouraged to include advanced types and options, but this is not required due to the added complexity.  When an unsupported advanced option or type is encountered, an error must be raised.
 
 \subsection{Advanced options}
+\label{sec:advanced-options-and-types:options}
 
 The explicit type declaration syntax may also be used for specifying advanced options:
 \begin{Verbatim}[commandchars=\\\{\}]
@@ -699,6 +747,8 @@ All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-
 \paragraph{label}
 This gives an object a label, which can later be used to reference the object in a label alias.  Labels must be Unicode strings.  Unquoted ASCII strings meeting an identifier style regex |[a-zA-Z][a-zA-Z0-9_-]*| should be preferred.
 
+Labels can be applied to scalar types and collection types, with the exception of dict keys.
+
 
 \subsubsection{Options for string-like objects}
 
@@ -706,7 +756,7 @@ This gives an object a label, which can later be used to reference the object in
 This specifies a character or sequence of characters that will be used to replace all literal newlines (|\n|) in a string.  Only Unicode newline code points and sequences from the Unicode Newline Guidelines (\href{http://unicode.org/standard/reports/tr13/tr13-5.html}{Unicode Technical Report \#13}) are allowed for Unicode strings, and only |\r|, |\n|, and |\r\n| are allowed for byte strings.  The newline replacement must be given as a quoted, escaped string containing only the escaped representation of the code point(s).  This option only applies to block strings (Unicode strings, byte strings, or custom types applied to Unicode strings).  This option is applied \emph{before} any backslash-escaping is applied, because it is meant to replace literal newlines that appear in text, rather than perform a general substitution of newlines in text.
 
 
-\subsubsection{Mutually exclusive options}
+\subsubsection{Mutually exclusive options for collection types}
 
 \paragraph{init}
 
@@ -732,7 +782,7 @@ This is the deep copy version of |default|.  The resulting object contains deep 
 
 \paragraph{recmerge}
 
-This performs a recursive merge.  It comes in two variants. |recmerge.path| takes a keypath or an inline list of keypaths.  |recmerge.label| takes a label or an inline list of labels.  Starting with the original collection object, a recursive merge is performed at all levels (only collection objects are merged).  A dict-like object can only be merged into another dict-like object, and only if the first dict-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  Merging is performed by inserting missing key-value pairs; existing keys are never overwritten, but if their values are collection types, then merging is performed recursively.  A list-like object can only be be merged into another list-like object, and only if the first list-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  List merging is performed as list extension; lists are not combined by index.
+This performs a recursive merge for collection types.  It comes in two variants. |recmerge.path| takes a keypath or an inline list of keypaths.  |recmerge.label| takes a label or an inline list of labels.  Starting with the original collection object, a recursive merge is performed at all levels (only collection objects are merged).  A dict-like object can only be merged into another dict-like object, and only if the first dict-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  Merging is performed by inserting missing key-value pairs; existing keys are never overwritten, but if their values are collection types, then merging is performed recursively.  A list-like object can only be be merged into another list-like object, and only if the first list-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  List merging is performed as list extension; lists are not combined by index.
 
 All collections that are merged appear in the final data structure alone.  All collections that are not merged are aliased.
 
@@ -744,9 +794,13 @@ This is the deep copy version of |recmerge|.  The resulting object contains deep
 
 
 \subsection{Advanced types}
-Advanced types are applied to keypaths and create aliases or copies of the object referred to by a keypath.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more carats |^|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
+\label{sec:advanced-options-and-types:types}
 
-Shallow copies of collection types must produce new collection objects containing aliases of the members of the original collection.  Shallow copies of scalar types may produce new scalar objects or alias the original object, in an implementation- and language-specific manner.  Whether scalar types are immutable as far as copying is concerned is left up to the implementation and the programming language.  The behavior of copies must be documented by an implementation.
+Advanced types are applied to labels and keypaths, and create aliases or copies of the objects referred to by them.  Keypaths are always taken as relative to the current location, unless the first element is a slash |/|, which references the root of the dataset, or one or more carats |^|, which indicate a number of levels to move upward in the dataset before traversing the remainder of the keypath from that level.
+
+Advanced types can be applied to any collection types.  Advanced types can only be applied to scalar types that are not keys in dict-like collections.  Advanced types can be applied to scalar types that are in list-like collections or that are values in dict-like collections.
+
+Shallow copies of collection types must produce new collection objects containing aliases of the members of the original collection.  Shallow copies of scalar types may produce new scalar objects or alias the original objects, in an implementation- and language-specific manner.  Whether scalar types are immutable as far as copying is concerned is left up to the implementation and the programming language.  The behavior of copies must be documented by an implementation.
 
 \paragraph{alias.path}
 This creates an alias to the object referred to by a keypath.
@@ -805,15 +859,30 @@ An implementation is not required to implement parser directives, but any implem
 This boolean option determines whether any unquoted strings (typed or untyped) are allowed.  True by default.  When this option is false, unquoted reserved words and unquoted implicitly typed objects (|none|, booleans, numbers, etc.) are still allowed.  Type names and type options are still used unquoted.  All of these are matched by regex or other means, and there is no danger of ambiguity.  Only text that would have otherwise become Unicode string data before any explicit typing must be quoted.
 
 \paragraph{unquoted\_unicode}
-This boolean option determines whether code points beyond the ASCII range may appear unquoted.  False by default.  Note that enabling unquoted Unicode has security implications, since the full Unicode range contains many characters that closely resemble ASCII characters or are invisible or nearly invisible, potentially in a font- and editor-dependent manner.  Unquoted strings are restricted to the ASCII range by default because of the incredible complexity of attempting to allow unquoted Unicode while completely avoiding \href{http://unicode.org/reports/tr36/}{visual spoofing and associated security issues}.
+This boolean option determines whether a limited set of code points beyond the ASCII range may appear unquoted.  False by default.  Note that enabling unquoted Unicode has security implications, since the full Unicode range contains many characters that closely resemble ASCII characters or are invisible or nearly invisible, potentially in a font- and editor-dependent manner.  Unquoted strings are restricted to the ASCII range by default because this largely prevents \href{http://unicode.org/reports/tr36/}{visual spoofing and associated security issues}.
 
-\paragraph{only\_ascii}  Only allows unescaped characters in the ASCII range.  False by default.  May be useful when Unicode security is a significant concern.
+When this option is enabled, only a limited set of additional code points is allowed unquoted.  The set is based on \href{http://unicode.org/reports/tr31/}{Unicode Standard Annex \#31, Unicode Identifier and Pattern Syntax}.  A custom profile is defined for unquoted strings.  Note that this pattern for unquoted strings is only applied after checking the patterns for numbers, keywords, ASCII strings, and invalid numbers and keywords.  This pattern would match some invalid unquoted string sequences, except that those are already filtered out before it is applied.
+\begin{enumerate}
+\item Start := XID\_Start, plus all code points in U+0021 through U+007E except for the special characters |%=,*'"{}[]()| and the characters checked for at the beginning of an invalid digit |+-.0123456789|, minus the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0).
+\item Continue := XID\_Continue, plus all code points in U+0021 through U+007E except for the special characters |%=,*'"{}[]()|, minus the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), plus space.
+\end{enumerate}
+Note that Medial for the profile is purposefully left empty.  None of the non-ASCII optional characters suggested by UAX \#31 are added to any group.  Some of these, such as U+30A0, would increase the potential for visual spoofing.  U+200C and U+200D would be desirable, but proper implementation would be very complex and computationally expensive, and UAX \#31 does not convey the impression that the current recommended algorithm is fully satisfactory.
+
+
+
+\paragraph{only\_ascii}  Only allows literal (unescaped) characters in the ASCII range.  False by default.  May be useful when Unicode security is a significant concern.
 
 \paragraph{ints}  Allow integers.  True by default.  If false, all strings that match the integer regex are treated as floats.
 
 An implementation must use the default values for all directive settings unless other values are specified by the user.  A parser directive can never turn |unquoted_strings| or |unquoted_unicode| or |ints| on when the implementation has it off, or turn |only_ascii| off when the implementation has it on.  A parser directive must only restrict parsing relative to what the implementation allows with current settings; a parser directive must never cause less strict parsing than what the implementation allows with its initial settings.  Doing so could have security implications.  Any parser directive that conflicts with current implementation settings must result in an error, which should explain how the error may be resolved and mention potential security implications.  Any acceptable parsing directive affects the parsing of the data set in which it occurs, but the parser must reset settings to their original values before parsing any additional datasets.
 
 A \bespon\ dataset that uses |unquoted_strings|, |unquoted_unicode|, |only_ascii|, or |ints| is not required to have a parser directive.  All parties working with a given dataset may agree to non-default parser settings and thus omit the explicit parser directive.  However, this is discouraged, since such a file will result in an error when loaded by a default implementation if a more permissive setting is required (|unquoted_unicode|), and could result in unintended behavior otherwise (|unquoted_strings|, |only_ascii|, |ints|).
+
+
+\section{Unicode considerations}
+
+All references to Unicode are to version 9.0.0.  Implementations must be compliant with Unicode 9.0.0.  Compliant implementations must not use a later version of Unicode by default unless a later version of this specification specifically address compatibility with that version of Unicode.  Implementations may provide an option to use later versions of Unicode.
+
 
 
 \section{Implementation considerations}
