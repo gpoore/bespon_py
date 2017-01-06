@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
 
 \usepackage[T1]{fontenc}
+
 \usepackage{fourier}
 
 \usepackage[margin=1in]{geometry}
@@ -63,6 +64,82 @@
 \newcommand{\note}[1]{\textcolor{red}{#1}}
 
 
+\newbool{grammar@instring}
+\makeatletter
+\begingroup
+\catcode`\'=\active
+\catcode`\"=\active
+\catcode`\+=\active
+\catcode`\*=\active
+\catcode`\|=\active
+\catcode`\.=\active
+\catcode`\(=\active
+\catcode`\)=\active
+\catcode`\[=\active
+\catcode`\]=\active
+\catcode`\==\active
+\gdef\grammar@activate{%
+  \expandafter\def\expandafter\@noligs\expandafter{%
+    \@noligs
+    \def'####1'{\textcolor{DarkBlue}{%
+      \textquotesingle\booltrue{grammar@instring}####1\boolfalse{grammar@instring}\textquotesingle}}%
+    \def"####1"{\textcolor{DarkBlue}{%
+      \detokenize{"}\booltrue{grammar@instring}####1\boolfalse{grammar@instring}\detokenize{"}}}%
+    \def={\ifbool{grammar@instring}%
+       {\detokenize{=}}%
+       {\textcolor{DarkRed}{\detokenize{=}}}}%
+    \def+{\ifbool{grammar@instring}%
+       {\detokenize{+}}%
+       {\textcolor{DarkRed}{\detokenize{+}}}}%
+    \def*{\ifbool{grammar@instring}%
+       {\detokenize{*}}%
+       {\textcolor{DarkRed}{\detokenize{*}}}}%
+    \def|{\ifbool{grammar@instring}%
+       {\detokenize{|}}%
+       {\textcolor{DarkRed}{\detokenize{|}}}}%
+    \def.{\ifbool{grammar@instring}%
+       {\detokenize{.}}%
+       {\textcolor{DarkRed}{\detokenize{.}}}}%
+    \def({\ifbool{grammar@instring}%
+       {\detokenize{(}}%
+       {\textcolor{DarkRed}{\detokenize{(}}}}%
+    \def){\ifbool{grammar@instring}%
+       {\detokenize{)}}%
+       {\textcolor{DarkRed}{\detokenize{)}}}}%
+    \def[{\ifbool{grammar@instring}%
+       {\detokenize{[}}%
+       {\textcolor{DarkRed}{\detokenize{[}}}}%
+    \def]{\ifbool{grammar@instring}%
+       {\detokenize{]}}%
+       {\textcolor{DarkRed}{\detokenize{]}}}}%
+    \begingroup\lccode`\~=`\^^M\lowercase{\endgroup\def\grammar@comment####1~{\textcolor{DarkGray}{####1}~}}%
+    \begingroup\lccode`\~=`\#\lowercase{\endgroup\def~}{%
+       \ifbool{grammar@instring}%
+        {\#}%
+        {\textcolor{DarkGray}{\#}\grammar@comment}}%
+  }%
+}
+\endgroup
+
+\newenvironment{grammar}%
+ {\VerbatimEnvironment
+  \grammar@activate
+  \begin{Verbatim}[formatcom=\color{DarkGreen},
+  codes={ \catcode`\'=\active
+          \catcode`\"=\active
+          \catcode`\+=\active
+          \catcode`\*=\active
+          \catcode`\|=\active
+          \catcode`\.=\active
+          \catcode`\(=\active
+          \catcode`\)=\active
+          \catcode`\[=\active
+          \catcode`\]=\active
+          \catcode`\==\active}]}%
+ {\end{Verbatim}}
+\makeatother
+
+
 \title{\textbf{\bespon} \\ \besponfull}
 \author{Geoffrey M.\ Poore}
 \date{\today}
@@ -119,9 +196,9 @@ TOML has triple-quoted strings that preserve newlines.  This allows trailing emp
 
 \item[Strict reserved words]  If unquoted strings are allowed, the potential for ambiguity between reserved words and strings increases.  Reserved words should only be allowed to appear in a form with accepted capitalization; appearance with any other capitalization should trigger an error.  In contrast, YAML's |True| is boolean true, but |TRue| is the string |TRue|.  Also, the list of reserved words should be minimal.  No YAML |yes|/|no| |on|/|off| |true|/|false|.
 
-\item[Unique keys] JSON permits duplicate keys.  The YAML spec says that keys must be unique.  Parsers for both JSON and YAML commonly allow later keys to overwrite earlier keys.  TOML prohibits duplicate keys.  Key overwriting should be prohibited, but there should be a way to copy data structures to provide an alternative to overwriting.  Undefined or ambiguous behavior, whether due to specification or implementation, is unacceptable.
+\item[Unique keys] JSON permits duplicate keys.  The YAML spec says that keys must be unique.  Parsers for both JSON and YAML commonly allow later keys to overwrite earlier keys.  TOML prohibits duplicate keys.  Key overwriting should be prohibited, but there should be a way to copy or reference data structures to provide an alternative to overwriting.  Undefined or ambiguous behavior, whether due to specification or implementation, is unacceptable.
 
-\item[A small list of special characters] In YAML, almost all non-alphanumeric ASCII characters have a special meaning, which is context-dependent in many cases.  For example, |#| starts a comment, but only if preceded by a whitespace character.  Meanwhile, |null|, |Null|, |NULL|, and |~| are all equivalent.  The number of special characters should be kept to an easy-to-remember minimum, and as far as possible, they should not be context-dependent.  
+\item[A small list of special characters] In YAML, almost all non-alphanumeric ASCII characters have a special meaning, which is context-dependent in many cases.  For example, |#| starts a comment, but only if preceded by a whitespace character.  Meanwhile, |null|, |Null|, |NULL|, and the tilde |~| are all equivalent.  The number of special characters should be kept to an easy-to-remember minimum, and as far as possible, they should not be context-dependent.  
 
 \item[Simple representation of deeply nested data structures]  TOML has INI-style sections that allow keypaths of the form |key.subkey.subsubkey|.  This provides a convenient, compact representation of nested dictionaries.  A similar syntax is needed that also allows some elements in the path to be lists rather than dictionaries, so that arbitrary nested data structures may be represented in a compact manner.
 
@@ -137,34 +214,42 @@ TOML has triple-quoted strings that preserve newlines.  This allows trailing emp
 
 \section{Terminology}
 
-The words \textit{may}, \textit{should}, and \textit{must} in the description below are interpreted according to \href{http://www.ietf.org/rfc/rfc2119.txt}{RFC 2119}.
+The words \textit{may}, \textit{should}, and \textit{must} in the remainder of this document are interpreted according to \href{http://www.ietf.org/rfc/rfc2119.txt}{RFC 2119}.
 
 
 
 
 \section{Encoding and code points}
 
-\bespon\ is specified at the level of Unicode strings.
+\bespon\ is specified at the level of Unicode code points, which are combined to form Unicode strings or streams.
 
-In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.  For example, when Python reads text files, the sequences |\r| and |\r\n| are typically converted to |\n| (universal newlines mode).  However, \bespon\ only recognizes |\n| as a newline and only allows normalization of |\r\n| to |\n|; literal |\r| is prohibited.
 
-When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check the start of the string for a single Unicode byte order mark (BOM) U+FEFF, and discard it if present.
+\subsection{Loading data}
 
-Once data is in the form of a Unicode string or stream, it must be validated according to the following procedure.  Implementations may choose to validate all at once before processing or a chunk at a time during processing.  Implementations are encouraged to provide an option for stricter validation, so that only code points that are appropriate for a given application can be allowed.  Implementations may also provide an option that allows a less strict validation by permitting a broader range of literal code points.  In both cases, the standard validation must be the default.
+In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.  For example, when Python reads text files, the sequences |\r| (U+000D) and |\r\n| (U+000D U+000A) are typically converted to |\n| (universal newlines mode).  However, \bespon\ only recognizes |\n| as a newline and only allows normalization of |\r\n| to |\n|; literal |\r| is prohibited.
+
+\subsubsection{Decoding}
+
+When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check the start of the string or stream for a single Unicode byte order mark (BOM) U+FEFF, and discard it if present.
+
+\subsubsection{Validation}
+Once data is in the form of a Unicode string or stream, it must be validated according to the following procedure.  Implementations may choose to validate all at once before processing or a chunk at a time during processing.  Implementations should provide an option for stricter validation, so that only code points that are appropriate for a given application can be allowed.  This is particularly important when security is a concern.  Implementations may also provide an option that allows a less strict validation by permitting a broader range of literal code points.  In both cases, the standard validation must be the default.
 
 \paragraph{Newline normalization}  The sequence |\r\n| (U+000D U+000A) must be normalized to |\n| (U+000A).
 
 Note that |\r| not followed by |\n| is not normalized.  An isolated |\r| should only have the meaning of a newline in some legacy applications.  In contemporary software, an isolated |\r| might be used in terminal applications to return to the beginning of the current line for overwriting.  Because of the potential ambiguity in the meaning of an isolated |\r|, it is not allowed to appear literally.
 
-\paragraph{Disallowed code points}  The string or stream must be checked for code points that are not allowed to appear literally.  These code points may only be represented in escaped form.  The presence of any of these code points must result in an error.
+\paragraph{Disallowed code points}  The string or stream must be checked for code points that are not allowed to appear literally.  These code points must only be represented in escaped form.  The presence of any of these code points must result in an error.
 \begin{itemize}
-\item All code points with Unicode General\_Category value Control (Cc)\footnote{Control includes the ranges U+0000 through U+001F, and U+007F through U+009F (\href{http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf}{The Unicode Standard, Version 9.0, Chapter 2.4}).} are prohibited, with the exception of line feed U+000A (|\n|) and horizontal tab U+0009 (|\t|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters, such as the null byte, have security implications.
+\item All code points with Unicode General\_Category value Cc (``Other, control'')\footnote{Cc includes the ranges U+0000 through U+001F, and U+007F through U+009F (\href{http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf}{The Unicode Standard, Version 9.0, Chapter 2.4}).} are prohibited, with the exception of line feed U+000A (|\n|) and horizontal tab U+0009 (|\t|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters, such as the null byte, have security implications.
 
-\item All 7 code points treated as newlines (\href{http://www.unicode.org/versions/Unicode9.0.0/ch05.pdf}{The Unicode Standard, Version 9.0, Chapter 5.8}) are prohibited, with the exception of line feed U+000A (|\n|).  This includes vertical tab U+000B (|\v|), form feed U+000C (|\f|), carriage returns U+000D (|\r|), and next line U+0085 (NEL), which are already covered under the Cc category.  It also includes line separator U+2028 and paragraph separator U+2029.  These characters are prohibited to ensure that newline treatment is uniform and to guarantee that the use of any newlines beyond line feed U+000A (|\n|) is explicit.
+\item All 7 code points specified as newlines by Unicode\footnote{\href{http://www.unicode.org/versions/Unicode9.0.0/ch05.pdf}{The Unicode Standard, Version 9.0, Chapter 5.8}.} are prohibited, with the exception of line feed U+000A (|\n|).  This includes vertical tab U+000B (|\v|), form feed U+000C (|\f|), carriage return U+000D (|\r|), and next line U+0085 (NEL), which are already covered under the Cc category.  It also includes line separator U+2028 and paragraph separator U+2029.  These characters are prohibited to ensure that newline treatment is uniform and to guarantee that the use of any newlines beyond line feed U+000A (|\n|) is explicit.
 
-\item All 12 code points with Unicode property \href{http://unicode.org/reports/tr9/}{Bidi\_Control} are prohibited: U+061C, U+200E through U+200F, U+202A through U+202E, and U+2066 through U+2069.  Bidi override characters can be a security concern in general, and are particularly problematic in a configuration format designed for manual editing.  
+\item All 12 code points with Unicode property \href{http://unicode.org/reports/tr9/}{Bidi\_Control} are prohibited: U+061C, U+200E through U+200F, U+202A through U+202E, and U+2066 through U+2069.
 
-\href{http://unicode.org/reports/tr36/}{Unicode Technical Report \#36}, ``Unicode Security Considerations,'' recommends that overrides never be allowed in IRIs.  However, even the implicit directional marks can have a potent effect when operating on punctuation characters.  For example, the sequence
+Bidi override characters can be a security concern in general, and are particularly problematic in a configuration format designed for manual editing.   \href{http://unicode.org/reports/tr36/}{Unicode Technical Report \#36}, ``Unicode Security Considerations,'' recommends that overrides never be allowed in IRIs.  
+
+However, even the implicit directional marks can have a potent effect when operating on punctuation characters.  For example, the sequence
 \begin{Verbatim}
 {"a"="b\u200f", $=!, "\u200fe"="f"}
 \end{Verbatim}
@@ -174,18 +259,31 @@ is clear when escapes are used, but when literal code points are substituted, it
 \end{Verbatim}
 in many text editors.
 
-It would be possible to restrict the use of bidi control characters to multiline string literals, which have delimiters on separate lines from the actual string content.  Even in that context, however, the characters could be used to spoof the ending delimiter of the string, and the existence of one or more additional elements that are not actually present.  Thus, these code points are completely prohibited as literals.
+It would be possible to restrict the use of bidi control characters to multiline string literals, which have delimiters on separate lines from the actual string content.  Even in that context, however, the characters could be used to spoof the ending delimiter of the string, and the existence of one or more additional elements that are not actually present.  This could be mitigated by prohibiting the bidi controls from being immediately adjacent to delimiter characters, but that would only be effective if the separating characters were not only visible but also relatively easy to see.  Thus, these code points are completely prohibited as literals.
 
-\item Unicode surrogates (U+D800 -- U+DFFF) are prohibited, except when they are properly paired in conjunction with a 16-bit string implementation.  In other words, all code points that are not Unicode scalar values are prohibited.  Note that escaped surrogates must be prohibited by default as well; only escaped scalar values are allowed by default.
+\item Unicode surrogates (U+D800 -- U+DFFF) are prohibited, except when they are properly paired in conjunction with a 16-bit string implementation.  In other words, all code points that are not Unicode scalar values are prohibited.  Note that escaped surrogates must be prohibited by default as well; only escaped scalar values are allowed by default.  An implementation may provide an option to enable escaped surrogates, but this must not be the default.
 
-\item The \href{http://www.unicode.org/faq/utf_bom.html#bom1}{byte order mark} (BOM) U+FEFF and the non-character ``reversed BOM'' U+FFFE are prohibited, with the exception that the first code point in a string may be the BOM, in which case it is discarded, as mentioned previously.
+\item The \href{http://www.unicode.org/faq/utf_bom.html#bom1}{byte order mark} (BOM) U+FEFF and the non-character ``reversed BOM'' U+FFFE are prohibited, with the exception that the first code point in a string or stream may be the BOM, in which case it is discarded, as mentioned previously.
 
 \item The 66 \href{http://www.unicode.org/faq/private_use.html#noncharacters}{noncharacters} are prohibited:  U+FDD0 through U+FDEF; U+FFFE (already covered with BOM) and U+FFFF; and the last two code points of each of the 16 supplementary planes (U+1FFFE, U+1FFFF; U+2FFFE, U+2FFFF; and so forth through U+10FFFE, U+10FFFF).  If these were allowed as literals, they could result in ambiguous encoding (U+FFFE) or interfere with sentinels in a manner similar to U+0000 (U+FFFF, etc.).
 %http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf
 \end{itemize}
-The list of prohibited literal code points is current as of Unicode 9.0.0 (2016-06-01).  Given the \href{http://unicode.org/policies/stability_policy.html}{Unicode stability policies} and the maturity of Unicode, it seems unlikely that the list will need modification as a result of future Unicode versions.  The list of prohibited code points will be expanded if additional code points are identified or are assigned that pose a security concern similar to that raised by the bidi controls.
+The list of prohibited literal code points is current as of Unicode 9.0.0 (2016-06-01).  Given the \href{http://unicode.org/policies/stability_policy.html}{Unicode stability policies} and the maturity of Unicode, it seems unlikely that the list will need modification as a result of future Unicode versions.  The list of prohibited code points will be expanded if additional code points are identified or are assigned that pose a significant usability or security concern.
 
-In dumping data, an implementation must by default ensure that the dumped data is valid for loading with a default configuration.  If an implementation dumps data in binary form, it must encode the data with UTF-8 unless an encoding is specified.  If an implementation encodes data to binary, it may convert |\n| to |\r\n| in a system-dependent manner during the encoding.
+\subsection{Dumping data}
+
+In dumping data, an implementation must by default ensure that the dumped data is valid for loading with default settings.  If an implementation dumps data in binary form, it must encode the data with UTF-8 unless an encoding is specified.  If an implementation encodes data to binary, it may convert |\n| to |\r\n| in a system-dependent manner during the encoding.
+
+
+\subsection{Unicode normalization}
+
+By default, data must not be normalized during loading or dumping.  \bespon\ must be able to represent as literals all code points in typical usage, with the exception of the small number of code points that are disallowed as literals due to security, clarity, and other concerns.  Normalization would prevent some code points from ever appearing, even when a case for their use could be made.
+
+For example, if normalization were required, NFC would typically make the most sense.  However, that would convert U+0387 GREEK ANO TELEIA into U+00B7 MIDDLE DOT, and U+037E GREEK QUESTION MARK into U+003B SEMICOLON.  There is some debate about this choice of normalization, and some fonts represent the Greek code points differently than the code points obtained via NFC normalization, so forcing normalization could be problematic.  Similarly, NFC normalization could cause issues if \bespon\ were used to exchange filenames between machines whose filesystems use another normalization (although a binary or escaped representation might be more appropriate than a literal string representation in this sort of scenario).  Normalization can also \href{http://unicode.org/faq/normalization.html}{change the ordering of code points} compared to what would be expected from a linguistic standpoint.
+
+Implementations in languages that have Unicode normalization libraries are strongly encouraged to provide optional normalization, at least for NFC, during loading and dumping.  However, this normalization must not be the default, and the documentation for the option must mention that normalization brings both disadvantages (mentioned above) and advantages (such as U+0061 U+0308 $\rightarrow$ U+00E4 for ``\"{a}'').
+
+
 
 
 
@@ -199,6 +297,11 @@ The specification is defined in terms of several classes of characters.
 \item[Unicode whitespace:]  The 25 Unicode code points with the White\_Space property.  This covers the 25 code points U+0009 through U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 through U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000.
 \end{description}
 
+
+%\begin{grammar}
+%space = "\x20"
+%space = '\x20'
+%\end{grammar}
 
 
 
@@ -218,12 +321,14 @@ Many types, such as integers, floats, and booleans, are implicitly typed.  All t
 \begin{Verbatim}[commandchars=\\\{\}]
 (\meta{type})> \meta{quoted or unquoted string}
 \end{Verbatim}
-For example, |(float)> 1.23e4|.  In the discussion of types below, the type name for explicit typing is given in parentheses after the description of each type.  The syntax for explicit typing is also used to define advanced features; these are discussed in detail in \cref{sec:advanced-options}.
+For example, |(float)> 1.23e4|.  In the discussion of types below, the type name for explicit typing is given in parentheses at the end of the header for each type.  The syntax for explicit typing is also used to define advanced features; these are discussed in detail in \cref{sec:advanced-options-and-types}.
 
 
 \subsection{Scalar types}
 
 Scalar core types are core types that are not collections of other objects so far as \bespon\ is concerned.  For example, a programming language may treat strings as arrays or collections of code points or encoded bytes, but as far as \bespon\ is concerned, a string is a fundamental, indivisible type.
+
+By default, implementations must use immutable types to represent scalar core types, because scalar core types may be used as dict keys.  If an implementation language does not have a suitable immutable type and one cannot conveniently be created, then a mutable type may be used instead.  In that situation, (1) the documentation must explain the mutability, and (2) aliasing and copying of scalar core types within \bespon\ must be treated as equivalent to deep copying, so that each aliasing or copying produces a new object (rather than reusing an existing object, as might be true in the immutable case).
 
 
 \subsubsection{None (null, nil, undef) (\texttt{none})}
@@ -238,27 +343,43 @@ The literal strings |true| and |false|.  Any other capitalization of either must
 
 \subsubsection{Integer (\texttt{int})}
 
-Integer literals may take decimal, hex, octal, or binary forms.  Single underscores are allowed to separate adjoining digits to aid visual parsing.
+Integer literals may take decimal, hex, octal, or binary forms.  Single underscores are allowed to separate adjoining digits, and after base prefixes, to aid visual parsing.
 
 Integers are defined by the following regular expressions (whitespace insensitive).  Equivalent regexes may be substituted.
 \begin{description}
-\item[Decimal:]  \lit{[+-]?[\x20\t]*(?: 0 | [1-9](?:_[0-9]|[0-9])*) $}
-\item[Hexadecimal:]  \lit{[+-]?[\x20\t]*0x[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*$}
-\item[Octal:]  \lit{[+-]?[\x20\t]*0o[0-7](?:_[0-7]|[0-7])*$}
-\item[Binary:]  \lit{[+-]?[\x20\t]*0b[01](?:_[01]|[01])*$}
-\end{description} %$ <- highlighting
-Hex, octal, and binary integers must use lowercase |x|, |o|, and |b|.  Any string that would be an integer except for this capitalization must result in an error.  This prevents the confusable possibility of octal |0O|\vmeta{digits} while maintaining consistency across bases.  Integers must not have leading zeros; leading zeros must result in an error.  This prevents confusion with languages that use a leading zero to indicate octal values.
+\item[Decimal:]\hfill
+\begin{Verbatim}
+[+-]? [\x20\t]* (?: 0 | [1-9](?:_?[0-9])* ) $
+\end{Verbatim}
+\item[Hexadecimal:]\hfill
+\begin{Verbatim}
+[+-]? [\x20\t]* 0x _?
+   (?: [0-9a-f](?:_?[0-9a-f])* | [0-9A-F](?:_?[0-9A-F])* ) $
+\end{Verbatim}
+\item[Octal:]\hfill
+\begin{Verbatim}
+[+-]? [\x20\t]* 0o _? [0-7](?:_?[0-7])* $
+\end{Verbatim}
+\item[Binary:]\hfill
+\begin{Verbatim}
+[+-]? [\x20\t]* 0b _? [01](?:_?[01])* $
+\end{Verbatim}
+\end{description}
+Hex, octal, and binary integers must use lowercase |x|, |o|, and |b| in their base prefixes.  This prevents the confusable possibility of octal |0O|\vmeta{digits} while maintaining consistency across bases.  Hex integers may use either uppercase or lowercase letters, but cannot mix cases.  Any string that would be an integer except for capitalization must result in an error.  Integers must not have leading zeros; leading zeros must result in an error.  This prevents confusion with languages that use a leading zero to indicate octal values.
 
-Integer precision is not specified, but a minimum of 32 bits is expected.  This allows the comfortable substitution of a 64-bit float in languages without an integer type.  Implementations must check for integer overflow when loading data, and raise an error if any integer cannot fit in the specified integer type.
+Integer precision is not specified, but an absolute minimum of 32 bits is expected.  This allows the comfortable substitution of a 64-bit float in languages without an integer type.  Implementations must check for integer overflow when loading data, and raise an error if any integer cannot fit in the specified integer type.
 
 In a format that does not require all strings to be quoted, there is a danger of confusing incorrect integer literals with unquoted strings.  If |1_234| becomes an integer, but |1__234| becomes a string, then manual editing can easily introduce errors.  This could be dealt with by having an extremely permissive syntax, so that even something like |1______234| becomes an integer; that is simple but not aesthetic.  The issue could also be dealt with by requiring that all unquoted strings begin with an identifier-style word that cannot start with a digit, perhaps something like |[a-zA-Z][a-zA-Z0-9]*|.  That has the disadvantage that things like numbers with units, such as |-12pt|, would require quoting.  Given some of the intended use cases for \bespon, that is unacceptable.
 
-Instead, unquoted strings may begin with digits or an otherwise integer pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:0x|0o|0b|[0-9])} such strings must not consist solely of characters that are allowed after this in the corresponding integer literal, with the additional restriction that |0o| and |0b| follow the same requirements as |0x|, and the additional restriction that the comma U+002C (|,|) is added to the list of checked code points to prevent ambiguity regarding thousands or decimal separators.  For example, an unquoted string that begins with |1| must contain something besides |[0-9_]+| after the |1|, and an unquoted string that begins with |0x| must contain something besides |[0-9a-fA-F_]+|.  This minimizes the potential for incorrect integers to be misinterpreted as strings while placing minimal limitations on unquoted string syntax.
+Instead, unquoted strings may begin with digits or an otherwise integer pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:[0-9]|0[xX]|0[oO]|0[bB])} such strings must not consist solely of characters that are allowed after this in the corresponding integer literal, with the additional restriction that |0[oO]| and |0[bB]| follow the same requirements as |0[xX]|.  Furthermore, the part of the unquoted string that follows the integer-like part must, when any leading spaces are stripped, meet the requirements for a normal unquoted string (this prevents a series of space-separated digits from being a valid string).  For example, an unquoted string that begins with |1| must contain something besides |[0-9_]+| after the |1|, and an unquoted string that begins with |0x| must contain something besides |[0-9a-fA-F_]+|.  This minimizes the potential for incorrect integers to be misinterpreted as strings while placing minimal limitations on unquoted string syntax.  The integer-like part is identified with the regular expression
+\begin{Verbatim}
+[+-]? [\x20\t]* (?: [0-9]+ | 0(?:[xX]|0[oO]|0[bB]) [0-9]* )
+\end{Verbatim}
 
 
 \subsubsection{Float (\texttt{float})}
 
-Float literals may take decimal or hexadecimal forms.  Hex form is convenient for avoiding small rounding errors upon round tripping.  As with integers, single underscores are allowed between adjacent digits.
+Float literals may take decimal or hexadecimal forms.  Hex form is convenient for avoiding small rounding errors upon round tripping.  As with integers, single underscores are allowed between adjacent digits and after the hex base prefix.  Single underscores before the exponent are also allowed.
 
 Floats are defined by the following regular expressions (whitespace insensitive).  Equivalent regexes may be substituted.
 
@@ -283,9 +404,12 @@ Leading zeros before the decimal point in decimal form and capital |X| in hexade
 
 Float precision is not specified, but a minimum of 64 bits with IEEE 754 compatibility is expected.  Implementations must raise an error if a value cannot fit in the specified float type.
 
-The special float values |inf|, |\+[\x20\t]*inf|, |\-[\x20\t]*inf|, and |nan| are allowed.  An error must be raised if any of these appear with a different capitalization, or if any of these appear and are not supported by the specified float type.
+The special float values |[+-]?[\x20\t]*inf| and |[+-]?[\x20\t]*nan| are allowed.  An error must be raised if any of these appear with a different capitalization, or if any of these appear and are not supported by the specified float type.
 
-Like integer literals, float literals should not be inadvertently converted into strings due to minor syntax errors.  Unquoted strings may begin with digits or an otherwise float pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:0x|[.0-9])} such strings must not consist solely of characters that are allowed after this in the corresponding float literal, with the additional restriction that the comma U+002C (|,|) is added to the list of checked code points to prevent ambiguity regarding thousands or decimal separators.
+Like integer literals, float literals should not be inadvertently converted into strings due to minor syntax errors.  Unquoted strings may begin with digits or an otherwise float pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:[.0-9]|0[xX])} such strings must not consist solely of characters that are allowed after this in the corresponding float literal.  Furthermore, the part of the unquoted string that follows the float-like part must, when any leading spaces are stripped, meet the requirements for a normal unquoted string (this prevents a series of space-separated digits from being a valid string).  The float-like part is identified with the regular expression
+\begin{Verbatim}
+[+-]? [\x20\t]* (?: [._0-9][._0-9eE+-]* | 0[xX][._0-9a-fA-FeEpP+-]* )
+\end{Verbatim}
 
 
 \subsubsection{String (\texttt{str})}
@@ -1347,6 +1471,11 @@ An implementation should provide an option for registering a post-processing fun
 %
 %
 
+
+
+\section{Security considerations}
+
+U+06E5
 
 
 \pagebreak
