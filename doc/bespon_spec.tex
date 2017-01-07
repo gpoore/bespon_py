@@ -385,20 +385,28 @@ Floats are defined by the following regular expressions (whitespace insensitive)
 
 \paragraph{Decimal:}
 \begin{Verbatim}[fontsize=\small]
-[+-]?[\x20\t]*
-     (?: 0 | [1-9](?:_[0-9]|[0-9])*)
-     (?: \. [0-9](?:_[0-9]|[0-9])* (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-         (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*) 
-     ) $
+[+-]? [\x20\t]*
+   (?: 0 | [1-9](?:_?[0-9])*
+      (?: \. [0-9](?:_?[0-9])* (?: _? [eE][+-]?[0-9](?:_?[0-9])* )? |
+         (?: _? [eE][+-]?[0-9](?:_?[0-9])* )
+      ) 
+   ) $
 \end{Verbatim}
 
 \paragraph{Hexadecimal:}
 \begin{Verbatim}[fontsize=\small]
-[+-]?[\x20\t]* 
-     0x [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
-     (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-         (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)
-     ) $
+[+-]? [\x20\t]* 0x _?
+   (?: (?: [0-9a-f](?:_?[0-9a-f])*
+           (?: \.[0-9a-f](?:_?[0-9a-f])* (?: _? [pP][+-]?[0-9](?:_?[0-9])* )? |
+                    (?: _? [pP][+-]?[0-9](?:_?[0-9])* )
+           )
+       ) |
+       (?: [0-9A-F](?:_?[0-9A-F])*
+           (?: \.[0-9A-F](?:_?[0-9A-F])* (?: _? [pP][+-]?[0-9](?:_?[0-9])* )? |
+                   (?: _? [pP][+-]?[0-9](?:_?[0-9])* )
+           )
+       )
+   ) $
 \end{Verbatim}
 Leading zeros before the decimal point in decimal form and capital |X| in hexadecimal form are not allowed and must result in errors.  Both capital and lowercase |e| and |p| must be allowed in input, but lowercase should always be used in output.  A decimal point that is not immediately adjacent to a digit on both sides is prohibited.
 
