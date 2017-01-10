@@ -14,8 +14,9 @@
 
 \usepackage{multicol}
 
-\usepackage[toc,page]{appendix}
+\usepackage{tcolorbox}
 
+\usepackage[toc,page]{appendix}
 
 \usepackage{hyperref}
 \hypersetup{colorlinks=true,urlcolor=Green,linkcolor=Green}
@@ -66,10 +67,66 @@
 
 \newbool{grammar@instring}
 \makeatletter
+\def\grammar@process@string#1{%
+  \ifx#1\grammar@undefined\relax
+    \let\grammar@process@string@next\relax
+  \else
+    \if#1\@backslashchar\relax
+      \let\grammar@process@string@next\grammar@string@backslash
+    \else
+      #1%
+      \let\grammar@process@string@next\grammar@process@string
+    \fi
+  \fi
+  \grammar@process@string@next
+}
+\def\grammar@string@backslash#1{%
+  \ifx#1x\relax
+    \let\grammar@process@string@next\grammar@string@x
+  \else
+    \ifx#1u\relax
+      \let\grammar@process@string@next\grammar@string@u
+    \else
+      \ifx#1U\relax
+        \let\grammar@process@string@next\grammar@string@U
+      \else
+        \def\grammar@process@string@tmp{\detokenize{#1}}%
+        \let\grammar@process@string@next\grammar@string@other
+      \fi
+    \fi
+  \fi
+  \grammar@process@string@next
+}
+\def\grammar@string@x#1#2{%
+  \textcolor{MediumSlateBlue}{\textbackslash x}%
+  \textcolor{blue}{#1#2}%
+  \grammar@process@string}
+\edef\grammar@charlb{\iftrue\string{\else}\fi}
+\edef\grammar@charrb{\iffalse{\else\string}\fi}
+\def\grammar@string@u{%
+  \expandafter\@ifnextchar\grammar@charlb{\grammar@string@u@i}{\grammar@string@u@ii}}
+\expandafter\expandafter\expandafter\def\expandafter\expandafter\expandafter\grammar@string@u@i\expandafter\grammar@charlb\expandafter#\expandafter1\grammar@charrb{%
+  \textcolor{MediumSlateBlue}{\textbackslash u}%
+  \textcolor{blue}{\{#1\}}%
+  \grammar@process@string}
+\def\grammar@string@u@ii#1#2#3#4{%
+  \textcolor{MediumSlateBlue}{\textbackslash u}%
+  \textcolor{blue}{#1#2#3#4}%
+  \grammar@process@string}
+\def\grammar@string@U#1#2#3#4#5#6#7#8{%
+  \textcolor{MediumSlateBlue}{\textbackslash U}%
+  \textcolor{blue}{#1#2#3#4#5#6#7#8}%
+  \grammar@process@string}
+\def\grammar@string@other{%
+  \textcolor{blue}{\textbackslash\grammar@process@string@tmp}\grammar@process@string}
+\expandafter\expandafter\expandafter\def\expandafter\expandafter\expandafter\grammar@string@repeat\expandafter\grammar@charlb\expandafter#\expandafter1\grammar@charrb{%
+  \textcolor{DarkRed}{\{#1\}}}
 \begingroup
 \catcode`\'=\active
 \catcode`\"=\active
 \catcode`\+=\active
+\catcode`\?=\active
+\catcode`\-=\active
 \catcode`\*=\active
 \catcode`\|=\active
 \catcode`\.=\active
@@ -82,15 +139,27 @@
   \expandafter\def\expandafter\@noligs\expandafter{%
     \@noligs
     \def'####1'{\textcolor{DarkBlue}{%
-      \textquotesingle\booltrue{grammar@instring}####1\boolfalse{grammar@instring}\textquotesingle}}%
+      \textquotesingle\booltrue{grammar@instring}%
+      \grammar@process@string####1\grammar@undefined%
+      \boolfalse{grammar@instring}\textquotesingle}%
+      \expandafter\@ifnextchar\grammar@charlb{\grammar@string@repeat}{}}%
     \def"####1"{\textcolor{DarkBlue}{%
-      \detokenize{"}\booltrue{grammar@instring}####1\boolfalse{grammar@instring}\detokenize{"}}}%
+      \detokenize{"}\booltrue{grammar@instring}%
+      \grammar@process@string####1\grammar@undefined
+      \boolfalse{grammar@instring}\detokenize{"}}%
+      \expandafter\@ifnextchar\grammar@charlb{\grammar@string@repeat}{}}%
     \def={\ifbool{grammar@instring}%
        {\detokenize{=}}%
        {\textcolor{DarkRed}{\detokenize{=}}}}%
     \def+{\ifbool{grammar@instring}%
        {\detokenize{+}}%
        {\textcolor{DarkRed}{\detokenize{+}}}}%
+    \def?{\ifbool{grammar@instring}%
+       {\detokenize{?}}%
+       {\textcolor{DarkRed}{\detokenize{?}}}}%
+    \def-{\ifbool{grammar@instring}%
+       {\detokenize{-}}%
+       {\textcolor{DarkRed}{\detokenize{-}}}}%
     \def*{\ifbool{grammar@instring}%
        {\detokenize{*}}%
        {\textcolor{DarkRed}{\detokenize{*}}}}%
@@ -112,11 +181,6 @@
     \def]{\ifbool{grammar@instring}%
        {\detokenize{]}}%
        {\textcolor{DarkRed}{\detokenize{]}}}}%
-    \begingroup\lccode`\~=`\^^M\lowercase{\endgroup\def\grammar@comment####1~{\textcolor{DarkGray}{####1}~}}%
-    \begingroup\lccode`\~=`\#\lowercase{\endgroup\def~}{%
-       \ifbool{grammar@instring}%
-        {\#}%
-        {\textcolor{DarkGray}{\#}\grammar@comment}}%
   }%
 }
 \endgroup
@@ -128,6 +192,8 @@
   codes={ \catcode`\'=\active
           \catcode`\"=\active
           \catcode`\+=\active
+          \catcode`\?=\active
+          \catcode`\-=\active
           \catcode`\*=\active
           \catcode`\|=\active
           \catcode`\.=\active
@@ -138,6 +204,13 @@
           \catcode`\==\active}]}%
  {\end{Verbatim}}
 \makeatother
+
+
+\newenvironment{grammarbox}[1]%
+ {\begin{tcolorbox}[colbacktitle=LightGreen,
+                    coltitle=black,
+                    title=#1]}
+ {\end{tcolorbox}}
 
 
 \title{\textbf{\bespon} \\ \besponfull}
@@ -228,12 +301,18 @@ The words \textit{may}, \textit{should}, and \textit{must} in the remainder of t
 
 In loading data, an implementation is only responsible for what it does with what it receives.  When an implementation receives a Unicode string or stream, the implementation is not responsible for any transformations performed on the string or stream during any decoding or normalization steps before it was received.  However, the implementation's documentation should mention any decoding or normalization steps that might reasonably be expected before the string or stream is received, if these might alter the interpretation of the data.  For example, when Python reads text files, the sequences |\r| (U+000D) and |\r\n| (U+000D U+000A) are typically converted to |\n| (universal newlines mode).  However, \bespon\ only recognizes |\n| as a newline and only allows normalization of |\r\n| to |\n|; literal |\r| is prohibited.
 
+
 \subsubsection{Decoding}
 
-When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.  Regardless of whether an implementation receives a Unicode or binary string or stream, it must check the start of the string or stream for a single Unicode byte order mark (BOM) U+FEFF, and discard it if present.
+When an implementation receives a binary string or stream, it must decode the string or stream as UTF-8 unless an encoding is specified.
 
-\subsubsection{Validation}
-Once data is in the form of a Unicode string or stream, it must be validated according to the following procedure.  Implementations may choose to validate all at once before processing or a chunk at a time during processing.  Implementations should provide an option for stricter validation, so that only code points that are appropriate for a given application can be allowed.  This is particularly important when security is a concern.  Implementations may also provide an option that allows a less strict validation by permitting a broader range of literal code points.  In both cases, the standard validation must be the default.
+Regardless of whether an implementation receives a Unicode or binary string or stream, it must check the start of the string or stream for a single Unicode byte order mark (BOM) U+FEFF, and discard it if present.
+
+
+\subsubsection{Unicode validation}
+
+The Unicode string or stream containing data must be validated according to the following procedure.  Implementations may choose to validate all at once before processing or on the fly during processing.  Implementations should provide an option for stricter validation, so that only code points that are appropriate for a given application can be allowed.  This is particularly important when security is a concern.  Implementations may also provide an option that allows a less strict validation by permitting a broader range of literal code points.  In both cases, the standard validation must be the default.
+
 
 \paragraph{Newline normalization}  The sequence |\r\n| (U+000D U+000A) must be normalized to |\n| (U+000A).
 
@@ -241,7 +320,7 @@ Note that |\r| not followed by |\n| is not normalized.  An isolated |\r| should 
 
 \paragraph{Disallowed code points}  The string or stream must be checked for code points that are not allowed to appear literally.  These code points must only be represented in escaped form.  The presence of any of these code points must result in an error.
 \begin{itemize}
-\item All code points with Unicode General\_Category value Cc (``Other, control'')\footnote{Cc includes the ranges U+0000 through U+001F, and U+007F through U+009F (\href{http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf}{The Unicode Standard, Version 9.0, Chapter 2.4}).} are prohibited, with the exception of line feed U+000A (|\n|) and horizontal tab U+0009 (|\t|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters, such as the null byte, have security implications.
+\item All code points with Unicode General\_Category value Cc (``Other, control'')\footnote{Cc includes the ranges U+0000 through U+001F, and U+007F through U+009F (\href{http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf}{The Unicode Standard, Version 9.0, Chapter 2.4}).} are prohibited, with the exception of horizontal tab U+0009 (|\t|) and line feed U+000A (|\n|).  Note that any carriage returns U+000D (|\r|) not removed by newline normalization are not allowed.  These code points are prohibited because they may be invisible in some editors and because some control characters, such as the null byte, have security implications.
 
 \item All 7 code points specified as newlines by Unicode\footnote{\href{http://www.unicode.org/versions/Unicode9.0.0/ch05.pdf}{The Unicode Standard, Version 9.0, Chapter 5.8}.} are prohibited, with the exception of line feed U+000A (|\n|).  This includes vertical tab U+000B (|\v|), form feed U+000C (|\f|), carriage return U+000D (|\r|), and next line U+0085 (NEL), which are already covered under the Cc category.  It also includes line separator U+2028 and paragraph separator U+2029.  These characters are prohibited to ensure that newline treatment is uniform and to guarantee that the use of any newlines beyond line feed U+000A (|\n|) is explicit.
 
@@ -270,6 +349,44 @@ It would be possible to restrict the use of bidi control characters to multiline
 \end{itemize}
 The list of prohibited literal code points is current as of Unicode 9.0.0 (2016-06-01).  Given the \href{http://unicode.org/policies/stability_policy.html}{Unicode stability policies} and the maturity of Unicode, it seems unlikely that the list will need modification as a result of future Unicode versions.  The list of prohibited code points will be expanded if additional code points are identified or are assigned that pose a significant usability or security concern.
 
+The form of a validated Unicode string or stream after the removal of a single, leading, optional BOM U+FEFF and after newline normalization (|\r\n| $\rightarrow$ |\n|) may be summarized as follows.  Note that this does \emph{not} describe valid \bespon\ data, merely the necessary form of a Unicode string or stream that \emph{may} contain valid \bespon\ data.  A validated Unicode string or stream is a necessary but not sufficient requirement.
+\begin{grammarbox}{Validated Unicode string or stream}
+\begin{grammar}
+unicode_code_points = "\u0000".."\U0010FFFF"
+unicode_category_cc = "\u0000".."\u001F" | "\u007F".."\u009F"
+unicode_newline_codepoints = "\u000A".."\u000D" | "\u0085" | "\u2028" | "\u2029"
+unicode_property_bidi_control = "\u061C" | "\u200E".."\u200F" | 
+                                "\u202A".."\u202E" | "\u2066".."\u2069"
+unicode_surrogates = "\uD800".."\uDFFF"
+bom = "\uFEFF"
+unicode_noncharacters = "\uFDD0".."\uFDEF" | "\uFFFE" | "\uFFFF" |
+                        "\U0001FFFE" | "\U0001FFFF" |
+                        "\U0002FFFE" | "\U0002FFFF" |
+                        "\U0003FFFE" | "\U0003FFFF" |
+                        "\U0004FFFE" | "\U0004FFFF" |
+                        "\U0005FFFE" | "\U0005FFFF" |
+                        "\U0006FFFE" | "\U0006FFFF" |
+                        "\U0007FFFE" | "\U0007FFFF" |
+                        "\U0008FFFE" | "\U0008FFFF" |
+                        "\U0009FFFE" | "\U0009FFFF" |
+                        "\U000AFFFE" | "\U000AFFFF" |
+                        "\U000BFFFE" | "\U000BFFFF" |
+                        "\U000CFFFE" | "\U000CFFFF" |
+                        "\U000DFFFE" | "\U000DFFFF" |
+                        "\U000EFFFE" | "\U000EFFFF" |
+                        "\U000FFFFE" | "\U000FFFFF" |
+                        "\U0010FFFE" | "\U0010FFFF"
+valid_code_points = unicode_code_points
+                     - (unicode_category_cc - "\t" - "\n")
+                     - (unicode_newline_codepoints - "\n")
+                     - unicode_property_bidi_control
+                     - unicode_surrogates
+                     - bom
+                     - unicode_noncharacters
+validated_string_or_stream = valid_code_points+
+\end{grammar}
+\end{grammarbox}
+
 \subsection{Dumping data}
 
 In dumping data, an implementation must by default ensure that the dumped data is valid for loading with default settings.  If an implementation dumps data in binary form, it must encode the data with UTF-8 unless an encoding is specified.  If an implementation encodes data to binary, it may convert |\n| to |\r\n| in a system-dependent manner during the encoding.
@@ -287,21 +404,49 @@ Implementations in languages that have Unicode normalization libraries are stron
 
 
 
-\section{Character class definitions}
-The specification is defined in terms of several classes of characters.
-\begin{description}
-\item[Spaces:]  One or more of the space U+0020 \begingroup\fvset{showspaces}(| |)\endgroup.
-\item[Indentation:]  One or more spaces or horizontal tabs U+0009 (|\t|).
-\item[Newlines:]  One or more of the line feed U+000A (|\n|).
-\item[Whitespace:]  A continuous run of indentation or newlines.
-\item[Unicode whitespace:]  The 25 Unicode code points with the White\_Space property.  This covers the 25 code points U+0009 through U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000 through U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000.
-\end{description}
+\section{Base grammatical elements}
+\subsection{Indentation and whitespace}
+\begin{grammar}
+space = "\x20"
+spaces = space+
+tab = "\x09" = "\t"
+indentation_code_points = space | tab
+indentation = indentation_code_points+
+newline = "\x0A" = "\n"
+whitespace = (indentation_code_points | newline)+
+unicode_whitespace = unicode_property_white_space
+                   = "\u0009".."\u000D" | "\u0020" | "\u0085" | "\u00A0" | 
+                     "\u1680" | "\u2000".."\u200A" | "\u2028" | "\u2029" |
+                     "\u202F" | "\u205F" | "\u3000"
+\end{grammar}
 
 
-%\begin{grammar}
-%space = "\x20"
-%space = '\x20'
-%\end{grammar}
+\subsection{Numerics}
+
+\begin{grammar}
+zero = "0"
+nonzero_dec_digit = "1".."9"
+dec_digit = zero | nonzero_digit
+dec_digits_underscores = dec_digit ("_" dec_digit)*
+lower_hex_digit = dec_digit | "a".."f"
+lower_hex_digits_underscores = lower_hex_digit ("_" lower_hex_digit)*
+upper_hex_digit = dec_digit | "A".."F"
+upper_hex_digits_underscores = upper_hex_digit ("_" upper_hex_digit)*
+oct_digit = "0".."7"
+oct_digits_underscores = oct_digit ("_" oct_digit)*
+bin_digit = "0" | "1"
+bin_digits_underscores = bin_digit ("_" bin_digit)*
+sign = "+" | "-"
+\end{grammar}
+
+
+\subsection{Strings}
+
+\begin{grammar}
+lower_ascii_alpha = "a".."z"
+upper_ascii_alpha = "A".."Z"
+ascii_alpha = lower_ascii_alpha | upper_ascii_alpha
+\end{grammar}
 
 
 
@@ -344,80 +489,78 @@ The literal strings |true| and |false|.  Any other capitalization of either must
 \subsubsection{Integer (\texttt{int})}
 
 Integer literals may take decimal, hex, octal, or binary forms.  Single underscores are allowed to separate adjoining digits, and after base prefixes, to aid visual parsing.
+\paragraph{Decimal}
+\begin{grammar}
+dec_integer = (sign space*)? (zero | nonzero_dec_digit ("_"? dec_digit)*) 
+\end{grammar}
 
-Integers are defined by the following regular expressions (whitespace insensitive).  Equivalent regexes may be substituted.
-\begin{description}
-\item[Decimal:]\hfill
-\begin{Verbatim}
-[+-]? [\x20\t]* (?: 0 | [1-9](?:_?[0-9])* ) $
-\end{Verbatim}
-\item[Hexadecimal:]\hfill
-\begin{Verbatim}
-[+-]? [\x20\t]* 0x _?
-   (?: [0-9a-f](?:_?[0-9a-f])* | [0-9A-F](?:_?[0-9A-F])* ) $
-\end{Verbatim}
-\item[Octal:]\hfill
-\begin{Verbatim}
-[+-]? [\x20\t]* 0o _? [0-7](?:_?[0-7])* $
-\end{Verbatim}
-\item[Binary:]\hfill
-\begin{Verbatim}
-[+-]? [\x20\t]* 0b _? [01](?:_?[01])* $
-\end{Verbatim}
-\end{description}
-Hex, octal, and binary integers must use lowercase |x|, |o|, and |b| in their base prefixes.  This prevents the confusable possibility of octal |0O|\vmeta{digits} while maintaining consistency across bases.  Hex integers may use either uppercase or lowercase letters, but cannot mix cases.  Any string that would be an integer except for capitalization must result in an error.  Integers must not have leading zeros; leading zeros must result in an error.  This prevents confusion with languages that use a leading zero to indicate octal values.
+\paragraph{Hexadecimal}
+\begin{grammar}
+hex_integer = (sign space*)? "0x" "_"?
+              (lower_hex_digits_underscores | upper_hex_digits_underscores)
+\end{grammar}
+
+\paragraph{Octal}
+\begin{grammar}
+oct_integer = (sign space*)? "0o" "_"? oct_digits_underscores
+\end{grammar}
+
+\paragraph{Binary}
+\begin{grammar}
+bin_integer = (sign space*)? "0b" "_"? bin_digits_underscores
+\end{grammar}
+
+\paragraph{General integer}
+\begin{grammar}
+integer = dec_integer | hex_integer | oct_integer | bin_integer
+\end{grammar}
+
+Hex, octal, and binary integers must use lowercase |x|, |o|, and |b| in their base prefixes.  This prevents the confusable possibility of octal |0O|\vmeta{digits} while maintaining consistency across bases.  Hex integers may use either uppercase or lowercase letters, but must not mix cases.  Integers must not have leading zeros, to prevent confusion with languages that use a leading zero to indicate octal values.
 
 Integer precision is not specified, but an absolute minimum of 32 bits is expected.  This allows the comfortable substitution of a 64-bit float in languages without an integer type.  Implementations must check for integer overflow when loading data, and raise an error if any integer cannot fit in the specified integer type.
 
-In a format that does not require all strings to be quoted, there is a danger of confusing incorrect integer literals with unquoted strings.  If |1_234| becomes an integer, but |1__234| becomes a string, then manual editing can easily introduce errors.  This could be dealt with by having an extremely permissive syntax, so that even something like |1______234| becomes an integer; that is simple but not aesthetic.  The issue could also be dealt with by requiring that all unquoted strings begin with an identifier-style word that cannot start with a digit, perhaps something like |[a-zA-Z][a-zA-Z0-9]*|.  That has the disadvantage that things like numbers with units, such as |-12pt|, would require quoting.  Given some of the intended use cases for \bespon, that is unacceptable.
-
-Instead, unquoted strings may begin with digits or an otherwise integer pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:[0-9]|0[xX]|0[oO]|0[bB])} such strings must not consist solely of characters that are allowed after this in the corresponding integer literal, with the additional restriction that |0[oO]| and |0[bB]| follow the same requirements as |0[xX]|.  Furthermore, the part of the unquoted string that follows the integer-like part must, when any leading spaces are stripped, meet the requirements for a normal unquoted string (this prevents a series of space-separated digits from being a valid string).  For example, an unquoted string that begins with |1| must contain something besides |[0-9_]+| after the |1|, and an unquoted string that begins with |0x| must contain something besides |[0-9a-fA-F_]+|.  This minimizes the potential for incorrect integers to be misinterpreted as strings while placing minimal limitations on unquoted string syntax.  The integer-like part is identified with the regular expression
-\begin{Verbatim}
-[+-]? [\x20\t]* (?: [0-9]+ | 0(?:[xX]|0[oO]|0[bB]) [0-9]* )
-\end{Verbatim}
 
 
 \subsubsection{Float (\texttt{float})}
 
 Float literals may take decimal or hexadecimal forms.  Hex form is convenient for avoiding small rounding errors upon round tripping.  As with integers, single underscores are allowed between adjacent digits and after the hex base prefix.  Single underscores before the exponent are also allowed.
 
-Floats are defined by the following regular expressions (whitespace insensitive).  Equivalent regexes may be substituted.
+\paragraph{Decimal}
+\begin{grammar}
+dec_exponent = ("e" | "E") sign? dec_digits_underscores
+dec_float = (sign space*)? (zero | nonzero_dec_digit ("_"? digit)*)
+            ("." dec_digits_underscores ("_"? dec_exponent)? | "_"? dec_exponent)
+\end{grammar}
 
-\paragraph{Decimal:}
-\begin{Verbatim}[fontsize=\small]
-[+-]? [\x20\t]*
-   (?: 0 | [1-9](?:_?[0-9])*
-      (?: \. [0-9](?:_?[0-9])* (?: _? [eE][+-]?[0-9](?:_?[0-9])* )? |
-         (?: _? [eE][+-]?[0-9](?:_?[0-9])* )
-      ) 
-   ) $
-\end{Verbatim}
+\paragraph{Hexadecimal}
+\begin{grammar}
+hex_exponent = ("p" | "P") sign? digit ("_"? digit)*
+hex_float = (sign space*)? "0x" "_"?
+            (lower_hex_digits_underscores
+                ("." lower_hex_digits_underscores ("_"? hex_exponent)? | 
+                 "_"? hex_exponent) |
+             upper_hex_digits_underscores
+                ("." upper_hex_digits_underscores ("_"? hex_exponent)? |
+                 "_"? hex_exponent))
+\end{grammar}
 
-\paragraph{Hexadecimal:}
-\begin{Verbatim}[fontsize=\small]
-[+-]? [\x20\t]* 0x _?
-   (?: (?: [0-9a-f](?:_?[0-9a-f])*
-           (?: \.[0-9a-f](?:_?[0-9a-f])* (?: _? [pP][+-]?[0-9](?:_?[0-9])* )? |
-                    (?: _? [pP][+-]?[0-9](?:_?[0-9])* )
-           )
-       ) |
-       (?: [0-9A-F](?:_?[0-9A-F])*
-           (?: \.[0-9A-F](?:_?[0-9A-F])* (?: _? [pP][+-]?[0-9](?:_?[0-9])* )? |
-                   (?: _? [pP][+-]?[0-9](?:_?[0-9])* )
-           )
-       )
-   ) $
-\end{Verbatim}
-Leading zeros before the decimal point in decimal form and capital |X| in hexadecimal form are not allowed and must result in errors.  Both capital and lowercase |e| and |p| must be allowed in input, but lowercase should always be used in output.  A decimal point that is not immediately adjacent to a digit on both sides is prohibited.
+\paragraph{Special values}
+\begin{grammar}
+infinity = (sign space*)? "inf"
+not_a_number = (sign space*)? "nan"
+\end{grammar}
+
+\paragraph{General float}
+\begin{grammar}
+float = dec_float | hex_float | infinity | not_a_number
+\end{grammar}
+
+
+Leading zeros before the decimal point in decimal form and capital |X| in hexadecimal form are not allowed.  Both capital and lowercase |e| and |p| must be allowed in input, but lowercase should always be used in output.  A decimal point that is not immediately adjacent to a digit on both sides is prohibited.
 
 Float precision is not specified, but a minimum of 64 bits with IEEE 754 compatibility is expected.  Implementations must raise an error if a value cannot fit in the specified float type.
 
-The special float values |[+-]?[\x20\t]*inf| and |[+-]?[\x20\t]*nan| are allowed.  An error must be raised if any of these appear with a different capitalization, or if any of these appear and are not supported by the specified float type.
-
-Like integer literals, float literals should not be inadvertently converted into strings due to minor syntax errors.  Unquoted strings may begin with digits or an otherwise float pattern, but after any starting sequence matched by the regex \lit{[+-]?[\x20\t]*(?:[.0-9]|0[xX])} such strings must not consist solely of characters that are allowed after this in the corresponding float literal.  Furthermore, the part of the unquoted string that follows the float-like part must, when any leading spaces are stripped, meet the requirements for a normal unquoted string (this prevents a series of space-separated digits from being a valid string).  The float-like part is identified with the regular expression
-\begin{Verbatim}
-[+-]? [\x20\t]* (?: [._0-9][._0-9eE+-]* | 0[xX][._0-9a-fA-FeEpP+-]* )
-\end{Verbatim}
+The special infinity and NaN float values must not be allowed with any other capitalization.  An error must be raised if they are not supported by the float implementation.
 
 
 \subsubsection{String (\texttt{str})}
@@ -425,6 +568,32 @@ Like integer literals, float literals should not be inadvertently converted into
 Unicode strings may appear in several forms.
 
 \paragraph{Unquoted strings}
+
+\begin{grammar}
+reserved_words = ("n" | "N") ("o" | "O") ("n" | "N") ("e" | "E") |
+                 ("t" | "T") ("r" | "R") ("u" | "U") ("e" | "E") |
+                 ("f" | "F") ("a" | "A") ("l" | "L") ("s" | "S") ("e" | "E")
+xid_start = unicode_xid_start_code_point
+xid_continue = unicode_xid_continue_code_point
+xid_medial = "-"
+unquoted_xid_identifier = "_"* xid_start (xid_medial? xid_continue)*
+unquoted_xid_sequence = unquoted_xid_identifier ("\u0020" ("-" | xid_continue)+)*
+si_mu_prefix = "\u00B5" | "\u03BC" | "\U0001D707"
+unquoted_dec_number_unit_string =
+    (dec_integer | dec_float)
+    ((ascii_alpha - "b" - "B" - "o" - "O" - "x" - "X" - "e" - "E" - "i" - "I" - "l") |
+     ("x" | "X") (ascii_alpha - "a".."f" - "A".."F") ascii_alpha* |
+     (ascii_alpha - "x" - "X" - "O" - "l") ascii_alpha+ |
+     si_mu_prefix ascii_alpha+)
+unquoted_dict_key_string = unquoted_dec_number_unit_string |
+                           unquoted_xid_identifier - reserved_words
+unquoted_string = (unquoted_dec_number_unit_string |
+                   (dec_integer | dec_float) "\u0020" unquoted_xid_sequence |
+                   unquoted_xid_sequence - reserved_words)
+\end{grammar}
+
+
+
 
 By default, unquoted strings are allowed if (1) they contain only printable ASCII characters (U+0020 -- U+007E), (2) they do not include the special characters |%=,*'"{}[]()|, (3) they do not meet the pattern for any of the types described so far (|none|, |bool|, |int|, |float|), or patterns that are prohibited by the types described so far (invalid |int|-like or |float|-like, or invalid keyword capitalization).  When unquoted strings are used as dict keys, they must meet additional requirements (\cref{sec:type:dict}).
 
