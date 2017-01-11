@@ -64,14 +64,14 @@
 
 \newcommand{\note}[1]{\textcolor{red}{#1}}
 
-
 \newbool{grammar@instring}
 \makeatletter
+\begingroup\catcode`\~=12\lccode`\~=`\\\lowercase{\endgroup\def\grammar@backslashchar{~}}
 \def\grammar@process@string#1{%
   \ifx#1\grammar@undefined\relax
     \let\grammar@process@string@next\relax
   \else
-    \if#1\@backslashchar\relax
+    \expandafter\ifx\grammar@backslashchar#1\relax
       \let\grammar@process@string@next\grammar@string@backslash
     \else
       #1%
@@ -138,15 +138,26 @@
 \gdef\grammar@activate{%
   \expandafter\def\expandafter\@noligs\expandafter{%
     \@noligs
-    \def'####1'{\textcolor{DarkBlue}{%
-      \textquotesingle\booltrue{grammar@instring}%
-      \grammar@process@string####1\grammar@undefined%
-      \boolfalse{grammar@instring}\textquotesingle}%
+    \def'####1'{%
+      \begingroup
+      \booltrue{grammar@instring}%
+      \textcolor{DarkBlue}{%  
+        \textquotesingle
+        \def"{{\detokenize{"}}}%
+        \grammar@process@string####1\grammar@undefined%
+        \textquotesingle}%
+      \boolfalse{grammar@instring}%
+      \endgroup
       \expandafter\@ifnextchar\grammar@charlb{\grammar@string@repeat}{}}%
-    \def"####1"{\textcolor{DarkBlue}{%
-      \detokenize{"}\booltrue{grammar@instring}%
-      \grammar@process@string####1\grammar@undefined
-      \boolfalse{grammar@instring}\detokenize{"}}%
+    \def"####1"{%
+      \begingroup
+      \booltrue{grammar@instring}%
+      \textcolor{DarkBlue}{%
+        \detokenize{"}%
+        \def'{{\textquotesingle}}%
+        \grammar@process@string####1\grammar@undefined
+        \detokenize{"}}%
+      \endgroup
       \expandafter\@ifnextchar\grammar@charlb{\grammar@string@repeat}{}}%
     \def={\ifbool{grammar@instring}%
        {\detokenize{=}}%
@@ -174,7 +185,8 @@
        {\textcolor{DarkRed}{\detokenize{(}}}}%
     \def){\ifbool{grammar@instring}%
        {\detokenize{)}}%
-       {\textcolor{DarkRed}{\detokenize{)}}}}%
+       {\textcolor{DarkRed}{\detokenize{)}}}%
+       \expandafter\@ifnextchar\grammar@charlb{\grammar@string@repeat}{}}%
     \def[{\ifbool{grammar@instring}%
        {\detokenize{[}}%
        {\textcolor{DarkRed}{\detokenize{[}}}}%
@@ -352,38 +364,38 @@ The list of prohibited literal code points is current as of Unicode 9.0.0 (2016-
 The form of a validated Unicode string or stream after the removal of a single, leading, optional BOM U+FEFF and after newline normalization (|\r\n| $\rightarrow$ |\n|) may be summarized as follows.  Note that this does \emph{not} describe valid \bespon\ data, merely the necessary form of a Unicode string or stream that \emph{may} contain valid \bespon\ data.  A validated Unicode string or stream is a necessary but not sufficient requirement.
 \begin{grammarbox}{Validated Unicode string or stream}
 \begin{grammar}
-unicode_code_points = "\u0000".."\U0010FFFF"
+unicode_code_point = "\u0000".."\U0010FFFF"
 unicode_category_cc = "\u0000".."\u001F" | "\u007F".."\u009F"
-unicode_newline_codepoints = "\u000A".."\u000D" | "\u0085" | "\u2028" | "\u2029"
+unicode_newline_codepoint = "\u000A".."\u000D" | "\u0085" | "\u2028" | "\u2029"
 unicode_property_bidi_control = "\u061C" | "\u200E".."\u200F" | 
                                 "\u202A".."\u202E" | "\u2066".."\u2069"
-unicode_surrogates = "\uD800".."\uDFFF"
+unicode_surrogate = "\uD800".."\uDFFF"
 bom = "\uFEFF"
-unicode_noncharacters = "\uFDD0".."\uFDEF" | "\uFFFE" | "\uFFFF" |
-                        "\U0001FFFE" | "\U0001FFFF" |
-                        "\U0002FFFE" | "\U0002FFFF" |
-                        "\U0003FFFE" | "\U0003FFFF" |
-                        "\U0004FFFE" | "\U0004FFFF" |
-                        "\U0005FFFE" | "\U0005FFFF" |
-                        "\U0006FFFE" | "\U0006FFFF" |
-                        "\U0007FFFE" | "\U0007FFFF" |
-                        "\U0008FFFE" | "\U0008FFFF" |
-                        "\U0009FFFE" | "\U0009FFFF" |
-                        "\U000AFFFE" | "\U000AFFFF" |
-                        "\U000BFFFE" | "\U000BFFFF" |
-                        "\U000CFFFE" | "\U000CFFFF" |
-                        "\U000DFFFE" | "\U000DFFFF" |
-                        "\U000EFFFE" | "\U000EFFFF" |
-                        "\U000FFFFE" | "\U000FFFFF" |
-                        "\U0010FFFE" | "\U0010FFFF"
-valid_code_points = unicode_code_points
-                     - (unicode_category_cc - "\t" - "\n")
-                     - (unicode_newline_codepoints - "\n")
-                     - unicode_property_bidi_control
-                     - unicode_surrogates
-                     - bom
-                     - unicode_noncharacters
-validated_string_or_stream = valid_code_points+
+unicode_noncharacter = "\uFDD0".."\uFDEF" | "\uFFFE" | "\uFFFF" |
+                       "\U0001FFFE" | "\U0001FFFF" |
+                       "\U0002FFFE" | "\U0002FFFF" |
+                       "\U0003FFFE" | "\U0003FFFF" |
+                       "\U0004FFFE" | "\U0004FFFF" |
+                       "\U0005FFFE" | "\U0005FFFF" |
+                       "\U0006FFFE" | "\U0006FFFF" |
+                       "\U0007FFFE" | "\U0007FFFF" |
+                       "\U0008FFFE" | "\U0008FFFF" |
+                       "\U0009FFFE" | "\U0009FFFF" |
+                       "\U000AFFFE" | "\U000AFFFF" |
+                       "\U000BFFFE" | "\U000BFFFF" |
+                       "\U000CFFFE" | "\U000CFFFF" |
+                       "\U000DFFFE" | "\U000DFFFF" |
+                       "\U000EFFFE" | "\U000EFFFF" |
+                       "\U000FFFFE" | "\U000FFFFF" |
+                       "\U0010FFFE" | "\U0010FFFF"
+valid_code_point = unicode_code_point
+                   - (unicode_category_cc - "\t" - "\n")
+                   - (unicode_newline_codepoint - "\n")
+                   - unicode_property_bidi_control
+                   - unicode_surrogate
+                   - bom
+                   - unicode_noncharacter
+validated_string_or_stream = valid_code_point+
 \end{grammar}
 \end{grammarbox}
 
@@ -410,10 +422,10 @@ Implementations in languages that have Unicode normalization libraries are stron
 space = "\x20"
 spaces = space+
 tab = "\x09" = "\t"
-indentation_code_points = space | tab
-indentation = indentation_code_points+
+indent_code_point = space | tab
+indent = indentation_code_point+
 newline = "\x0A" = "\n"
-whitespace = (indentation_code_points | newline)+
+whitespace = (indent_code_points | newline)+
 unicode_whitespace = unicode_property_white_space
                    = "\u0009".."\u000D" | "\u0020" | "\u0085" | "\u00A0" | 
                      "\u1680" | "\u2000".."\u200A" | "\u2028" | "\u2029" |
@@ -446,6 +458,7 @@ sign = "+" | "-"
 lower_ascii_alpha = "a".."z"
 upper_ascii_alpha = "A".."Z"
 ascii_alpha = lower_ascii_alpha | upper_ascii_alpha
+ascii_code_point = "\u0000".."\u007F"
 \end{grammar}
 
 
@@ -491,23 +504,23 @@ The literal strings |true| and |false|.  Any other capitalization of either must
 Integer literals may take decimal, hex, octal, or binary forms.  Single underscores are allowed to separate adjoining digits, and after base prefixes, to aid visual parsing.
 \paragraph{Decimal}
 \begin{grammar}
-dec_integer = (sign space*)? (zero | nonzero_dec_digit ("_"? dec_digit)*) 
+dec_integer = (sign indentation*)? (zero | nonzero_dec_digit ("_"? dec_digit)*) 
 \end{grammar}
 
 \paragraph{Hexadecimal}
 \begin{grammar}
-hex_integer = (sign space*)? "0x" "_"?
+hex_integer = (sign indent*)? "0x" "_"?
               (lower_hex_digits_underscores | upper_hex_digits_underscores)
 \end{grammar}
 
 \paragraph{Octal}
 \begin{grammar}
-oct_integer = (sign space*)? "0o" "_"? oct_digits_underscores
+oct_integer = (sign indent*)? "0o" "_"? oct_digits_underscores
 \end{grammar}
 
 \paragraph{Binary}
 \begin{grammar}
-bin_integer = (sign space*)? "0b" "_"? bin_digits_underscores
+bin_integer = (sign indent*)? "0b" "_"? bin_digits_underscores
 \end{grammar}
 
 \paragraph{General integer}
@@ -517,25 +530,40 @@ integer = dec_integer | hex_integer | oct_integer | bin_integer
 
 Hex, octal, and binary integers must use lowercase |x|, |o|, and |b| in their base prefixes.  This prevents the confusable possibility of octal |0O|\vmeta{digits} while maintaining consistency across bases.  Hex integers may use either uppercase or lowercase letters, but must not mix cases.  Integers must not have leading zeros, to prevent confusion with languages that use a leading zero to indicate octal values.
 
-Integer precision is not specified, but an absolute minimum of 32 bits is expected.  This allows the comfortable substitution of a 64-bit float in languages without an integer type.  Implementations must check for integer overflow when loading data, and raise an error if any integer cannot fit in the specified integer type.
+Integer precision is not specified, but an absolute minimum of signed 32 bits is expected.  This allows the comfortable substitution of a 64-bit float in languages without an integer type.  Implementations must check for integer overflow when loading data, and raise an error if any integer cannot fit in the specified integer type.
 
+\textcolor{red}{\bfseries In all grammar for line wrapping/unwrapping, need to find a way to express a pattern that is repeated exactly.  Need an indent variable that refers to any one specific sequence that meets the indent pattern, and that is repeated multiple times.  Basically, need a regex backreference.}
 
+Note that the integer definitions above do not account for the potential of line wrapping occurring between the sign and the first digit; the definitions apply after any line unwrapping.  In indentation-based form, unwrapping may be summarized as follows.
+\begin{grammar}
+common_indent = indent*
+wrapped_integer = common_indent preceding_content* (integer_sign) indent* "\n"
+                  common_indent indent+ integer_unsigned_value
+unwrapped_integer = integer_sign integer_unsigned_value
+\end{grammar}
+A line that continues an integer must be indented more than the previous line, with exactly the same common indentation.  Meanwhile, in inline form, the only requirement is that both lines share the minimum inline indentation.
+\begin{grammar}
+inline_indent = indent*
+wrapped_integer = inline_indent indent* preceding_content* (integer_sign) indent* "\n"
+                  inline_indent indent* integer_unsigned_value
+\end{grammar}
+Full details about line unwrapping algorithms are provided in \cref{sec:indentation}.
 
 \subsubsection{Float (\texttt{float})}
 
-Float literals may take decimal or hexadecimal forms.  Hex form is convenient for avoiding small rounding errors upon round tripping.  As with integers, single underscores are allowed between adjacent digits and after the hex base prefix.  Single underscores before the exponent are also allowed.
+Float literals may take decimal or hexadecimal forms.  Hex form is convenient for avoiding small rounding errors upon round tripping.  As with integers, single underscores are allowed between adjacent digits and after the hex base prefix.  Single underscores before the exponent are also allowed.  Also as with integers, the float definitions apply after any line unwrapping has been performed (\cref{sec:indentation}).
 
 \paragraph{Decimal}
 \begin{grammar}
 dec_exponent = ("e" | "E") sign? dec_digits_underscores
-dec_float = (sign space*)? (zero | nonzero_dec_digit ("_"? digit)*)
+dec_float = (sign indent*)? (zero | nonzero_dec_digit ("_"? digit)*)
             ("." dec_digits_underscores ("_"? dec_exponent)? | "_"? dec_exponent)
 \end{grammar}
 
 \paragraph{Hexadecimal}
 \begin{grammar}
 hex_exponent = ("p" | "P") sign? digit ("_"? digit)*
-hex_float = (sign space*)? "0x" "_"?
+hex_float = (sign indent*)? "0x" "_"?
             (lower_hex_digits_underscores
                 ("." lower_hex_digits_underscores ("_"? hex_exponent)? | 
                  "_"? hex_exponent) |
@@ -546,8 +574,8 @@ hex_float = (sign space*)? "0x" "_"?
 
 \paragraph{Special values}
 \begin{grammar}
-infinity = (sign space*)? "inf"
-not_a_number = (sign space*)? "nan"
+infinity = (sign indent*)? "inf"
+not_a_number = (sign indent*)? "nan"
 \end{grammar}
 
 \paragraph{General float}
@@ -569,46 +597,130 @@ Unicode strings may appear in several forms.
 
 \paragraph{Unquoted strings}
 
+The different varieties of unquoted strings are defined below.  As with integers and floats, these patterns are applied after any relevant line unwrapping has been performed (\cref{sec:indentation}).
 \begin{grammar}
-reserved_words = ("n" | "N") ("o" | "O") ("n" | "N") ("e" | "E") |
-                 ("t" | "T") ("r" | "R") ("u" | "U") ("e" | "E") |
-                 ("f" | "F") ("a" | "A") ("l" | "L") ("s" | "S") ("e" | "E")
-xid_start = unicode_xid_start_code_point
-xid_continue = unicode_xid_continue_code_point
-xid_medial = "-"
-unquoted_xid_identifier = "_"* xid_start (xid_medial? xid_continue)*
-unquoted_xid_sequence = unquoted_xid_identifier ("\u0020" ("-" | xid_continue)+)*
+reserved_word = ("n" | "N") ("o" | "O") ("n" | "N") ("e" | "E") |
+                ("t" | "T") ("r" | "R") ("u" | "U") ("e" | "E") |
+                ("f" | "F") ("a" | "A") ("l" | "L") ("s" | "S") ("e" | "E") |
+                ("i" | "I") ("n" | "N") ("f" | "F") |
+                ("n" | "N") ("a" | "A") ("n" | "N")
+hangul_filler = "\u115F" | "\u1160" | "\u3164" | "\uFFA0"
+xid_start = unicode_xid_start_code_point - hangul_filler
+xid_continue = unicode_xid_continue_code_point - hangul_filler
+unquoted_ascii_identifier = "_"* ascii_alpha (ascii_alpha | dec_digit | "_")*
+unquoted_unicode_identifier = "_"* xid_start xid_continue*
+unquoted_ascii_sequence = unquoted_ascii_identifier
+                          ("\u0020" (ascii_alpha | dec_digit | "_")+)*
+unquoted_unicode_sequence = unquoted_xid_identifier
+                            ("\u0020" xid_continue+)*
 si_mu_prefix = "\u00B5" | "\u03BC" | "\U0001D707"
-unquoted_dec_number_unit_string =
+unquoted_ascci_dec_number_unit_string =
     (dec_integer | dec_float)
     ((ascii_alpha - "b" - "B" - "o" - "O" - "x" - "X" - "e" - "E" - "i" - "I" - "l") |
      ("x" | "X") (ascii_alpha - "a".."f" - "A".."F") ascii_alpha* |
      (ascii_alpha - "x" - "X" - "O" - "l") ascii_alpha+ |
-     si_mu_prefix ascii_alpha+)
-unquoted_dict_key_string = unquoted_dec_number_unit_string |
-                           unquoted_xid_identifier - reserved_words
-unquoted_string = (unquoted_dec_number_unit_string |
-                   (dec_integer | dec_float) "\u0020" unquoted_xid_sequence |
-                   unquoted_xid_sequence - reserved_words)
+     "%")
+     
+unquoted_unicode_dec_number_unit_string =
+    unquoted_ascci_dec_number_unit_string |
+    (dec_integer | dec_float) si_mu_prefix ascii_alpha+
+unquoted_ascii_dict_key = unquoted_ascci_dec_number_unit_string |
+                          unquoted_ascii_identifier - reserved_word
+unquoted_unicode_dict_key_string = unquoted_unicode_dec_number_unit_string |
+                                   unquoted_unicode_identifier - reserved_word
+unquoted_ascii_general_string = unquoted_ascci_dec_number_unit_string |
+                                unquoted_ascii_sequence - reserved_word
+unquoted_unicode_general_string = unquoted_unicode_dec_number_unit_string |
+                                  unquoted_unicode_sequence - reserved_word
+\end{grammar}
+
+Unquoted strings come in ASCII and Unicode variants.  By default, the ASCII variants must be used.  An implementation must provide an |unquoted_unicode| option to enable the Unicode variants.  However, the Unicode variants are not used by default because even the relatively restricted range of Unicode code points with the properties |XID_Start| and |XID_Continue| include a number of homoglyphs that may be confused with the ASCII punctuation characters that have special meaning in \bespon.  When |unquoted_unicode| is enabled, special care is required to counter the additional potential for security issues.
+
+There are three categories of unquoted strings.  Unquoted strings may meet an identifier pattern, or be an integer or float followed immediately by a limited range of characters that can represent a unit.  These are the only unquoted strings that are allowed as keys in dict or dict-like collection types.  There are also general unquoted strings, which may be used everywhere else.  Unlike the previous categories, these may contain multiple space-separated ``words.''
+
+In all cases, the set of valid unquoted strings excludes the reserved words (|none|, |true|, |false|, |inf|, |nan|) and all capitalization variants thereof.
+
+Implementations must provide an |unquoted_strings| option that completely disables unquoted strings.
+
+
+\paragraph{Quoted escaped strings}
+
+\begin{grammar}
+non_ignorable_valid_code_point = valid_code_point - unicode_default_ignorable_code_point
+general_escape = "\\x" (lower_hex_digit | upper_hex_digit){2} |
+                 "\\u" (lower_hex_digit | upper_hex_digit){4} |
+                 "\\U" (lower_hex_digit | upper_hex_digit){8} |
+                 "\\u" "{" (lower_hex_digit | upper_hex_digit){1,6} "}"
+short_escape =
+    "\\" ("\\" | "'" | '"' | "a" | "b" | "e" | "f" | "n" | "r" | "t" | "v" |
+          "/" | space* "\n")
+escape = general_escape | short_escape
+empty_string = "''" | '""' | "``"
+basic_inline_quoted_string =
+    "'" (valid_code_point - "\\" - "\n" - "'" | escape)*
+        (non_ignorable_valid_code_point - "\\" - "\n" - "'" | escape)+
+        (valid_code_point - "\\" - "\n" - "'" | escape)* "'" |
+    '"' (valid_code_point - "\\" - "\n" - '"' | escape)*
+        (non_ignorable_valid_code_point - "\\" - "\n" - '"' | escape)+
+        (valid_code_point - "\\" - "\n" - '"' | escape)* '"' |
+    "`" (valid_code_point - "\n" - "`")*
+        (non_ignorable_valid_code_point - "\n" - "`")+
+        (valid_code_point - "\n" - "`")* "`"
+advanced_inline_quoted_string =
+    "'"{n: n>2}
+       (((valid_code_point - "\\" - "\n" | escape)*
+         (non_ignorable_valid_code_point - "\\" - "\n" | escape)+
+         (valid_code_point - "\\" - "\n" | escape)*) - "'"{n}) "'"{n} |
+    '"'{n: n>2}
+       (((valid_code_point - "\\" - "\n" | escape)*
+         (non_ignorable_valid_code_point - "\\" - "\n" | escape)+
+         (valid_code_point - "\\" - "\n" | escape)*) - '"'{n}) '"'{n} |
+    "`"{n: n>2}
+       (((valid_code_point - "\n")*
+         (non_ignorable_valid_code_point - "\\" - "\n")+
+         (valid_code_point - "\n")*) - "`"{n}) "`"{n}
 \end{grammar}
 
 
 
 
-By default, unquoted strings are allowed if (1) they contain only printable ASCII characters (U+0020 -- U+007E), (2) they do not include the special characters |%=,*'"{}[]()|, (3) they do not meet the pattern for any of the types described so far (|none|, |bool|, |int|, |float|), or patterns that are prohibited by the types described so far (invalid |int|-like or |float|-like, or invalid keyword capitalization).  When unquoted strings are used as dict keys, they must meet additional requirements (\cref{sec:type:dict}).
+\begin{grammar}
+common_indent = indent*
+string_indent = common_indent indent*
+block_string =
+    line_start
+        (common_indent preceding_content | string_indent) "'"{n: n>2} space* "\n"
+        ((string_indent ((valid_code_point - "\\" - "\n" | escape)* - "'"{n}) |
+          indent*) "\n")+
+        string_indent "'"{n} "/" |
+    line_start
+        (common_indent preceding_content | string_indent) '"'{n: n>2} space* "\n"
+        ((string_indent ((valid_code_point - "\\" - "\n" | escape)* - '"'{n}) |
+          indent*) "\n")+
+        string_indent '"'{n} "/" |
+    line_start
+        (common_indent preceding_content | string_indent) "`"{n: n>2} space* "\n"
+        ((string_indent ((valid_code_point - "\n")* - "`"{n}) |
+          indent*) "\n")+
+        string_indent "`"{n} "/"
+\end{grammar}
 
-An unquoted string ends at the next character not allowed in an unquoted string, at the next line consisting only of whitespace, or at the next line with an indentation level that does not match that of the string, whichever is found first.  Leading and trailing whitespace are stripped from an unquoted string.  When characters outside the printable ASCII range are enabled in unquoted strings, strings must not begin or end with Unicode whitespace.
+As with integers, floats, and unquoted strings, the inline (non-block) string patterns are applied after any relevant line unwrapping has been performed (\cref{sec:indentation}).  That is, inline strings may be wrapped onto multiple lines, provided that the indentation meets the unwrapping requirements.  The wrapped syntax this may be summarized as follows.
+\begin{grammar}
+common_indent = indent*
+wrapped_inline_string = common_indent preceding_content* string_delim string_body_1
+                        (common_indent indent* string_body_n "\n")*
+                        common_indent indent* string_body_last string_delim 
+\end{grammar}
+Note that any wrapped line cannot consist solely of Unicode whitespace and |Default_Ignorable_Code_Point|s.  In unwrapping, |\n| is converted to a space if not preceded by Unicode whitespace, and removed otherwise.
 
-An unquoted string may contain |\n| to wrap it onto multiple lines.  When this is done, all lines must have the same indentation and must not begin with Unicode whitespace after common indentation is stripped, except that the first line may have different indentation if it is not at the beginning of the line (see indentation rules, \cref{sec:indentation}).  The string is unwrapped by removing common indentation and then stripping |\n| when preceded by Unicode whitespace and replacing |\n| with a space otherwise.
+Quoted strings using the single and double quotation marks U+0027 (|'|) and U+0022 (|"|) allow backslash escapes to represent Unicode code points.  By default, all Unicode code points may be represented by backslash escapes, with the exception of the surrogate code points.  Backslash escapes use the hex notations |\xHH| (8-bit), |\uHHHH| (16-bit), and |\UHHHHHHHH| (32-bit), as well as |\u{H...H}| (hex value consisting of 1--6 characters).  All of these must be allowed in loading.  The |\u{H...H}| notation should be preferred in dumping.
 
-The behavior of unquoted strings may be modified with parser directives (\cref{sec:parser-directive}).  Unquoted strings may be disabled with a parser directive.  Unquoted Unicode characters beyond the ASCII range may also be enabled with a parser directive.  However, this is not the default behavior, since the full Unicode range contains many characters that closely resemble the special characters or are invisible or nearly invisible.  When the full Unicode range is enabled unquoted, it is easy to create text that appears to be a keyword or number, but actually contains other characters and thus will be treated as a string instead.
+Common short escapes are also defined:  |\\|, |\'|, |\"|, |\a|, |\b|, |\e|, |\f|, |\n|, |\r|, |\t|, |\v|.  The escape |\/| should be allowed for cases when compatibility with JSON strings is desired.  The escape |\|\vmeta{space*}|\n| is replaced with the empty string, so that a string containing no whitespace may be wrapped across multiple lines.
 
+The strings delimited with backticks U+0060 (|`|) are literal strings.  Backlash escapes are not allowed.  In literal strings delimited by |```| or a longer series of backticks, anything may occur except for the delimiter sequence (or, in inline strings, a sequence consisting solely of whitespace and |Default_Ignorable_Code_Point|s).  In inline literal strings, if the initial non-whitespace/final non-whitespace character is a backtick |`|, then the first/last character is stripped if it is a space.  This allows |``` ` ```| to represent the single backtick |`| with no leading or trailing spaces.
 
-\paragraph{Quoted escaped strings}
-
-Quoted escaped strings are quoted with double quotation marks U+0022 (|"|).  They allow code points to be represented with backslash escapes, including all code points that must not appear literally except for the UTF-16 surrogates.  An implementation in a language that allows unpaired surrogates in its Unicode strings may provide an option to allow escaped surrogates, but this must not be the default, and unescaped unpaired surrogates must always be prohibited.  Backslash escapes use the hex notations |\xHH| (8-bit), |\uHHHH| (16-bit), and |\UHHHHHHHH| (32-bit), as well as |\u{H...H}| (hex value consisting of 1--6 characters).  The |\u{H...H}| notation should be preferred.
-
-Common short escapes are also defined:  |\\|, |\'|, |\"|, |\a|, |\b|, |\e|, |\f|, |\n|, |\r|, |\t|, |\v|.  The escape |\/| should be allowed for cases when compatibility with JSON strings is desired.  The escape |\|\vmeta{optional\_spaces}|\n| is replaced with the empty string, so that a string containing no whitespace may be wrapped across multiple lines.
+\textcolor{red}{\bfseries REVISE AND REORGANIZE}
 
 The exact behavior of a quoted escaped string depends on the quotation mark delimiters.
 \begin{itemize}
@@ -642,7 +754,7 @@ Byte strings may be unquoted or quoted, following the same rules as Unicode stri
 
 \subsubsection{Base16 (hexadecimal) (\texttt{b16})}
 
-A base16 string is an explicitly typed Unicode string that matches the regular expression |[0-9a-fA-F]*| once whitespace is stripped.  It is treated as a hexadecimal encoding of a byte string.
+A base16 string is an explicitly typed Unicode string that matches the regular expression |[0-9a-f]*| or |[0-9A-F]*| once whitespace is stripped.  It is treated as a hexadecimal encoding of a byte string.  As usual, hex data may not mix capitalizations.
 
 
 \subsubsection{Base64 (\texttt{b64})}
@@ -658,11 +770,11 @@ An empty collection type is not allowed to be indicated solely by an explicit ty
 \begin{Verbatim}
 (list)>
 \end{Verbatim}
-does not represent a valid empty list.  Instead,
+does not represent a valid empty list.  Likewise,
 \begin{Verbatim}
 *
 \end{Verbatim}
-or
+does not indicate an empty list.  The sequence
 \begin{Verbatim}
 []
 \end{Verbatim}
@@ -691,7 +803,7 @@ If the indentation characters immediately adjoining the |*| on both sides are ta
 Only a single |*| is allowed on a line.  A list of lists would require multiple |*| on multiple lines.  For example,
 \begin{Verbatim}
 *
-  * A string in a list with a list inside.
+  * A string in a list with a list inside
 \end{Verbatim}
 This prevents situations such as
 \begin{Verbatim}
@@ -704,63 +816,63 @@ In inline syntax, the beginning and end of a list are denoted by square brackets
 \begin{Verbatim}
 [1, 2, 3]
 \end{Verbatim}
-Trailing commas are allowed.
+Trailing commas are allowed.  Whitespace between elements is discarded.
 
 
 \subsection{Dictionary (\texttt{dict})}
 \label{sec:type:dict}
 
-A dictionary is an associative array that maps objects with scalar types to objects with arbitrary types.  Keys must be unique and duplicate keys are not allowed.
+A dictionary is an associative array that maps objects with scalar types to objects with arbitrary types.  Keys must be unique; duplicate keys are not allowed.
 
-Dictionary keys must be scalar types by default, since these will have the best cross-language support.  When possible, it is recommended that only Unicode strings be used as keys.  Some languages perform type coercion on some non-string keys.  For example, Python treats |True|, |1|, and |1.0| as identical keys; |False|, |0|, and |0.0| are also treated as identical.  In addition, using floats as keys can be problematic due to rounding errors.
+Dictionary keys must be scalar types by default, since these will have the best cross-language support and since these will generally be immutable types.  When possible, it is recommended that only Unicode strings be used as keys.  Some languages perform type coercion on some non-string keys.  For example, Python treats |True|, |1|, and |1.0| as identical keys; |False|, |0|, and |0.0| are also treated as identical.  In addition, using floats as keys can be problematic due to rounding errors.
 
-Additional restrictions are placed on unquoted strings that are used as dict keys, regardless of any built-in or custom typing applied to the strings.  These unquoted strings must not contain the period or full stop U+002E (|.|), since the period is reserved for keypaths (\cref{sec:keypath}).  Strings that contain a literal period must be quoted.  The only exception is that an implementation must allow periods in extended or user-defined numerical types, which must be explicitly typed (unless the implementation allows a regex to be specified to enable implicit typing, in which case it is allowing custom behavior beyond the \bespon\ spec).
+Additional restrictions are placed on unquoted strings that are used as dict keys, regardless of any built-in or custom typing applied to the strings.  These cannot contain spaces, as other unquoted strings can.
 
 In indentation-based form, a dict key must be at the beginning of a line.  The only exception is that a key may follow a |*| if the dict is in a list (since the |*| does not affect start-of-line state).  The key is separated from the value by an equals sign U+003D (|=|), which must be on the same line as the end of the key.  For example,
 \begin{Verbatim}
 key = value
 \end{Verbatim}
-The value must be indented relative to the key, except that a quoted string may have the same indentation as the key if the opening delimiter is on the same line as the end of the key.
+If the value is on any lines other than the line on which the key ends, it must be indented relative to the key, except that a quoted string may have the same indentation as the key if the opening delimiter is on the same line as the end of the key.
 
 In inline form, the beginning and end of a dict are denoted by curly braces U+007B and U+007D (|{}|), with key-value pairs separated by commas U+002C (|,|).  For example,
 \begin{Verbatim}
 {key1 = value1, key2 = value2}
 \end{Verbatim}
-Trailing commas are allowed.
+Trailing commas are allowed and whitespace between elements is discarded.
 
-Key can be explicitly typed, but cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}).  Quoted keys can used the |newline| advanced type option (\cref{sec:advanced-options-and-types:options}).  Keys cannot use the |label| advanced type option (\cref{sec:advanced-options-and-types:options}), to maintain symmetry with advanced types not being allowed.
+Key can be explicitly typed, but cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}).  Only scalar types are allowed.  Quoted keys can used the |newline| advanced type option (\cref{sec:advanced-options-and-types:options}).  Keys cannot use the |label| advanced type option (\cref{sec:advanced-options-and-types:options}), to maintain symmetry with advanced types not being allowed.
 
 
 \section{Extended types}
 
-Core types must be supported unless a programming language lacks them.  Implementations are encouraged to support extended types, but this is not required.  By default, all extended types require the use of an explicit type declaration.  An implementation may provide an option to enable implicit typing of some extended types, but this must not be the default and must be considered a custom addition beyond the \bespon\ spec.  An implementation must raise an error when an unsupported extended type is used.
+Core types must be supported unless a programming language lacks them.  Implementations are encouraged to support extended types, but this is not required.  By default, extended types require the use of an explicit type declaration unless specifically noted otherwise.  An implementation must raise an error when an unsupported extended type is encountered.
 
 
 \subsection{Extended scalar types}
 
 \subsubsection{Decimal (\texttt{decimal})}
 
-Decimal floating point number, which represents decimal numbers exactly.  The |decimal| type must use the combined decimal parts of the |float| and |int| regexes.  Since the typing is explicit, there is no need to force a decimal point followed by a zero (|.0|) for integer-valued decimals; this is only necessary in the |float| case because implicit typing would otherwise make it impossible to distinguish integer-valued floats from ints.  As in the |int| and |float| cases, a value that would cause an overflow must result in an error.
+Decimal floating point number, which represents decimal numbers exactly.  The |decimal| type may be applied to numbers that would otherwise be floats or ints.  Since the typing is explicit, there is no need to force a decimal point followed by a zero (|.0|) for integer-valued decimals; this is only necessary in the |float| case because implicit typing would otherwise make it impossible to distinguish integer-valued floats from ints.  As in the |int| and |float| cases, a value that would cause an overflow must result in an error.
 
 
 \subsubsection{Rational (\texttt{rational})}
 
-Rational number.  The |rational| type must use the |int| regex, followed by the solidus U+002F (|/|) surrounded by optional spaces and tabs, followed by the |int| regex.
+Rational number.  The |rational| type applies to two integers separated by a solidus U+002F (|/|), with optional indentation around the solidus.
 
 
 \subsubsection{Complex (\texttt{complex})}
 
-Complex number.  The |complex| type must use the combined decimal parts of the |float| and |int| regexes to identify valid numbers.  At least one of the real and imaginary parts must be present.  The imaginary part must use a number followed immediately by |i|.  Precision is not specified, but a 64-bit float is expected for both the real and the imaginary parts.  As in the |int| and |float| cases, a value that would cause an overflow must result in an error.
+Complex number.  An implicitly typed complex number consists of a float that is immediately followed by an |i| that represents the imaginary part, along with a second optional float representing the real part.  An explicitly typed |complex| may be applied to integer values as well, and only requires either the real or imaginary part (rather than always requiring the imaginary part as in the implicitly typed case).  Precision is not specified, but a 64-bit float is expected for both the real and the imaginary parts.  As in the |int| and |float| cases, a value that would cause an overflow must result in an error.
 
 
 \subsubsection{Arbitrary precision integer (\texttt{bigint})}
 
-This type must use at least the decimal part of the |int| regex.  Using the full |int| regex is encouraged when practical.
+This type must use at least the decimal part of the |int| pattern.  Using the full |int| pattern is encouraged when practical.
 
 
 \subsubsection{Arbitrary precision float (\texttt{bigfloat})}
 
-This type must use the combined decimal parts of the |float| and |int| regexes.  Using the full regexes is encouraged when practical.
+This type must use the combined decimal parts of the |float| and |int| patterns.  Using the full patterns is encouraged when practical.
 
 
 \subsubsection{Date, time, and datetime (\texttt{date}, \texttt{time}, and \texttt{datetime})}
@@ -771,8 +883,7 @@ All type instances that lack RFC 3339 |time-offset| do not in and of themselves 
 
 An implementation that supports any of these types must include in its documentation any limitations or shortcomings of the objects to which these types are converted.  This includes potential issues related to leap years, daylight savings time, and leap seconds.
 
-When creating time data, the full available fractional second precision should be used by default.  When loading time data, if the second precision exceeds the capacity of the available time implementation, the second data must be truncated rather than rounded.
-
+When creating time data, the full available fractional second precision must be used by default.  When loading time data, if the second precision exceeds the capacity of the available time implementation, an error must be raised.  Implementations should provide an option to truncate, not round, the second data instead of raising an error.
 
 
 \subsection{Extended collection types}
@@ -795,25 +906,25 @@ A list-like collection of homogenous types.  Typical usage would involve the def
 
 \section{Comments}
 
-Comments use the percent sign U+0025 (|%|).  There are three forms of comments, some of which closely follow the syntax for quoted strings.
+Comments use the number sign U+0023 (|#|).  There are three forms of comments, some of which closely follow the syntax for quoted strings.
 
 Comments are not ignored in determining whether an object is at the beginning of a line.  When data is represented in indentation-based form, an inline comment at the beginning of a line is taken into account in determining the effective indentation of anything that follows it; comments are not simply stripped.
 
 \paragraph{Line comments}
 
-A single |%| starts a comment that continues until the end of the line.  Two |%%| in a row indicates the start of a line comment followed by a literal |%|, which is discarded as part of the comment.
+A single |#| starts a comment that continues until the end of the line.  Two |#| in a row indicates the start of a line comment followed by a literal |#|, which is discarded as part of the comment.
 
 
 \paragraph{Inline comments}
 
-An inline comment starts with at least three percent signs, |%%%{1,n}| and continues until the same number is encountered.  It follows the same rules as the corresponding quoted strings.  An inline comment cannot contain any lines consisting solely of whitespace.  It may begin and end on the same line.
+An inline comment starts with at least three percent signs, |###{1,n}| and continues until the same number is encountered.  It follows the same rules as the corresponding quoted strings.  An inline comment cannot contain any lines consisting solely of whitespace.  It may begin and end on the same line.
 
 If the opening delimiter of an inline comment is at the beginning of a line, then the entire comment must use the indentation of the opening delimiter.  Otherwise, the indentation of all lines of the comment except for the first line must be identical and follow the indentation rules for quoted strings (\cref{sec:indentation}).
 
 
 \paragraph{Multiline comments}
 
-A multiline comment begins with |%%%{1,n}| and continues until |%%%{1,n}/| is found.  It may contain anything except for a sequence of |%| of the same length as the delimiters.  The opening delimiter must only be followed by whitespace on its line, and the closing delimiter must only be preceded by whitespace on its line.  The closing delimiter must not be followed immediately by a slash |/|.
+A multiline comment begins with |###{1,n}| and continues until |###{1,n}/| is found.  It may contain anything except for a sequence of |#| of the same length as the delimiters.  The opening delimiter must only be followed by whitespace on its line, and the closing delimiter must only be preceded by whitespace on its line.  The closing delimiter must not be followed immediately by a slash |/|.
 
 If the opening delimiter of a multiline comment is at the beginning of a line, then all lines in the comment must have at least the indentation of the opening delimiter or be completely whitespace, and the closing delimiter must have the same indentation as the opening delimiter.  Otherwise, the minimum indentation level for the comment is inherited from the line on which it starts, and all lines must either consist of whitespace or be indented by at least as much as the ending delimiter. This follows the indentation rules for quoted strings (\cref{sec:indentation}).
 
@@ -840,7 +951,7 @@ Because of the usability and security implications of right-to-left text, \bespo
 
 This approach to right-to-left text makes working with it more difficult than left-to-right text.  That is not ideal, but it seems to be the only solution that is guaranteed to prevent ambiguity under typical circumstances.
 
-The rules for code points with bidi types R and AL are also applied to all code points in the \href{http://www.unicode.org/faq/private_use.html}{Private Use Areas} (U+E000 through U+F8FF, U+F0000 through U+FFFFD, and U+100000 through  U+10FFFD).  These code points should be very rare, and their use for right-to-left languages even rarer.  However, this approach ensures that even in that eventuality, there is no danger of ambiguity.  (For an example of PUA usage with bidi type R, see \href{http://scripts.sil.org/cms/scripts/page.php?item_id=SILPUAassignments}{SIL Corporate PUA Assignments}.)
+The rules for code points with bidi types R and AL are also applied to all code points in the \href{http://www.unicode.org/faq/private_use.html}{Private Use Areas} (U+E000 through U+F8FF, U+F0000 through U+FFFFD, and U+100000 through  U+10FFFD), if those are allowed as literals.  These code points should be very rare, and their use for right-to-left languages even rarer.  However, this approach ensures that even in that eventuality, there is no danger of ambiguity.  (For an example of PUA usage with bidi type R, see \href{http://scripts.sil.org/cms/scripts/page.php?item_id=SILPUAassignments}{SIL Corporate PUA Assignments}.)  The R and AL types are defined for unassigned code points, and must be used for those code points if unassigned code point literals are enabled.
 
 
 
@@ -936,9 +1047,9 @@ is equivalent to
 \begin{Verbatim}
 key = {subkey = value}
 \end{Verbatim}
-The elements in a keypath must be valid unquoted strings and must not contain Unicode whitespace, unless escaping is performed as described below.  Indentation characters are allowed before and after periods, but this is discouraged.  An entire keypath must fit on a single line; line breaks are not allowed within keypaths.
+The elements in a keypath must be valid unquoted strings and must not contain Unicode whitespace, unless escaping is performed as described below.  Spaces are allowed before and after periods, but this is discouraged.  An entire keypath must fit on a single line; line breaks are not allowed within keypaths.
 
-Elements of a keypath may be explicitly typed, using the escaping syntax described below.  However, elements of a keypath cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}), and elements of a keypath cannot have advanced type options (|newline|, due to being on a single line, and |label|, due to being keys/indices; \cref{sec:advanced-options-and-types:options}).  This keeps keypaths explicit by preventing complicated keypaths consisting of nested keypaths or aliases.  It is always immediately clear what a keypath refers to; there is never any uncertainty regarding whether an alias or copy will, when resolved, result in a key or index collision.
+Elements of a keypath may be explicitly typed, using the escaping syntax described below.  However, as dict keys or list indices, elements of a keypath cannot have advanced types (|alias|, |copy|, and |deepcopy|; \cref{sec:advanced-options-and-types:types}), and elements of a keypath cannot have advanced type options (|newline|, due to being on a single line, and |label|, due to being keys/indices; \cref{sec:advanced-options-and-types:options}).  This keeps keypaths explicit by preventing complicated keypaths consisting of nested keypaths or aliases.  It is always immediately clear what a keypath refers to; there is never any uncertainty regarding whether an alias or copy will, when resolved, result in a key or index collision.
 
 This notation is convenient for working with alphanumeric keys that begin with an alphabetic character or otherwise do not fit the pattern for a number, but what of lists, numerical keys, and keys that are reserved words or include special characters?
 
@@ -956,7 +1067,7 @@ which is equivalent to
 \begin{Verbatim}
 key = [value]
 \end{Verbatim}
-Indentation characters are allowed before and after \vmeta{decimal integer}, but this is discouraged.
+Spaces are allowed before and after \vmeta{decimal integer}, but this is discouraged.
 
 
 \paragraph{Numerical keys}
@@ -995,7 +1106,7 @@ key = {(b)> abc = value}
 
 \paragraph{Special keypath characters}
 
-The underscore U+005F (|_|) is special when it is the first element in a keypath, and must not otherwise appear by itself in a keypath without quoting (as |{_}| or |{'_'}|, etc.).  It refers to one level up from the last location.  For example,
+The underscore U+005F (|_|) is special when it is the first element in a keypath.  Due to the definition of unquoted strings, it can never appear by itself elsewhere without quoting.  It refers to one level up from the last location.  For example,
 \begin{Verbatim}
 key.subkey.* = value1
 _.* = value2
@@ -1005,9 +1116,10 @@ is equivalent to
 key  = {subkey = [value1, value2]}
 \end{Verbatim}
 
-The solidus (slash) U+002F (|/|) is not allowed by itself unquoted in a normal keypath (|{/}|, |{'/'}|, etc.).  It is used in keypath aliases to denote the root data level.  In these situations, it is only allowed as the first element in a keypath.
+The tilde (slash) U+007E (|~|) is not normally allowed unquoted.  It is used in keypath aliases to denote the root data level.  In these situations, it is only allowed as the first element in a keypath.
 
-The caret U+005E (|^|) is not allowed by itself unquoted in a normal keypath.  It is used in keypath aliases to refer to higher relative levels in the data structure.  It is only allowed as the first element in a keypath (|^.key|, |^^.key|, etc.).  Each additional |^| in a sequence indicates going up in the data structure by another level.
+The caret U+005E (|^|) is not normally allowed unquoted.  It is used in keypath aliases to refer to higher relative levels in the data structure.  It is only allowed as the first element in a keypath (|^.key|, |^^.key|, etc.).  Each additional |^| in a sequence indicates going up in the data structure by another level.
+
 
 \section{Sections}
 
@@ -1025,7 +1137,7 @@ The contents of a section may have the same indentation level as the section.
 
 Sections are only allowed at root level.  The opening equals sign |=| must have indentation consistent with any preceding data that sets the root-level indentation.
 
-A section ends at the next section.  Returning to root level is possible by using |==={1,n}/|.  Because of the special use of the slash here and in keypaths used as path aliases, a literal unquoted slash is not allowed in a keypath.
+A section ends at the next section.  A section may optionally be ended by using |==={1,n}/|, with the opening and ending sequence of |=| having the same length.  If the closing delimiter |==={1,n}/| must be used either not at all or for every single section.
 
 
 
@@ -1041,13 +1153,13 @@ The explicit type declaration syntax may also be used for specifying advanced op
 \begin{Verbatim}[commandchars=\\\{\}]
 (\meta{type}, \meta{key-value options})>
 \end{Verbatim}
-All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_-]*|.  Values must be boolean or Unicode strings (quoted or unquoted, but no block strings).  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type} may be omitted for implicitly typed objects.
+All option keys must be unquoted strings meeting the regex |[a-zA-Z][a-zA-Z0-9_]*|.  Values must be boolean or ASCII strings (quoted or unquoted, but no block strings).  When an option is given that is incompatible with a type, an error must be raised.  The \vmeta{type} may be omitted for implicitly typed objects.
 
 
 \subsubsection{General options}
 
 \paragraph{label}
-This gives an object a label, which can later be used to reference the object in a label alias.  Labels must be Unicode strings.  Unquoted ASCII strings meeting an identifier style regex |[a-zA-Z][a-zA-Z0-9_-]*| should be preferred.
+This gives an object a label, which can later be used to reference the object in a label alias.  Labels must be Unicode strings.  Unquoted ASCII strings meeting an identifier style regex |[a-zA-Z][a-zA-Z0-9_]*| should be preferred.
 
 Labels can be applied to scalar types and collection types, with the exception of dict keys.
 
@@ -1084,7 +1196,7 @@ This is the deep copy version of |default|.  The resulting object contains deep 
 
 \paragraph{recmerge}
 
-This performs a recursive merge for collection types.  It comes in two variants. |recmerge.path| takes a keypath or an inline list of keypaths.  |recmerge.label| takes a label or an inline list of labels.  Starting with the original collection object, a recursive merge is performed at all levels (only collection objects are merged).  A dict-like object can only be merged into another dict-like object, and only if the first dict-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  Merging is performed by inserting missing key-value pairs; existing keys are never overwritten, but if their values are collection types, then merging is performed recursively.  A list-like object can only be be merged into another list-like object, and only if the first list-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  List merging is performed as list extension; lists are not combined by index.
+This performs a recursive merge for collection types.  It comes in two variants. |recmerge.path| takes a keypath or an inline list of keypaths.  |recmerge.label| takes a label or an inline list of labels.  Starting with the original collection object, a recursive merge is performed at all levels (only collection objects are merged).  A dict-like object can only be merged into another dict-like object, and only if the first dict-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  Merging is performed by inserting missing key-value pairs; existing keys are never overwritten, but if their values are collection types, then merging is performed recursively.  A list-like object can only be merged into another list-like object, and only if the first list-like object is untyped (implicit, default type) or has the same type as the object it is being merged into.  List merging is performed as list extension; lists are not combined by index.
 
 All collections that are merged appear in the final data structure alone.  All collections that are not merged are aliased.
 
@@ -1127,7 +1239,7 @@ This creates a deep copy of the object referred to by a label.
 
 \subsection{Resolving aliases, copies, and dependent collections}
 
-Aliases are only resolved once the aliased object is resolved, with the exception that circular aliases may be resolved in ``simultaneously'' with their targets.  If this is impossible, then an implementation must raise an error.  For example, suppose that an implementation adds support for an immutable |tuple| collection type, as exists in Python.  Then this could not be resolved:
+Aliases are only resolved once the aliased object is resolved, with the exception that circular aliases may be resolved ``simultaneously'' with their targets.  If this is impossible, then an implementation must raise an error.  For example, suppose that an implementation adds support for an immutable |tuple| collection type, as exists in Python.  Then this could not be resolved:
 \begin{Verbatim}
 (tuple, label=t)> [1, 2, 3, (alias.label)> t]
 \end{Verbatim}
@@ -1153,7 +1265,7 @@ An entire dataset may be ``typed'' by a parser directive of the form
 \begin{Verbatim}[commandchars=\\\{\}]
 (bespon, \meta{key-value options})>
 \end{Verbatim}
-Only a single parser directive is allowed in a dataset, and it must appear before any data and before any comments; it may only be preceeded by whitespace.  This ensures that it is at the beginning of a dataset, where it may be easily inspected.  Because of the existence of parser directives and special \bespon\ types, implementations that allow user-defined types must prohibit custom types with names starting with the literal string |bespon|.
+Only a single parser directive is allowed in a dataset, and it must appear before any data and before any comments at the very beginning of the first line.  This ensures that it is at the beginning of a dataset, where it may be easily inspected.  Because of the existence of parser directives and special \bespon\ types, implementations that allow user-defined types must prohibit custom types with names starting with the literal string |bespon|.
 
 An implementation is not required to implement parser directives, but any implementation that does not must note this in its documentation and must raise an informative error when a parser directive is encountered.  
 
@@ -1163,12 +1275,7 @@ This boolean option determines whether any unquoted strings (typed or untyped) a
 \paragraph{unquoted\_unicode}
 This boolean option determines whether a limited set of code points beyond the ASCII range may appear unquoted.  False by default.  Note that enabling unquoted Unicode has security implications, since the full Unicode range contains many characters that closely resemble ASCII characters or are invisible or nearly invisible, potentially in a font- and editor-dependent manner.  Unquoted strings are restricted to the ASCII range by default because this largely prevents \href{http://unicode.org/reports/tr36/}{visual spoofing and associated security issues}.
 
-When this option is enabled, only a limited set of additional code points is allowed unquoted.  The set is based on \href{http://unicode.org/reports/tr31/}{Unicode Standard Annex \#31, Unicode Identifier and Pattern Syntax}.  A custom profile is defined for unquoted strings.  Note that this pattern for unquoted strings is only applied after checking the patterns for numbers, keywords, ASCII strings, and invalid numbers and keywords.  This pattern would match some invalid unquoted string sequences, except that those are already filtered out before it is applied.
-\begin{enumerate}
-\item Start := XID\_Start, plus all code points in U+0021 through U+007E except for the special characters |%=,*'"{}[]()| and the characters checked for at the beginning of an invalid digit |+-.0123456789|, minus the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0).
-\item Continue := XID\_Continue, plus all code points in U+0021 through U+007E except for the special characters |%=,*'"{}[]()|, minus the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), plus space.
-\end{enumerate}
-Note that Medial for the profile is purposefully left empty.  None of the non-ASCII optional characters suggested by UAX \#31 are added to any group.  Some of these, such as U+30A0, would increase the potential for visual spoofing.  U+200C and U+200D would be desirable, but proper implementation would be very complex and computationally expensive, and UAX \#31 does not convey the impression that the current recommended algorithm is fully satisfactory.
+When this option is enabled, only a limited set of additional code points is allowed unquoted.  The set is based on \href{http://unicode.org/reports/tr31/}{Unicode Standard Annex \#31, Unicode Identifier and Pattern Syntax}.
 
 
 
@@ -1191,14 +1298,16 @@ All references to Unicode are to version 9.0.0.  Implementations must be complia
 
 An implementation must provide a programmatic way to determine which types have built-in support, and whether they are mutable.
 
+\textcolor{red}{\bfseries Remove use of colon namespaces?}
+
 An implementation should provide means of adding additional, user-defined types for use with explicit typing.  A dict mapping type names to parsing functions may be a convenient way to define additional types.  By default, all type names must match the regex
 \begin{Verbatim}
-[a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))*
-   (?:\:\: [a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))* | 
-      \.[a-zA-Z](?:[0-9a-zA-Z]|[_-](?=[0-9a-zA-Z]))*
+[a-zA-Z](?:[0-9a-zA-Z]|_(?=[0-9a-zA-Z]))*
+   (?:\:\: [a-zA-Z](?:[0-9a-zA-Z]|_(?=[0-9a-zA-Z]))* | 
+      \.[a-zA-Z](?:[0-9a-zA-Z]|_(?=[0-9a-zA-Z]))*
    )*$
 \end{Verbatim}
-Type names are never quoted, so they must match an identifier-style regex to avoid any potential ambiguity with implicitly typed objects.  In addition to matching the regex, type names must not match regexes and associated patterns for all types that are implicitly typed, including reserved words.  Libaries are encouraged to use type names of the form \vmeta{lib\_name}|::|\vmeta{type} for library-specific types that are not defined in the \bespon\ specification and whose interpretation is not immediately obvious.  
+Type names are never quoted, so they must match an identifier-style regex to avoid any potential ambiguity with implicitly typed objects.  In addition to matching the regex, type names must not match regexes and associated patterns for all types that are implicitly typed, including reserved words.  Libraries are encouraged to use type names of the form \vmeta{lib\_name}|::|\vmeta{type} for library-specific types that are not defined in the \bespon\ specification and whose interpretation is not immediately obvious.  
 
 An implementation should provide an option for registering a post-processing function for Unicode strings.  This would receive Unicode strings before they are stored in final form, and would make it convenient to add additional implicitly typed objects for custom usage.
 
