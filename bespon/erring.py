@@ -163,3 +163,31 @@ class ParseError(BespONException):
         self.traceback = traceback
     def __str__(self):
         return self.fmt_msg_with_traceback(self.msg, self.traceback)
+
+
+class AppendError(ParseError):
+    '''
+    Attempted to append to a closed collection.
+    '''
+    def __init__(self, msg, traceback):
+        self.msg = 'Cannot append to {0} that is not open for appending'.format(msg)
+        self.traceback = traceback
+
+
+class MissingKeyError(ParseError):
+    '''
+    Attempted to add a value to a key-value pair that is missing the key.
+    '''
+    def __init__(self, msg, traceback):
+        self.msg = 'Missing key in key-value pair'.format(msg)
+        self.traceback = traceback
+
+
+class ExplicitTypeError(ParseError):
+    '''
+    Attempted to add a value to a key-value pair that is missing the key.
+    '''
+    def __init__(self, msg, traceback):
+        self.msg = 'Missing key in key-value pair'.format(msg)
+        self.traceback = traceback
+

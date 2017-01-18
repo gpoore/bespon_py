@@ -12,24 +12,22 @@ from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
 
-from .version import __version__
 import sys
+import collections
+import re
+
+
+from .version import __version__
+from . import erring
+from . import tooling
+from . import coding
+
 
 if sys.version_info.major == 2:
     str = unicode
-    __chr__ = chr
-    chr = unichr
-
-try:
-    chr(0x10FFFF)
-    NARROW_BUILD = False
-except ValueError:
-    NARROW_BUILD = True
-
-import collections
-import re
-from . import erring
-from . import tooling
+if sys.maxunicode == 0xFFFF:
+    chr = coding.chr_surrogate
+    ord = coding.ord_surrogate
 
 
 
@@ -48,8 +46,8 @@ BESPON_NEWLINE_CHARS = set(''.join(BESPON_NEWLINES))
 
 
 # Code points with Unicode General_Category Cc (Other, control)
+# http://www.unicode.org/versions/Unicode9.0.0/ch02.pdf
 # http://www.unicode.org/versions/Unicode9.0.0/ch23.pdf
-# Ord ranges 0-31, 127-159
 UNICODE_CC = set(chr(n) for n in list(range(0x0000, 0x001F+1)) + list(range(0x007F, 0x009F+1)))
 
 
@@ -57,16 +55,94 @@ UNICODE_CC = set(chr(n) for n in list(range(0x0000, 0x001F+1)) + list(range(0x00
 BESPON_CC_LITERALS = set(['\t', '\n'])
 
 
-# Bidi override characters can be a security concern in general, and are not
-# appropriate in a human-friendly, text-based format.
-# Unicode Technical Report #36, UNICODE SECURITY CONSIDERATIONS
-# http://unicode.org/reports/tr36/
-UNICODE_BIDI_OVERRIDES = set(['\u202D', '\u202E'])
+# Characters with the Bidi_Control property
+# http://www.unicode.org/reports/tr9/tr9-35.html
+UNICODE_BIDI_CONTROL = set(['\u061C', '\u200E', '\u200F',
+                            '\u202A', '\u202B', '\uU+202C', '\u202D', '\u202E',
+                            '\u2066', '\u2067', '\u2068', '\u2069'])
+
+
+# Regex patterns for identifying all code points, both assigned AND
+# unassigned, that have the Unicode Bidirectional Character Types R or AL.
+# Two versions are provided, because narrow Python builds require a version
+# that
+# http://www.unicode.org/reports/tr9/tr9-35.html
+_NARROW_BIDI_R_AL_REGEX_PATTERN = r'''
+                                   \u0590|\u05be|\u05c0|
+                                   \u05c3|\u05c6|[\u05c8-\u05ff]|
+                                   \u0608|\u060b|\u060d|
+                                   [\u061b-\u064a]|[\u066d-\u066f]|[\u0671-\u06d5]|
+                                   [\u06e5-\u06e6]|[\u06ee-\u06ef]|[\u06fa-\u0710]|
+                                   [\u0712-\u072f]|[\u074b-\u07a5]|[\u07b1-\u07ea]|
+                                   [\u07f4-\u07f5]|[\u07fa-\u0815]|\u081a|
+                                   \u0824|\u0828|[\u082e-\u0858]|
+                                   [\u085c-\u08d3]|\u200f|\ufb1d|
+                                   [\ufb1f-\ufb28]|[\ufb2a-\ufd3d]|[\ufd40-\ufdcf]|
+                                   [\ufdf0-\ufdfc]|[\ufdfe-\ufdff]|[\ufe70-\ufefe]|
+                                   \ud802[\udc00-\udd1e]|\ud802[\udd20-\ude00]|\ud802\ude04|
+                                   \ud802[\ude07-\ude0b]|\ud802[\ude10-\ude37]|\ud802[\ude3b-\ude3e]|
+                                   \ud802[\ude40-\udee4]|\ud802[\udee7-\udf38]|\ud802[\udf40-\udfff]|
+                                   \ud803[\udc00-\ude5f]|\ud803[\ude7f-\udfff]|\ud83a[\udc00-\udccf]|
+                                   \ud83a[\udcd7-\udd43]|\ud83a[\udd4b-\udfff]|\ud83b[\udc00-\udeef]|
+                                   \ud83b[\udef2-\udfff]
+                                   '''.replace('\x20', '').replace('\t', '').replace('\n', '')
+
+_WIDE_BIDI_R_AL_REGEX_PATTERN   = r'''
+                                   [
+                                   \u0590\u05be\u05c0
+                                   \u05c3\u05c6\u05c8-\u05ff
+                                   \u0608\u060b\u060d
+                                   \u061b-\u064a\u066d-\u066f\u0671-\u06d5
+                                   \u06e5-\u06e6\u06ee-\u06ef\u06fa-\u0710
+                                   \u0712-\u072f\u074b-\u07a5\u07b1-\u07ea
+                                   \u07f4-\u07f5\u07fa-\u0815\u081a
+                                   \u0824\u0828\u082e-\u0858
+                                   \u085c-\u08d3\u200f\ufb1d
+                                   \ufb1f-\ufb28\ufb2a-\ufd3d\ufd40-\ufdcf
+                                   \ufdf0-\ufdfc\ufdfe-\ufdff\ufe70-\ufefe
+                                   \U00010800-\U0001091e\U00010920-\U00010a00\U00010a04
+                                   \U00010a07-\U00010a0b\U00010a10-\U00010a37\U00010a3b-\U00010a3e
+                                   \U00010a40-\U00010ae4\U00010ae7-\U00010b38\U00010b40-\U00010e5f
+                                   \U00010e7f-\U00010fff\U0001e800-\U0001e8cf\U0001e8d7-\U0001e943
+                                   \U0001e94b-\U0001eeef\U0001eef2-\U0001efff
+                                   ]
+                                   '''.replace('\x20', '').replace('\t', '').replace('\n', '')
+
+if sys.maxunicode == 0xFFFF:
+    UNICODE_BIDI_R_AL_REGEX_PATTERN = _NARROW_BIDI_R_AL_REGEX_PATTERN
+else:
+    UNICODE_BIDI_R_AL_REGEX_PATTERN = _WIDE_BIDI_R_AL_REGEX_PATTERN
+
+
+# Unicode byte order marker
+UNICODE_BOM = set('\uFEFF')
+
+
+# Unicode noncharacters
+# http://www.unicode.org/versions/Unicode9.0.0/ch23.pdf
+UNICODE_NONCHARACTERS = set([chr(n) for n in range(0xFDD0, 0xFDEF+1)] +
+                            ['\uFFFE', '\uFFFF',
+                             '\U0001FFFE', '\U0001FFFF',
+                             '\U0002FFFE', '\U0002FFFF',
+                             '\U0003FFFE', '\U0003FFFF',
+                             '\U0004FFFE', '\U0004FFFF',
+                             '\U0005FFFE', '\U0005FFFF',
+                             '\U0006FFFE', '\U0006FFFF',
+                             '\U0007FFFE', '\U0007FFFF',
+                             '\U0008FFFE', '\U0008FFFF',
+                             '\U0009FFFE', '\U0009FFFF',
+                             '\U000AFFFE', '\U000AFFFF',
+                             '\U000BFFFE', '\U000BFFFF',
+                             '\U000CFFFE', '\U000CFFFF',
+                             '\U000DFFFE', '\U000DFFFF',
+                             '\U000EFFFE', '\U000EFFFF',
+                             '\U000FFFFE', '\U000FFFFF',
+                             '\U0010FFFE', '\U0010FFFF'])
 
 
 # Default code points not allowed as literals.  This does not account
 # for surrogates.  Paired surrogates can appear in valid strings
-# under narrow Python builds, so surrogates cannot be prohibited in 
+# under narrow Python builds, so surrogates cannot be prohibited in
 # general except under wide builds.
 BESPON_NONLITERALS_LESS_SURROGATES = (UNICODE_CC - BESPON_CC_LITERALS) | (UNICODE_NEWLINE_CHARS - BESPON_NEWLINE_CHARS) | UNICODE_BIDI_OVERRIDES
 
@@ -78,13 +154,13 @@ UNICODE_ZS = set(['\x20',   '\xA0',   '\u1680', '\u2000', '\u2001', '\u2002',
                   '\u2009', '\u200a', '\u202f', '\u205f', '\u3000'])
 
 
-# Unicode White_Space, equivalent to Unicode regex `\s`.  It's safer to use 
+# Unicode White_Space, equivalent to Unicode regex `\s`.  It's safer to use
 # a defined set rather than relying on Python's `re` package.  With `re`,
-# `\s` also matches the separator control characters.  Also, U+180E 
-# (Mongolian Vowel Separator) was temporarily whitespace in Unicode 4.0 
-# up until Unicode 6.3, which affects Python 2.7's `re`.  Note that the 
+# `\s` also matches the separator control characters.  Also, U+180E
+# (Mongolian Vowel Separator) was temporarily whitespace in Unicode 4.0
+# up until Unicode 6.3, which affects Python 2.7's `re`.  Note that the
 # `regex` package does the right thing using the most recent Unicode version.
-# http://www.unicode.org/Public/UCD/latest/ucd/PropList.txt 
+# http://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
 UNICODE_WHITESPACE = UNICODE_ZS | UNICODE_NEWLINE_CHARS | set('\t')
 
 
@@ -93,8 +169,8 @@ BESPON_INDENTS = set(['\x20', '\t'])
 BESPON_SPACES = set(['\x20'])
 
 
-# Default short backslash escapes.  Two are less common:  `\e` is from GCC, 
-# clang, etc., and `\/` is from JSON.  By default, these two are only used 
+# Default short backslash escapes.  Two are less common:  `\e` is from GCC,
+# clang, etc., and `\/` is from JSON.  By default, these two are only used
 # in reading escapes, not in creating them.
 BESPON_SHORT_UNESCAPES = {'\\\\': '\\',
                           "\\'": "'",
@@ -112,16 +188,16 @@ BESPON_SHORT_UNESCAPES = {'\\\\': '\\',
 BESPON_SHORT_ESCAPES = {v:k for k, v in BESPON_SHORT_UNESCAPES.items() if v not in ('/', '\x1B')}
 
 
-# A few extra characters that are not in Zs, but that can look like spaces 
-# in some fonts.  These don't get any special handling by default, but it 
-# could be convenient to treat them specially in some contexts.  Currently, 
-# this is just the Hangul fillers.  They are valid in identifier names in 
+# A few extra characters that are not in Zs, but that can look like spaces
+# in some fonts.  These don't get any special handling by default, but it
+# could be convenient to treat them specially in some contexts.  Currently,
+# this is just the Hangul fillers.  They are valid in identifier names in
 # some programming languages.
 UNICODE_WHITESPACE_VISUALLY_CONFUSABLE = set(['\u115F', '\u1160', '\u3164', '\uFFA0'])
 
 
 # Structure for reporting the literal appearance of code points that are not
-# allowed as literals.  Line numbers are reported in two ways.  `lineno` 
+# allowed as literals.  Line numbers are reported in two ways.  `lineno`
 # uses `\r`, `\n`, and `\r\n`, while `unicode_lineno` uses all of
 # UNICODE_NEWLINES.
 NonliteralTrace = collections.namedtuple('NonliteralTrace', ['chars', 'lineno', 'unicode_lineno'])
@@ -136,7 +212,7 @@ class UnicodeFilter(object):
     '''
     def __init__(self, state=None,
                  only_ascii=False, unpaired_surrogates=False,
-                 brace_escapes=True, x_escapes=True, 
+                 brace_escapes=True, x_escapes=True,
                  literals=None, nonliterals=None,
                  spaces=None, indents=None,
                  short_escapes=None, short_unescapes=None,
@@ -159,16 +235,16 @@ class UnicodeFilter(object):
         self.x_escapes = x_escapes
 
 
-        # Allowed literal code points may be specified either by `literals`, 
-        # which must contain all code points that may appear literally, or by 
+        # Allowed literal code points may be specified either by `literals`,
+        # which must contain all code points that may appear literally, or by
         # `nonliterals`, which must contain all code points that cannot
-        # appear literally.  This is a separate issue from unpaired 
-        # surrogates, which are never allowed to appear literally but may be 
+        # appear literally.  This is a separate issue from unpaired
+        # surrogates, which are never allowed to appear literally but may be
         # enabled in escaped form by the option `unpaired_surrogates`.
-        # Surrogates are accounted for separately in assembling regexes, to 
+        # Surrogates are accounted for separately in assembling regexes, to
         # accommodate narrow Python builds.
         if literals is not None and nonliterals is not None:
-            raise erring.ConfigError('Options "literals" and "nonliterals" are mutually exclusive') 
+            raise erring.ConfigError('Options "literals" and "nonliterals" are mutually exclusive')
         elif literals is None and nonliterals is None:
             self._default_codepoints = True
             if only_ascii:
@@ -177,27 +253,29 @@ class UnicodeFilter(object):
             else:
                 self.literals = None
                 self.nonliterals_less_surrogates = BESPON_NONLITERALS_LESS_SURROGATES
-            self.newlines = BESPON_NEWLINES    
+            self.newlines = BESPON_NEWLINES
         else:
             for opt in (literals, nonliterals):
                 if opt is not None:
                     if not isinstance(opt, str) and not all(isinstance(x, str) for x in opt):
                         raise erring.ConfigError('"literals" and "nonliterals" must be None, or a Unicode string, or a sequence of Unicode strings')
                     if len(opt) == 0 or any(len(x) != 1 for x in opt):
-                        if NARROW_BUILD:
-                            raise erring.ConfigError('Only single code points can be given in "literals" and "nonliterals", and code points above U+FFFF are not supported on narrow Python builds')
+                        if sys.maxunicode == 0xFFFF:
+                            raise erring.ConfigError('Only single code points can be given in "literals" or "nonliterals", and code points above U+FFFF are not supported on narrow Python builds')
                         else:
-                            raise erring.ConfigError('Only single code points can be given in "literals" and "nonliterals"')
+                            raise erring.ConfigError('Only single code points can be given in "literals" or "nonliterals"')
                     if any(0xD800 <= ord(c) <= 0xDFFF for c in opt):
-                        if NARROW_BUILD:
-                            raise erring.ConfigError('Unicode surrogates are not allowed in "literals" and "nonliterals"; literal unpaired surrogates are never allowed, and escaped surrogates are controlled with "unpaired_surrogates"')
+                        if sys.maxunicode == 0xFFFF:
+                            raise erring.ConfigError('Unicode surrogates are not allowed in "literals" or "nonliterals"; literal unpaired surrogates are never allowed, and escaped surrogates are controlled with "unpaired_surrogates"')
                         else:
-                            raise erring.ConfigError('Unicode surrogates are not allowed in "literals" and "nonliterals"; literal surrogates are never allowed, and escaped surrogates are controlled with "unpaired_surrogates"')
+                            raise erring.ConfigError('Unicode surrogates are not allowed in "literals" or "nonliterals"; literal surrogates are never allowed, and escaped surrogates are controlled with "unpaired_surrogates"')
+                    if any(c in UNICODE_BOM or c in UNICODE_NONCHARACTERS for c in opt):
+                        raise erring.ConfigError('Unicode BOM and noncharacters are not allowed in "literals" or "nonliterals"; literal BOM and literal noncharacters are never allowed')
                     if opt is literals and any(c in literals for c in '\x1C\x1D\x1E') and len('_\x1C_\x1D_\x1E_'.splitlines()) == 4:
-                        # Python's `str.splitlines()` doesn't just split on 
-                        # Unicode newlines; it also splits on separators.  
+                        # Python's `str.splitlines()` doesn't just split on
+                        # Unicode newlines; it also splits on separators.
                         # As a result, these aren't supported as literals.
-                        raise erring.ConfigError('The File Separator (U+001C), Group Separator (U+001D), and Record Separator (U+001E) are not allowed as literals by this implementation')  
+                        raise erring.ConfigError('The File Separator (U+001C), Group Separator (U+001D), and Record Separator (U+001E) are not supported as literals by this implementation')
             self._default_codepoints = False
             if literals is not None:
                 self.literals = set(literals)
@@ -213,7 +291,7 @@ class UnicodeFilter(object):
                         newlines.update(nl)
             else:
                 for nl in UNICODE_NEWLINES:
-                    # Need to account for `\r\n`, so `nl[-1]` 
+                    # Need to account for `\r\n`, so `nl[-1]`
                     if nl[0] not in nonliterals and nl[-1] not in nonliterals:
                         newlines.update(nl)
             if not newlines:
@@ -228,13 +306,13 @@ class UnicodeFilter(object):
         self.newline_chars_ascii_str = ''.join(sorted(self.newline_chars_ascii, key=ord))
         self.newline_chars_non_ascii = set(c for c in self.newline_chars if ord(c) >= 128)
         self.newline_chars_non_ascii_str = ''.join(sorted(self.newline_chars_non_ascii, key=ord))
-        # Regexes for finding and counting newlines.  Reverse sort 
+        # Regexes for finding and counting newlines.  Reverse sort
         # newline sets so that `\r\n` is first when present.
         self.newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(self.newlines, reverse=True)))
         self.rn_newlines_re = re.compile('\r\n|\r|\n')
         self.unicode_newlines_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
         self.latin1_newlines_bytes_re = re.compile('|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True) if ord(x[0]) < 256 and ord(x[-1]) < 256).encode('latin1'))
-        
+
         # Bytes are always dealt with via a nonliterals set
         if self.literals is not None:
             self.nonliterals_bytes_str = set(chr(n) for n in range(256) if n >= 128 or chr(n) not in self.literals)
@@ -260,53 +338,45 @@ class UnicodeFilter(object):
                     if self.escaped_string_delim_chars & self.nonliterals_less_surrogates:
                         raise erring.ConfigError('"escaped_string_delim_chars" cannot overlap with "nonliterals" (or default nonliterals, if "nonliterals" was not explicitly specified)')
         self.escaped_string_delim_chars_str = ''.join(sorted(self.escaped_string_delim_chars, key=ord))
-        
 
-        # Regexes for working with nonliterals.  Regardless of whether 
-        # literals or nonliterals are specified, regexes are designed to 
+
+        # Regexes for working with nonliterals.  Regardless of whether
+        # literals or nonliterals are specified, regexes are designed to
         # find code points that aren't allowed in various contexts.  Either
-        # `literals` or `nonliterals_less_surrogates` is guaranteed to 
-        # contain one or more code points, so the regexes won't fail due to 
-        # `{chars}` being replaced with the empty string. 
-        if self.literals is not None: 
+        # `literals` or `nonliterals_less_surrogates` is guaranteed to
+        # contain one or more code points, so the regexes won't fail due to
+        # `{chars}` being replaced with the empty string.
+        if self.literals is not None:
             lits_re_esc_str = re.escape(''.join(sorted(self.literals, key=ord)))
         else:
             nonlits_re_esc_str = re.escape(''.join(sorted(self.nonliterals_less_surrogates, key=ord)))
         newlines_re_esc_str = re.escape(self.newline_chars_str)
-        if self.unpaired_surrogates:
-            if self.literals is not None:
-                # Regex for finding nonliterals
-                self.nonliterals_re = re.compile(r'[^{chars}]'.format(chars=lits_re_esc_str))
-                # Regexes for escaping nonliterals
-                self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]'.format(chars=lits_re_esc_str))
-                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str))
-            else:
-                self.nonliterals_re = re.compile(r'[{chars}]'.format(chars=nonlits_re_esc_str))
-                self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}]'.format(chars=nonlits_re_esc_str))
-                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}]'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str))
+        if sys.maxunicode = 0xFFFF:
+            bom_nonchars_pattern = '|'.join(sorted(UNICODE_NONCHARACTERS, key=ord))
         else:
-            if NARROW_BUILD:
-                surrogates_pattern = r'[\uD800-\uDBFF](?=[^\uDC00-\uDFFF]|$)|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]'
-                self.unpaired_surrogate_re = re.compile(surrogates_pattern)
-                if literals is not None:
-                    self.nonliterals_re = re.compile(r'[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str, surr=surrogates_pattern))
-                else:
-                    self.nonliterals_re = re.compile(r'[{chars}]|{surr}'.format(chars=nonlits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}]|{surr}'.format(chars=nonlits_re_esc_str, surr=surrogates_pattern))
-                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}]|{surr}'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str, surr=surrogates_pattern))
+            bom_nonchars_pattern = ''.join(sorted(UNICODE_NONCHARACTERS, key=ord))
+        if sys.maxunicode = 0xFFFF:
+            surrogates_pattern = r'[\uD800-\uDBFF](?=[^\uDC00-\uDFFF]|$)|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]'
+            self.unpaired_surrogate_re = re.compile(surrogates_pattern)
+            if literals is not None:
+                self.nonliterals_re = re.compile(r'[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
+                self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, surr=surrogates_pattern))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|{surr}'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str, surr=surrogates_pattern))
             else:
-                if literals is not None:
-                    self.nonliterals_re = re.compile(r'[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
-                    self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
-                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str))
-                else:
-                    self.nonliterals_re = re.compile(r'[{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str))
-                    self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str))
-                    self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str))
+                self.nonliterals_re = re.compile(r'[{chars}]|{bnc}|{surr}'.format(chars=nonlits_re_esc_str, bnc=bom_nonchars_pattern, surr=surrogates_pattern))
+                self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}]|{bnc}|{surr}'.format(chars=nonlits_re_esc_str, bnc=bom_nonchars_pattern, surr=surrogates_pattern))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}]|{bnc}|{surr}'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str, bnc=bom_nonchars_pattern, surr=surrogates_pattern))
+        else:
+            if literals is not None:
+                self.nonliterals_re = re.compile(r'[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
+                self.nonliterals_or_backslash_re = re.compile(r'\\|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t]|[^{chars}]|[\uD800-\uDFFF]'.format(chars=lits_re_esc_str, nl_chars=newlines_re_esc_str))
+            else:
+                self.nonliterals_re = re.compile(r'[{chars}{bnc}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, bnc=bom_nonchars_pattern))
+                self.nonliterals_or_backslash_re = re.compile(r'[\\{chars}{bnc}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, bnc=bom_nonchars_pattern))
+                self.nonliterals_or_backslash_newline_chars_tab_re = re.compile(r'[\\{nl_chars}\t{chars}{bnc}\uD800-\uDFFF]'.format(chars=nonlits_re_esc_str, nl_chars=newlines_re_esc_str, bnc=bom_nonchars_pattern))
         # Regexes for working with nonliterals in binary.  Since a set of
-        # bytes nonliterals already exists, and surrogates are outside the 
+        # bytes nonliterals already exists, and surrogates are outside the
         # bytes range, this is much simpler.
         nonliterals_bytes_re_esc_str = re.escape(''.join(sorted(self.nonliterals_bytes_str, key=ord)))
         self.nonliterals_or_backslash_bytes_re = re.compile(r'[\\{chars}]'.format(chars=nonliterals_bytes_re_esc_str).encode('latin1'))
@@ -408,14 +478,14 @@ class UnicodeFilter(object):
 
 
         # Unescaping regexes
-        # Unicode regex.  Depends on whether `\xHH` escapes are allowed and 
+        # Unicode regex.  Depends on whether `\xHH` escapes are allowed and
         # on whether `\u{HHHHHH}` escapes are in use.
         unescape_re_pattern = r'\\x[0-9a-fA-F]{{2}}|\\u\\{{[0-9a-fA-F]{{1,6}}\\}}|\\u[0-9a-fA-F]{{4}}|\\U[0-9a-fA-F]{{8}}|\\[{spaces}]*(?:{newlines})|\\.|\\'
         if not x_escapes:
             unescape_re_pattern = '|'.join(x for x in unescape_re_pattern.split('|') if not x.startswith(r'\\x'))
         if not brace_escapes:
             unescape_re_pattern = '|'.join(x for x in unescape_re_pattern.split('|') if not x.startswith(r'\\u\\{{'))
-        # Need regex for tracking down any invalid unescapes.  This is 
+        # Need regex for tracking down any invalid unescapes.  This is
         # assembled from the `unescape_re_pattern` before it is finalized,
         # to maintain uniformity.
         valid_long_unescape_pattern = ''.join(x[2:] for x in unescape_re_pattern.replace(r'|\\.|\\', '').split('|'))
@@ -425,12 +495,12 @@ class UnicodeFilter(object):
         self.invalid_unescape_re = re.compile(invalid_unescape_re_pattern, re.DOTALL)
         # For typed strings with specified newlines, the default newline `\n`
         # may be replaced with any other valid Unicode newline sequence, even
-        # with default nonliterals.  Thus, escaping must handle any 
-        # Unicode newlines, not just the newlines that are allowed as 
+        # with default nonliterals.  Thus, escaping must handle any
+        # Unicode newlines, not just the newlines that are allowed as
         # literals.  The same logic applies to the binary case.
         unescape_re_pattern = unescape_re_pattern.format(spaces=re.escape(self.spaces_str), newlines='|'.join(re.escape(x) for x in sorted(UNICODE_NEWLINES, reverse=True)))
         self.unescape_re = re.compile(unescape_re_pattern, re.DOTALL)
-        
+
         unescape_bytes_re_pattern = r'\\x[0-9a-fA-F]{2}|\\\x20*(?:\r\n|\r|\n)|\\.|\\'.encode('ascii')
         self.unescape_bytes_re = re.compile(unescape_bytes_re_pattern, re.DOTALL)
         valid_long_unescape_bytes_pattern = r'x[0-9a-fA-F]{2}|\x20*(?:\r\n|\r|\n)'
@@ -438,8 +508,8 @@ class UnicodeFilter(object):
         self.invalid_unescape_bytes_re = re.compile(r'\\(?!{vl}|{vs}).?'.format(vl=valid_long_unescape_bytes_pattern, vs=valid_short_unescape_bytes_pattern).encode('ascii'), re.DOTALL)
 
 
-        # Set function for escaping Unicode characters, based on whether 
-        # `\xHH` escapes are allowed and whether `\u{HHHHHH}` escapes are in 
+        # Set function for escaping Unicode characters, based on whether
+        # `\xHH` escapes are allowed and whether `\u{HHHHHH}` escapes are in
         # use.  There are no such conditions for the binary equivalent.
         if x_escapes and brace_escapes:
             self._escape_unicode_char = self._escape_unicode_char_xubrace
@@ -457,7 +527,7 @@ class UnicodeFilter(object):
         # Copy over any relevant short escapes
         self._escape_dict.update(self.short_escapes)
 
-        
+
         # The binary escape dicts are similar to the Unicode equivalents.
         # Only `\xHH` escapes are used.
         self._escape_bytes_dict = {chr(n).encode('latin1'): '\\x{0:02x}'.format(n).encode('ascii') for n in range(256)}
@@ -472,7 +542,7 @@ class UnicodeFilter(object):
 
 
         # Regex for replacing all non-ASCII newlines in text that has already
-        # been filtered so that it only contains allowed literal newlines.  
+        # been filtered so that it only contains allowed literal newlines.
         # Only created if non-ASCII newlines are actually allowed as literals.
         if self.newline_chars_non_ascii:
             self.non_ascii_newline_chars_re = re.compile('[{0}]'.format(self.newline_chars_non_ascii_str))
@@ -554,7 +624,7 @@ class UnicodeFilter(object):
         Otherwise, raise an error for `\\<char>` or `\\`, which is the only
         other form the argument will ever take.
 
-        Arguments to this function are prefiltered by a regex into the 
+        Arguments to this function are prefiltered by a regex into the
         allowed forms.  Before this function is invoked, all known short
         (2-letter) escape sequences have already been filtered out.  Any
         remaining short escapes `\\<char>` at this point are unrecognized.
@@ -581,8 +651,8 @@ class UnicodeFilter(object):
     def _unescape_byte(self, b):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
-        to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return 
-        an empty byte string.  Otherwise, raise an error for `\\<byte>` or 
+        to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return
+        an empty byte string.  Otherwise, raise an error for `\\<byte>` or
         `\\`, which is the only other form the argument will ever take.
 
         Arguments to this function are prefiltered by a regex into the allowed
@@ -606,7 +676,7 @@ class UnicodeFilter(object):
 
     def escape(self, s, inline=False):
         '''
-        Within a string, replace all code points that are not allowed to 
+        Within a string, replace all code points that are not allowed to
         appear literally with their escaped counterparts.
         '''
         d = self._escape_dict
@@ -619,14 +689,14 @@ class UnicodeFilter(object):
         except erring.UnicodeSurrogateError as e:
             c_raw = e.codepoint_raw
             c_esc = e.codepoint_esc
-            if NARROW_BUILD:
+            if sys.maxunicode = 0xFFFF:
                 m = self.unpaired_surrogate_re.search(s)
                 n = m.start()
             else:
                 n = s.find(c_raw)
             lineno = 1
             n_line_start = 0
-            for m in self.rn_newlines_re.finditer(s, endpos=n):
+            for m in self.rn_newlines_re.finditer(s, 0, n):
                 lineno += 1
                 n_line_start = m.end()
             col = n - n_line_start + 1
@@ -677,10 +747,10 @@ class UnicodeFilter(object):
                     break
             lineno = 1
             n_line_start = 0
-            # Use Unicode newlines for line count, since whatever literal 
-            # newlines are allowed can be replaced with arbitrary Unicode 
-            # newlines before unescaping occurs. 
-            for m in self.unicode_newlines_re.finditer(s, endpos=n):
+            # Use Unicode newlines for line count, since whatever literal
+            # newlines are allowed can be replaced with arbitrary Unicode
+            # newlines before unescaping occurs.
+            for m in self.unicode_newlines_re.finditer(s, 0, n):
                 lineno += 1
                 n_line_start = m.end()
             col = n - n_line_start + 1
@@ -718,8 +788,8 @@ class UnicodeFilter(object):
             # Any literal byte newlines (Latin 1 range) correspond to literal
             # string newlines that appeared in the string representation
             # of the byte literal, so they should be counted in determining
-            # line numbers.  
-            for m in self.latin1_newlines_bytes_re.finditer(b, endpos=n):
+            # line numbers.
+            for m in self.latin1_newlines_bytes_re.finditer(b, 0, n):
                 lineno += 1
                 n_line_start = m.end()
             col = n - n_line_start + 1
@@ -752,10 +822,10 @@ class UnicodeFilter(object):
     def trace_nonliterals(self, s):
         '''
         Get the location of code points in a string that are not allowed as
-        literals.  Return a list of named tuples that contains the line 
-        numbers and code points.  Line numbers are given in two forms, one 
-        calculated using standard `\\r`, `\\r\\n`, `\\n` newlines, and one 
-        using all Unicode newlines.  All returned characters are escaped, so 
+        literals.  Return a list of named tuples that contains the line
+        numbers and code points.  Line numbers are given in two forms, one
+        calculated using standard `\\r`, `\\r\\n`, `\\n` newlines, and one
+        using all Unicode newlines.  All returned characters are escaped, so
         that the output may be used as-is.
         '''
         trace = []
@@ -765,11 +835,11 @@ class UnicodeFilter(object):
         while len(trace) < 20 and n < len(s):
             m = self.nonliterals_re.search(s, pos=n)
             if m:
-                for m_nl in self.unicode_newlines_re.finditer(s, pos=n, endpos=m.start()):
+                for m_nl in self.unicode_newlines_re.finditer(s, n, m.start()):
                     nl = m_nl.group(0)
                     unicode_lines += 1
                     if nl.lstrip('\r\n') == '':
-                         ascii_lines += 1
+                        ascii_lines += 1
                 c = m.group(0)
                 trace.append(NonliteralTrace(self.escape(c), ascii_lines, unicode_lines))
                 if c in UNICODE_NEWLINE_CHARS:
@@ -779,7 +849,7 @@ class UnicodeFilter(object):
                         ascii_lines += 1
                         unicode_lines += 1
                     else:
-                        unicode_lines += 1    
+                        unicode_lines += 1
                 n = m.start() + 1
             else:
                 break
@@ -790,7 +860,7 @@ class UnicodeFilter(object):
 
     def format_trace(self, trace):
         '''
-        Format a nonliterals trace.  Typically used with 
+        Format a nonliterals trace.  Typically used with
         InvalidLiteralCharacterError.
         '''
         m =       ['  Line number  (Unicode)    Chars\n']

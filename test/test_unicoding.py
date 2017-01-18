@@ -21,11 +21,23 @@ if sys.version_info.major == 2:
     __chr__ = chr
     chr = unichr
 
-try:
-    chr(0x10FFFF)
+if sys.maxunicode == 0x10FFFF:
     NARROW_BUILD = False
-except ValueError:
+else:
     NARROW_BUILD = True
+    __narrow_chr__ = chr
+    __narrow_ord__ = ord
+    def _generate_chr_ord():
+        def chr(n):
+            if n < 0x10000:
+                return __narrow_chr__(n)
+            return '\\U{0:08x}'.format(n).decode('unicode-escape')
+        def ord(c):
+            if len(c) != 2:
+                return __narrow_ord__(c)
+            return 0x10000 + (__narrow_ord__(c[0]) - 0xD800)*0x400 + (__narrow_ord__(c[1]) - 0xDC00)
+        return (chr, ord)
+    chr, ord = _generate_chr_ord()
 
 
 if all(os.path.isdir(x) for x in ('bespon', 'test', 'doc')):
@@ -41,17 +53,16 @@ import re
 
 EXTRA_TEST = False
 
-if not NARROW_BUILD:
-    MAX_CODE_POINT = 0x10FFFF+1
-else:
-    MAX_CODE_POINT = 0x10000
-unicode_whitespace_re = re.compile('\s', re.UNICODE)
-unicode_cc = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(chr(n)) == 'Cc'])
-unicode_zs = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(chr(n)) == 'Zs'])
+MAX_CODE_POINT = 0x10FFFF+1
+
+
 # Python's `re` package matches `\s` to the separator control characters; 
 # `regex` doesn't.  U+180E (Mongolian Vowel Separator) isn't whitespace in
 # current Unicode, but was in Unicode 4.0-6.3, which applies to Python 2.7's
 # `re` implementation.
+unicode_whitespace_re = re.compile('\s', re.UNICODE)
+unicode_cc = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(chr(n)) == 'Cc'])
+unicode_zs = set([chr(n) for n in range(MAX_CODE_POINT) if unicodedata.category(chr(n)) == 'Zs' and n != 0x180e])
 unicode_whitespace = set([chr(n) for n in range(MAX_CODE_POINT) if unicode_whitespace_re.match(chr(n)) and n not in range(0x1C, 0x1F+1) and n != 0x180e])
 
 
@@ -83,6 +94,10 @@ def test_constants_and_defaults():
     assert(len(mdl.BESPON_CC_LITERALS) == 2)
 
     assert(len(mdl.UNICODE_BIDI_OVERRIDES) == 2)
+
+    assert(len(mdl.UNICODE_BOM) == 1)
+
+    assert(len(mdl.UNICODE_NONCHARACTERS) == 66)
 
     # Cc minus `\t` and `\n`, plus newlines and bidi overrides
     assert(len(mdl.BESPON_NONLITERALS_LESS_SURROGATES) == (65-2) + (7-1-4) + 2)
@@ -148,10 +163,10 @@ def test_UnicodeFilter_defaults():
 
 def test_UnicodeFilter_char_and_byte_escape_unescape():
     uf = mdl.UnicodeFilter(unpaired_surrogates=True)
-    ubrace_test_sequence = [('\x01', '\\u{1}'), ('\x1f', '\\u{1f}'), ('\ufeff', '\\u{feff}'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}')]
-    xubrace_test_sequence = [('\x01', '\\x01'), ('\x1f', '\\x1f'), ('\ufeff', '\\u{feff}'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}')]
-    xuU_test_sequence = [('\x01', '\\x01'), ('\x1f', '\\x1f'), ('\ufeff', '\\ufeff'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
-    uU_test_sequence = [('\u0001', '\\u0001'), ('\x1f', '\\u001f'), ('\ufeff', '\\ufeff'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101')]
+    ubrace_test_sequence = [('\x01', '\\u{1}'), ('\x1f', '\\u{1f}'), ('\ufeff', '\\u{feff}'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}'), ('\U0010abcd', '\\u{10abcd}')]
+    xubrace_test_sequence = [('\x01', '\\x01'), ('\x1f', '\\x1f'), ('\ufeff', '\\u{feff}'), ('\u0101', '\\u{101}'), ('\U00100101', '\\u{100101}'), ('\U0010abcd', '\\u{10abcd}')]
+    xuU_test_sequence = [('\x01', '\\x01'), ('\x1f', '\\x1f'), ('\ufeff', '\\ufeff'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101'), ('\U0010abcd', '\\U0010abcd')]
+    uU_test_sequence = [('\u0001', '\\u0001'), ('\x1f', '\\u001f'), ('\ufeff', '\\ufeff'), ('\u0101', '\\u0101'), ('\U00100101', '\\U00100101'), ('\U0010abcd', '\\U0010abcd')]
     if NARROW_BUILD:
         ubrace_test_sequence = ubrace_test_sequence[:-1]
         xubrace_test_sequence = xubrace_test_sequence[:-1]

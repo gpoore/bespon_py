@@ -20,12 +20,116 @@ if sys.version_info.major == 2:
     __chr__ = chr
     chr = unichr
 
+import collections
+import re
 from . import erring
 from . import unicoding
 from . import tooling
 from . import defaults
-import collections
-import re
+
+
+
+
+class TypeOptions(object):
+    '''
+    Keep track of explicit typing and associated options.
+    '''
+    __slots__ = ['state',
+                 'cat', '_parser_cats', 'type', 'label', 'newline', 
+                 'collection_config', 'collection_config_list', 
+                 'indent', 'at_line_start',
+                 'start_lineno', 'start_column', 'end_lineno', 'end_column',
+                 'open', 'next_key', 'next_key_needs_val', '_reserved_chars_escaped_string']
+    
+    def __init__(state):
+        self.state = state
+        
+        self.cat = None
+        self._parser_cats = state.decoder._parser_cats 
+        self.type = None
+        self.label = None
+        self.newline = None
+        self.collection_config = None
+        self.collection_config_list = []
+
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.start_lineno = state.start_lineno
+        self.start_column = state.start_column
+        self.end_lineno = state.end_lineno
+        self.end_column = state.end_column
+
+        self.open = False
+        self.next_key = None
+        self.next_key_needs_val = False
+        self._reserved_chars_escaped_string = self.state.decoder._reserved_chars_escaped_string
+        self._unicode_newlines = self.state.decoder._unicode_newlines
+    
+
+    def __bool__(self):
+        return self.type is None and self.label is None and self.newline is None and self.collection_config is None
+    
+    if sys.version_info.major == 2:
+        __nonzero__ = __bool__
+    
+
+    def check_append_stringlike(self, val):
+        if not self.open:
+            raise erring.AppendError('explicit-type object', self.state.traceback)
+        if not self:
+            self.type = val
+            try:
+                self.cat = self._parser_cats[val]
+            except KeyError:
+                raise erring.ExplicitTypeError('Unknown explicit type "{0}"'.format(val), self.state.traceback)
+        elif self.next_key_needs_val:
+            self.next_key_needs_val = False
+            nk = self.next_key
+            stringlike = self.state.stringlike 
+            if nk == 'label':
+                if stringlike.implicit:
+                    raise erring.ExplicitTypeError('Explicit type key "{0}" received invalid, implicitly typed value "{1}"'.format(nk, val), self.state.traceback)
+                elif stringlike.block:
+                    raise erring.ExplicitTypeError('Explicit type key "{0}" received block-quoted value; only inline strings are allowed'.format(nk), self.state.traceback)
+                self.label = val
+            elif nk == 'newline':
+                if stringlike.delim_char != self._reserved_chars_escaped_string or stringlike.block or stringlike.value not in self._unicode_newlines:
+                    raise erring.ExplicitTypeError('Explicit type key "newline" only takes inline, quoted, escaped characters that are valid Unicode newlines', self.state.traceback)
+                self.newline = val
+            else:  # keys are pre-filtered, so are valid
+                if nk.endswith('.alias'):
+                    if stringlike.implicit or stringlike.block:
+                        raise erring.ExplicitTypeError('Explicit type key "{0}" only takes unquoted strings or inline quoted strings as values (or an inline list of those types)'.format(nk), self.state.traceback)
+                else:  # nk.endswith('.path')
+                    if (stringlike.implicit and stringlike.implicit_type != 'keypath') or stringlike.block:
+                        raise erring.ExplicitTypeError('Explicit type key "{0}" only takes unquoted strings, inline quoted strings, or keypaths as values (or an inline list of those types)'.format(nk), self.state.traceback) 
+                self.collection_config = val
+        else:
+            raise erring.MissingKeyError(self.state.traceback) 
+
+    
+    def check_append_stringlike_key(self, val):
+        if not self.open:
+            raise erring.AppendError('explicit-type object', self.state.traceback)
+        if val not in ('label', 'newline', 'init.path', 'deepinit.path', 'default.path', 'deepdefault.path', 'recmerge.path', 'deeprecmerge.path'):
+            raise erring.ExplicitTypeError('Invalid keyword argument "{0}"'.format(val), self.state.traceback)
+        self.next_key_needs_val = True
+        self.next_key = val
+        
+
+    def check_append_listlike(self, val):
+
+
+    def check_append_dictlike(self, val):
+        raise erring.ParseError('Dict-like objects are not allowed within explicit type declarations', self.state.traceback)
+
+    
+
+
+    
+    
+class Stringlike(object):
+    __slots__ = []
 
 
 
@@ -33,30 +137,37 @@ import re
 class State(object):
     '''
     Keep track of state:  the name of a source (file name, or <string>), the
-    current location within the source (range of lines currently being parsed,
-    plus indentation and whether at beginning of line), whether syntax is
-    inline, explicit typing to be applied to the next object, the next
-    string-like object, etc.  Several properties are available for providing
-    tracebacks in the event of errors.
+    current location within the source (range of lines currently being 
+    parsed, plus indentation and whether at beginning of line), whether 
+    syntax is inline, explicit typing to be applied to the next object, the 
+    next string-like object, etc.  Several properties are available for 
+    providing tracebacks in the event of errors.
 
     The state serves as a one-element stack for explicit typing and for
     string-like objects.  This allows type information to be held until it is
     needed, and allows lookahead after string-like objects so that it may be
     determined whether they are dict keys.
     '''
-    # Use __slots__ to optimize attribute access
     __slots__ = ['ast', 'decoder', 'source',
-                 'indent', 'at_line_start', 'start_lineno', 'end_lineno',
+                 'indent', 'at_line_start', 
+                 'start_lineno', 'start_column', 
+                 'end_lineno', 'end_column',
                  'inline', 'inline_indent',
-                 'type', 'type_obj', 'type_indent', 'type_at_line_start', 'type_start_lineno', 'type_end_lineno', 'type_cat',
-                 'stringlike', 'stringlike_obj', 'stringlike_indent', 'stringlike_at_line_start', 'stringlike_start_lineno', 'stringlike_end_lineno',
+                 'type', 'type_cat', 'type_obj', 'type_indent', 'type_at_line_start', 
+                 'type_start_lineno', 'type_start_column', 
+                 'type_end_lineno', 'type_end_column',
+                 'stringlike', 'stringlike_obj', 'stringlike_indent', 'stringlike_at_line_start',
+                 'stringlike_start_lineno', 'stringlike_start_column',
+                 'stringlike_end_lineno', 'stringlike_end_column',
                  'stringlike_effective_indent', 'stringlike_effective_at_line_start', 'stringlike_effective_start_lineno']
 
     def __init__(self, source=None,
-                 indent=None, at_line_start=None, start_lineno=0, end_lineno=0,
+                 indent=None, at_line_start=True, 
+                 start_lineno=0, start_column=0, 
+                 end_lineno=0, end_column=0,
                  inline=False, inline_indent=None):
         # These are set later, since they don't typically exist when a
-        # `State()` is created
+        # `State` is created
         self.ast = None
         self.decoder = None
 
@@ -65,18 +176,22 @@ class State(object):
         self.indent = indent
         self.at_line_start = at_line_start
         self.start_lineno = start_lineno
+        self.start_column = start_column
         self.end_lineno = end_lineno
+        self.end_column = end_column
         self.inline = inline
         self.inline_indent = inline_indent
 
         # Information for last explicit type declaration
         self.type = False
+        self.type_cat = None
         self.type_obj = None
         self.type_indent = None
         self.type_at_line_start = None
         self.type_start_lineno = 0
+        self.type_start_column = 0
         self.type_end_lineno = 0
-        self.type_cat = None
+        self.type_end_column = 0
 
         # Information for last string-like object
         self.stringlike = False
@@ -84,7 +199,9 @@ class State(object):
         self.stringlike_indent = None
         self.stringlike_at_line_start = None
         self.stringlike_start_lineno = 0
+        self.stringlike_start_column = 0
         self.stringlike_end_lineno = 0
+        self.stringlike_end_column = 0
         # Information for resolving string-like object that accounts for the
         # possibility of explicit type declaration, which might be on an
         # earlier line
@@ -102,8 +219,6 @@ class State(object):
         '''
         self.ast = ast
         self.decoder = decoder
-
-    traceback_namedtuple = collections.namedtuple('traceback_namedtuple', ['source', 'start_lineno', 'end_lineno'])
 
     def set_type(self, kvarg_list):
         '''
@@ -246,12 +361,12 @@ class State(object):
         Traceback from the earliest stored position to the end.
         '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.end_lineno)
+            return erring.Traceback(self.source, self.type_start_lineno, self.end_lineno)
         else:
             if self.stringlike:
-                return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.end_lineno)
+                return erring.Traceback(self.source, self.stringlike_start_lineno, self.end_lineno)
             else:
-                return self.traceback_namedtuple(self.source, self.start_lineno, self.end_lineno)
+                return erring.Traceback(self.source, self.start_lineno, self.end_lineno)
 
     @property
     def traceback_current_start(self):
@@ -259,26 +374,26 @@ class State(object):
         Traceback to the start of the region currently being parsed.
         '''
         if self.type:
-            return self.traceback_namedtuple(self.source, self.type_start_lineno, self.type_start_lineno)
+            return erring.Traceback(self.source, self.type_start_lineno, self.type_start_lineno)
         else:
             if self.stringlike:
-                return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_start_lineno)
+                return erring.Traceback(self.source, self.stringlike_start_lineno, self.stringlike_start_lineno)
             else:
-                return self.traceback_namedtuple(self.source, self.start_lineno, self.start_lineno)
+                return erring.Traceback(self.source, self.start_lineno, self.start_lineno)
 
     @property
     def traceback_type(self):
         '''
         Traceback to explicit type declaration.
         '''
-        return self.traceback_namedtuple(self.source, self.type_start_lineno, self.type_end_lineno)
+        return erring.Traceback(self.source, self.type_start_lineno, self.type_end_lineno)
 
     @property
     def traceback_stringlike(self):
         '''
         Traceback to string-like object.
         '''
-        return self.traceback_namedtuple(self.source, self.stringlike_start_lineno, self.stringlike_end_lineno)
+        return erring.Traceback(self.source, self.stringlike_start_lineno, self.stringlike_end_lineno)
 
     @property
     def traceback_start_inline_to_end(self):
@@ -289,14 +404,14 @@ class State(object):
         p = self.ast.pos
         while p.parent.inline:
             p = p.parent
-        return self.traceback_namedtuple(self.source, p.start_lineno, self.end_lineno)
+        return erring.Traceback(self.source, p.start_lineno, self.end_lineno)
 
     @property
     def traceback_ast_pos(self):
         '''
         Traceback to a particular position in the AST.
         '''
-        return self.traceback_namedtuple(self.source, self.ast.pos.start_lineno, self.ast.pos.end_lineno)
+        return erring.Traceback(self.source, self.ast.pos.start_lineno, self.ast.pos.end_lineno)
 
     @property
     def traceback_ast_pos_end_to_end(self):
@@ -304,7 +419,7 @@ class State(object):
         Traceback from the end of a particular position in the AST to the end
         (that is, to current parsing location).
         '''
-        return self.traceback_namedtuple(self.source, self.ast.pos.end_lineno, self.state.end_lineno)
+        return erring.Traceback(self.source, self.ast.pos.end_lineno, self.state.end_lineno)
 
 
 
@@ -1045,6 +1160,7 @@ class BespONDecoder(object):
         self._unicode_whitespace = self._unicodefilter.unicode_whitespace
         self._unicode_whitespace_str = self._unicodefilter.unicode_whitespace_str
         self._unicode_whitespace_re = re.compile('[{0}]'.format(re.escape(self._unicode_whitespace_str)))
+        self._unicode_newlines = unicoding.UNICODE_NEWLINES
 
 
         arg_dicts = (reserved_chars, reserved_words, dict_parsers, list_parsers, string_parsers, parser_aliases)
@@ -1489,7 +1605,7 @@ class BespONDecoder(object):
         self._unquoted_unicode__current = self.unquoted_unicode
 
         self.state = State()
-        self._unicodefilter.traceback = self.state
+        self._unicodefilter.state = self.state
 
         self._ast = Ast(self)
 
@@ -1512,7 +1628,7 @@ class BespONDecoder(object):
 
         self._string = None
         self.state = None
-        self._unicodefilter.traceback = None
+        self._unicodefilter.state = None
 
         if self._debug_raw_ast:
             return
