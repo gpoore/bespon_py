@@ -31,25 +31,25 @@ if sys.version_info.major == 2:
 
 
 
-_astobj_common_slots = ['indent', 'at_line_start',
-                        'inline', 'inline_indent',
-                        'first_lineno', 'first_column',
-                        'last_lineno', 'last_column',
-                        'resolved']
+_node_common_slots = ['indent', 'at_line_start',
+                      'inline', 'inline_indent',
+                      'first_lineno', 'first_column',
+                      'last_lineno', 'last_column',
+                      'resolved']
 
-_astobj_scalar_or_collection_slots = ['tag', 'parent', 'index',
-                                      'final_val',
-                                      'extra_dependents',
-                                      'external_indent',
-                                      'external_at_line_start']
+_node_scalar_or_collection_slots = ['tag', 'parent', 'index',
+                                    'final_val',
+                                    'extra_dependents',
+                                    'external_indent',
+                                    'external_at_line_start']
 
-_astobj_collection_slots = ['keypath_parent', 'keypath_traversable',
-                            'open', 'unresolved_child_count']
-
-
+_node_collection_slots = ['keypath_parent', 'keypath_traversable',
+                          'open', 'unresolved_child_count']
 
 
-class SourceAstObj(object):
+
+
+class SourceNode(object):
     '''
     The highest-level node in the AST, representing the string, file, or
     stream in which bespon data is embedded.
@@ -91,7 +91,7 @@ class SourceAstObj(object):
 
 
 
-class RootAstObj(list):
+class RootNode(list):
     '''
     Lowest level in the AST except for the source node.  A list subclass that
     must ultimately contain only a single element.
@@ -113,6 +113,9 @@ class RootAstObj(list):
         self.first_column = state.first_column
         self.last_lineno = state.last_lineno
         self.last_column = state.last_column
+
+        # Need to add `.open()` once enable embedding with starting in inline
+        # mode.
 
     def check_append_scalar_key(self, obj):
         raise erring.Bug('Only a single scalar or collection object is allowed at root level', obj)
@@ -151,21 +154,29 @@ class RootAstObj(list):
 
 
 
-def _init_common(self, state):
+
+def _init_common(self, state_or_obj):
     '''
     Shared initialization for all AST nodes below root level.
-    '''
-    self.tag = state.tag
-    state.tag = None
 
-    self.indent = state.indent
-    self.at_line_start = state.at_line_start
-    self.inline = state.inline
-    self.inline_indent = state.inline_indent
-    self.first_lineno = state.first_lineno
-    self.first_column = state.first_column
-    self.last_lineno = state.last_lineno
-    self.last_column = state.last_column
+    Usually takes initialization from state, but in some cases, like
+    non-inline dicts, can take values from a pre-existing scalar or other
+    object.
+    '''
+    try:
+        self.tag = state_or_obj.next_tag
+        state_or_obj.next_tag = None
+    except AttributeError:
+        self.tag = None
+
+    self.indent = state_or_obj.indent
+    self.at_line_start = state_or_obj.at_line_start
+    self.inline = state_or_obj.inline
+    self.inline_indent = state_or_obj.inline_indent
+    self.first_lineno = state_or_obj.first_lineno
+    self.first_column = state_or_obj.first_column
+    self.last_lineno = state_or_obj.last_lineno
+    self.last_column = state_or_obj.last_column
 
     if self.tag is None:
         # If there is no tag, the external appearance of the object is
@@ -221,13 +232,13 @@ def _init_common(self, state):
 
 
 
-class ScalarAstObj(object):
+class ScalarNode(object):
     '''
     Scalar object, including quoted (delim, block) and unquoted strings,
     none, bool, int, and float.
     '''
     basetype = 'scalar'
-    __slots__ = (_astobj_common_slots + _astobj_scalar_or_collection_slots +
+    __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent'])
 
     def __init__(self, state, init_common=_init_common,
@@ -253,7 +264,7 @@ class ScalarAstObj(object):
 KeypathElement = collections.namedtuple('KeypathElement', ['type', 'val'])
 
 
-class Keypath(ScalarAstObj):
+class Keypath(ScalarNode):
     '''
     Abstract keypath.
 
@@ -267,13 +278,13 @@ class Keypath(ScalarAstObj):
 
 
 
-class ListlikeAstObj(list):
+class ListlikeNode(list):
     '''
     List-like collection.
     '''
     basetype = 'list'
-    __slots__ = (_astobj_common_slots + _astobj_scalar_or_collection_slots +
-                 _astobj_collection_slots +
+    __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
+                 _node_collection_slots +
                  ['internal_indent_immediate, internal_indent_later'])
 
     def __init__(self, state, init_common=_init_common,
@@ -380,15 +391,15 @@ class ListlikeAstObj(list):
 
 
 
-class DictlikeAstObj(collections.OrderedDict):
+class DictlikeNode(collections.OrderedDict):
     '''
     Dict-like collection.
     '''
     basetype = 'dict'
-    __slots__ = (_astobj_common_slots + _astobj_scalar_or_collection_slots +
-                 _astobj_collection_slots + ['awaiting_val', 'next_key'])
+    __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
+                 _node_collection_slots + ['awaiting_val', 'next_key'])
 
-    def __init__(self, state, init_common=_init_common,
+    def __init__(self, state_or_obj, init_common=_init_common,
                  keypath_parent=None, keypath_traversable=False):
         collections.OrderedDict.__init__(self)
 
@@ -404,7 +415,7 @@ class DictlikeAstObj(collections.OrderedDict):
             # is always open.
             self.open = True
         else:
-            init_common(self, state)
+            init_common(self, state_or_obj)
             self.open = False
         self.awaiting_val = False
         self.next_key = None
@@ -494,12 +505,12 @@ class DictlikeAstObj(collections.OrderedDict):
 
 
 
-class TagAstObj(object):
-    __slots__ = _astobj_common_slots + ['type', 'mutable', 'compatible_basetypes', '_type_data'
-                                        'label', 'newline',
-                                        'collection_config_type', 'collection_config_val',
-                                        'open', 'next_key', 'awaiting_val',
-                                        'unresolved_child_count']
+class TagNode(object):
+    __slots__ = _node_common_slots + ['type', 'mutable', 'compatible_basetypes', '_type_data'
+                                      'label', 'newline',
+                                      'collection_config_type', 'collection_config_val',
+                                      'open', 'next_key', 'awaiting_val',
+                                      'unresolved_child_count']
     def __init__(self, state, init_common=_init_common):
         list.__init__(self)
         init_common(self, state)
