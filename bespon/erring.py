@@ -62,6 +62,21 @@ class BespONException(Exception):
             return '\n  ' + t + '\n  ' + msg
 
 
+class Bug(BespONException):
+    '''
+    Exception indicating a bug in the program, rather than invalid user data.
+    If this exception didn't exist, the relevant bugs would still produce
+    exceptions, but the exceptions would lack traceback information about
+    where the bugs were triggered.
+    '''
+
+
+class DataError(BespONException):
+    '''
+    Invalid data.
+    '''
+
+
 class InvalidLiteralCharacterError(BespONException):
     '''
     Character that is not allowed to appear literally has appeared.
@@ -163,6 +178,24 @@ class ParseError(BespONException):
         self.traceback = traceback
     def __str__(self):
         return self.fmt_msg_with_traceback(self.msg, self.traceback)
+
+
+class IndentationError(ParseError):
+    '''
+    Error in relative indentation
+    '''
+    def __init__(self, traceback):
+        self.msg = 'Inconsistent relative indentation'
+        self.traceback = traceback
+
+
+class TagError(ParseError):
+    '''
+    Tag and object type mismatch.
+    '''
+    def __init__(self, traceback):
+        self.msg = 'Tag type and object type do not agree'
+        self.traceback = traceback
 
 
 class AppendError(ParseError):

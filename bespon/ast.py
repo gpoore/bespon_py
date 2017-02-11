@@ -36,14 +36,18 @@ class Ast(object):
     Python objects.  By default, it overwrites the abstract representation
     in this process; this can be avoided with a keyword argument.
     '''
-    __slots__ = ['state', 'full_ast', 'source', 'root', 'pos',
+    __slots__ = ['state', 'full_ast', 'max_nesting_depth',
+                 'source', 'root', 'pos',
                  '_unresolved_nodes', '_tag_cached_pos']
 
-    def __init__(self, state, full_ast=False):
+    def __init__(self, state, full_ast=False, max_nesting_depth=100):
         self.state = state
         if full_ast not in (True, False):
             raise TypeError
         self.full_ast = full_ast
+        if not isinstance(max_nesting_depth, int):
+            raise TypeError
+        self.max_nesting_depth = max_nesting_depth
         self.source = astnodes.SourceNode(state)
         self.pos = self.source
         self._unresolved_nodes = []
@@ -73,6 +77,11 @@ class Ast(object):
         if obj.inline or (obj.external_indent == pos.indent and pos.basetype == 'dict'):
             pos.check_append_scalar_key(obj, self.full_ast)
         elif len(obj.external_indent) >= len(pos.indent):
+            # Object will be in a dict, so its `.nesting_depth` is incorrect
+            # and must be updated.  This won't be reflected in state, so
+            # update that directly.
+            obj.nesting_depth += 1
+            self.state.nesting_depth += 1
             dict_obj = DictlikeNode(obj)
             # No need to set `.open=True`; it is irrelevant in non-inline mode
             self.append_collection(dict_obj)
@@ -100,6 +109,7 @@ class Ast(object):
             # exist at this level, it must have already been created before
             # the lower level of the AST was reached.
             pos.check_append_scalar_key(obj, self.full_ast)
+            self.state.nesting_depth = pos.nesting_depth
             self.pos = pos
 
 
@@ -124,9 +134,12 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In non-inline mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
+        if obj.nesting_depth > self.max_nesting_depth:
+            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), obj)
         self._unresolved_nodes.append(obj)
         self.pos.check_append_collection(obj)
         self.pos = obj
+
 
 
     def start_dict_inline(self, DictlikeNode=astnodes.DictlikeNode):
@@ -137,6 +150,7 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
+        state.nesting_depth += 1
         dict_obj = DictlikeNode(state)
         dict_obj.open = True
         self.append_collection(dict_obj)
@@ -160,6 +174,7 @@ class Ast(object):
         pos.last_column = state.last_column
         pos = pos.parent
         state.inline = pos.inline
+        state.nesting_depth -= 1
         self.pos = pos
 
 
@@ -171,6 +186,7 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
+        state.nesting_depth += 1
         list_obj = ListlikeNode(state)
         list_obj.open = True
         self.append_collection(list_obj)
@@ -192,6 +208,7 @@ class Ast(object):
         pos.last_column = state.last_column
         pos = pos.parent
         state.inline = pos.inline
+        state.nesting_depth -= 1
         self.pos = pos
 
 
@@ -211,6 +228,7 @@ class Ast(object):
         if not external_inline:
             state.inline = True
             state.inline_indent = state.indent
+        # Tags aren't collections, so don't increment `.nesting_depth`
         tag_node = TagNode(state, external_inline)
         self.pos = tag_node
 
@@ -231,6 +249,7 @@ class Ast(object):
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
         state.inline = pos.external_inline
         state.next_tag = pos
+        # Tags aren't collections, so don't decrement `.nesting_depth`
         self.pos = self._tag_cached_pos
         self._tag_cached_pos = None
 
@@ -273,6 +292,7 @@ class Ast(object):
             pos.last_lineno = state.last_lineno
             pos.last_column = state.last_column
         elif len(state.indent) >= len(pos.indent):
+            state.nesting_depth += 1
             list_obj = ListlikeNode(state)
             list_obj.open = True
             self.append_collection(list_obj)
@@ -305,6 +325,7 @@ class Ast(object):
                 pos.last_column = state.last_column
             else:
                 raise erring.ParseError('Misplaced "*"; cannot start a list element here', state)
+            state.nesting_depth = pos.nesting_depth
             self.pos = pos
 
 
@@ -346,6 +367,7 @@ class Ast(object):
                 parent.last_lineno = pos.last_lineno
                 parent.last_column = pos.last_column
                 pos = parent
+            state.nesting_depth = pos.nesting_depth
             self.pos = pos
 
 

@@ -32,41 +32,51 @@ from . import defaults
 
 class State(object):
     '''
-    Keep track of state:  the name of the source (file name, or <string>),
-    the current location within the source and context (indent, inline),
-    unclaimed tags, etc.
+    Keep track of state.  This includes information about the source, the
+    current location within the source, the current parsing context,
+    a cached tag for the next object that is parsed, etc.
     '''
-    __slots__ = ['source', 'source_depth', 'source_inline', 'nesting_depth',
+    __slots__ = ['source', 'source_include_depth',
+                 'source_initial_nesting_depth',
                  'indent', 'at_line_start', 'inline', 'inline_indent',
                  'first_lineno', 'first_column', 'last_lineno', 'last_column',
+                 'nesting_depth',
                  'next_tag', 'start_root_tag', 'end_root_tag']
-    def __init__(self, source=None, source_depth=None, source_inline=False
-                 nesting_level=None,
+    def __init__(self, source=None, source_include_depth=0,
+                 source_initial_nesting_depth=0,
                  indent=None, at_line_start=True,
                  inline=False, inline_indent=None,
-                 first_lineno=None, first_column=None):
+                 first_lineno=1, first_column=1):
         if not all(x is None or isinstance(x, str) for x in (source, indent, inline_indent)):
             raise TypeError('Invalid keyword argument value')
-        if not (x is None or (isinstance(x, int) and x >= 0) for x in (source_depth, nesting_depth)):
-            raise TypeError('Invalid keyword argument value')
-        if not all(x is None or (isinstance(x, int) and x > 0) for x in (first_lineno, first_column)):
-            raise TypeError('Invalid keyword argument value')
+        if any(x is not None and x.lstrip('\x20\t') for x in (indent, inline_indent)):
+            raise ValueError('Invalid characters in "indent" or "inline_indent"; only spaces and tabs are allowed')
+        if not all(isinstance(x, int) and x >= 0 for x in (source_include_depth, source_initial_nesting_depth)):
+            if all(isinstance(x, int) for x in (source_include_depth, source_initial_nesting_depth)):
+                raise ValueError('Invalid keyword argument value')
+            else:
+                raise TypeError('Invalid keyword argument value')
+        if not all(isinstance(x, int) and x > 0 for x in (first_lineno, first_column)):
+            if all(isinstance(x, int) for x in (first_lineno, first_column)):
+                raise ValueError('Invalid keyword argument value')
+            else:
+                raise TypeError('Invalid keyword argument value')
         if not all(x in (True, False) for x in (at_line_start, inline)):
             raise TypeError('Invalid keyword argument value')
 
         self.source = source or '<string>'
-        self.source_depth = source_depth or 0
-        self.source_inline = source_inline
-        self.nesting_depth = nesting_depth or 0
+        self.source_include_depth = source_include_depth
+        self.source_initial_nesting_depth = source_initial_nesting_depth
 
         self.indent = indent
         self.at_line_start = at_line_start
         self.inline = inline
         self.inline_indent = inline_indent
-        self.first_lineno = first_lineno or 1
-        self.first_column = first_column or 1
+        self.first_lineno = first_lineno
+        self.first_column = first_column
         self.last_lineno = self.first_lineno
         self.last_column = self.first_column
+        self.nesting_depth = self.source_initial_nesting_depth
 
         self.next_tag = None
         self.start_root_tag = None
@@ -77,62 +87,8 @@ class State(object):
 
 class BespONDecoder(object):
     '''
-    Decode BespON.
-
-    Works with Unicode strings or iterables containing Unicode strings.
+    Decode BespON in a string or stream.
     '''
-    """
-        __slots__ = ['state',
-    '_debug_raw_ast',
-    'default_dict_parsers',
-    'default_list_parsers',
-    'default_string_parsers',
-    'default_reserved_words',
-    'default_parser_aliases',
-    'dict_parsers',
-    'list_parsers',
-    'string_parsers',
-    '_bytes_parsers',
-    'parsers',
-    'reserved_words',
-    'parser_aliases',
-    'parser_cats',
-    'dict_parsers',
-    'list_parsers',
-    'string_parsers',
-    'unicodefilter',
-    'newlines',
-    'newline_chars',
-    'newline_chars_str',
-    'spaces',
-    'spaces_str',
-    'indents',
-    'indents_str',
-    'whitespace',
-    'whitespace_str',
-    'unicode_whitespace',
-    'unicode_whitespace_str',
-    'not_unquoted_str',
-    'not_unquoted',
-    '_not_unquoted_re',
-    '_parse_line',
-    '_explicit_type_name_check_re',
-    '_opening_delim_percent_re',
-    '_opening_delim_single_quote_re',
-    '_opening_delim_double_quote_re',
-    '_opening_delim_equals_re',
-    '_opening_delim_pipe_re',
-    '_opening_delim_plus_re',
-    '_closing_delim_re_dict',
-    '_numeric_types_starting_chars',
-    '_int_re',
-    '_float_re',
-    '_unquoted_key_re',
-    '_keypath_element_re',
-    '_keypath_re',
-    '_unquoted_string_fragment_re',
-    '_line_iter', '_ast']
-    """
     def __init__(self, only_ascii=False, unquoted_strings=True, unquoted_unicode=False,
                  dialect=None, reserved_chars=None, reserved_words=None,
                  dict_parsers=None, list_parsers=None, string_parsers=None, parser_aliases=None,

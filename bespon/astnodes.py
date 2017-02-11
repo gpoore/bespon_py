@@ -28,6 +28,7 @@ _node_common_slots = ['indent', 'at_line_start',
                       'inline', 'inline_indent',
                       'first_lineno', 'first_column',
                       'last_lineno', 'last_column',
+                      'nesting_depth',
                       'resolved']
 
 _node_scalar_or_collection_slots = ['tag', 'parent', 'index',
@@ -60,8 +61,10 @@ class SourceNode(object):
 
     def __init__(self, state):
         self.source = state.source
-        self.source_depth = state.source_depth
+        self.source_include_depth = state.source_include_depth
+        self.source_initial_nesting_depth = state.source_initial_nesting_depth
         self.full_ast = state.full_ast
+        self.nesting_depth = state.source_initial_nesting_depth
 
         self.indent = state.indent
         self.at_line_start = state.at_line_start
@@ -98,6 +101,7 @@ class RootNode(list):
         self.start_tag = state.start_root_tag
         self.end_tag = None
         self.unresolved_child_count = 0
+        self.nesting_depth = state.source_initial_nesting_depth
 
         self.indent = state.indent
         self.at_line_start = state.at_line_start
@@ -172,6 +176,7 @@ def _init_common(self, state_or_obj):
     self.first_column = state_or_obj.first_column
     self.last_lineno = state_or_obj.last_lineno
     self.last_column = state_or_obj.last_column
+    self.nesting_depth = state_or_obj.nesting_depth
 
     if tag is None:
         # If there is no tag, the external appearance of the object is
