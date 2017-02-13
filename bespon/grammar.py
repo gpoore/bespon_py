@@ -15,7 +15,7 @@ from __future__ import (division, print_function, absolute_import,
 
 
 from .version import __version__
-from .re_patterns import XID_START_LESS_FILLERS, XID_CONTINUE_LESS_FILLERS
+from . import re_patterns import
 import sys
 import re
 
@@ -68,17 +68,35 @@ invalid_only_ascii_codepoint_pattern = '[^\\\t\\\n\\\u0020-\\\u007e]'
 # Assemble basic grammatical elements
 # >>> unicode_whitespace = [cp for cp, data in unicodetools.ucd.proplist.items() if 'White_Space' in data]
 _RAW_GRAMMAR = [# Whitespace
-                ('space', '\x20'),
-                ('tab', '\t'),
-                ('indent_code_points', '{space}{tab}'),
-                ('indent', '[{indent_code_points}]'),
-                ('newline', '\n'),
-                ('newline_code_points', '{newline}'),
-                ('whitespace_code_points', '{indent_code_points}{newline_code_points}'),
-                ('whitespace', '[{whitespace_code_points}]'),
-                ('unicode_whitespace_code_points', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0' + '\u1680' +
-                                                    '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
-                                                    '\u2028\u2029\u202f\u205f\u3000')),
+                ('space', '\\\u0020'),
+                ('tab', '\\\u0009'),
+                ('indent_cp_concat', '{space}{tab}'),
+                ('indent', '[{indent_cp_concat}]'),
+                ('newline', '\\\u0010'),
+                ('newline_cp_concat', '{newline}'),
+                ('whitespace_cp_concat', '{indent_cp_concat}{newline_cp_concat}'),
+                ('whitespace', '[{whitespace_cp_concat}]'),
+                ('unicode_whitespace_cp_concat', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0' + '\u1680' +
+                                                  '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
+                                                  '\u2028\u2029\u202f\u205f\u3000')),
+
+                # Special characters
+                ('comment', '\\#'),
+                ('assign_key_val', '\\='),
+                ('open_noninline_list', '\\*'),
+                ('start_inline_dict', '\\{'),
+                ('end_inline_dict', '\\}'),
+                ('start_inline_list', '\\['),
+                ('end_inline_list', '\\]'),
+                ('start_tag', '\\('),
+                ('end_tag', '\\)'),
+                ('end_tag_suffix', '\\>'),
+                ('inline_separator', '\\,'),
+                ('block_prefix', '\\|'),
+                ('block_suffix', '\\/')
+                ('escaped_string', '[\'"]'),
+                ('literal_string', '\\`'),
+                ('alias_prefix', '\\$'),
 
                 # None type
                 ('none_type', 'none'),
@@ -114,7 +132,10 @@ _RAW_GRAMMAR = [# Whitespace
                 ('integer', '{dec_integer}|{hex_integer}|{oct_integer}|{bin_integer}'),
                 # Floats
                 ('dec_exponent', '[eE]{sign}?{dec_digits_underscores}'),
-                ('dec_float', '{opt_sign_indent}(?:{zero}|{nonzero_dec_digit}{dec_digit}*(?:_{dec_digit}+)*)(?:\\.{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})'),
+                ('dec_float', '''
+                              {opt_sign_indent}(?:{zero}|{nonzero_dec_digit}{dec_digit}*(?:_{dec_digit}+)*)
+                                  (?:\\.{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})
+                              '''.replace('\x20', '').replace('\n', '')),
                 ('hex_exponent', '[pP]{sign}?{dec_digits_underscores}'),
                 ('hex_float', '''
                               {opt_sign_indent}0x_?
@@ -127,24 +148,33 @@ _RAW_GRAMMAR = [# Whitespace
                 ('float_reserved_word', '{opt_sign_indent}(?:[iI][nN][fF]|[nN][aA][nN])'),
                 ('float', '{dec_float}|{hex_float}|{infinity}|{not_a_number}'),
 
-                # Unquoted key
+                # Unquoted strings of all varieties
                 ('ascii_start', '[A-Za-z]'),
-                ('unicode_start', XID_START_LESS_FILLERS),
+                ('unicode_start', re_patterns.XID_START_LESS_FILLERS),
                 ('ascii_continue', '[0-9A-Za-z_]'),
-                ('unicode_continue', XID_CONTINUE_LESS_FILLERS),
+                ('unicode_continue', re_patterns.XID_CONTINUE_LESS_FILLERS),
                 ('unquoted_ascii_key', '_*{ascii_start}{ascii_continue}*'),
                 ('unquoted_unicode_key', '_*{unicode_start}{unicode_continue}*'),
+                ('ascii_alias', '{alias_prefix}{unquoted_ascii_key}'),
+                ('unicode_alias', '{alias_prefix}{unquoted_unicode_key}'),
                 ('unquoted_ascii_string', '{unquoted_ascii_key}(?:\x20{ascii_continue}+)+'),
                 ('unquoted_unicode_string', '{unquoted_unicode_key}(?:\x20{unicode_continue}+)+'),
                 ('si_mu_prefix', '\u00B5|\u03BC'),
                 ('ascii_unquoted_unit', '''
-                                    [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
-                                    [Xx][G-Zg-z][A-Za-z]* |
-                                    [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
-                                    %
-                                    '''.replace('\x20', '').replace('\n', '')),
+                                        [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
+                                        [Xx][G-Zg-z][A-Za-z]* |
+                                        [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
+                                        %
+                                        '''.replace('\x20', '').replace('\n', '')),
                 ('unquoted_ascii_dec_number_unit', '(?:{dec_integer}|{dec_float}){ascii_unquoted_unit}'),
                 ('unquoted_unicode_dec_number_unit', '(?:{dec_integer}|{dec_float}){si_mu_prefix}?{ascii_unquoted_unit}'),
+                ('rtl_code_point', '{0}|{1}'.format(re_patterns.BIDI_R_AL, re_patterns.PRIVATE_USE)),
+
+                # Keypaths
+                ('ascii_key_keypath', '(?:{unquoted_ascii_key}|{open_noninline_list})(?:\\.(?:{unquoted_ascii_key}|{open_noninline_list}))+'),
+                ('ascii_val_keypath', '(?:{alias_prefix}?{unquoted_ascii_key}(?:.{unquoted_ascii_key})*'),
+                ('unicode_key_keypath', '(?:{unquoted_unicode_key}|{open_noninline_list})(?:\\.(?:{unquoted_unicode_key}|{open_noninline_list}))+'),
+                ('unicode_val_keypath', '(?:{alias_prefix}?{unquoted_unicode_key}(?:.{unquoted_unicode_key})*'),
 ]
 
 
