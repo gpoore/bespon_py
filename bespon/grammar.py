@@ -15,7 +15,7 @@ from __future__ import (division, print_function, absolute_import,
 
 
 from .version import __version__
-from . import re_patterns import
+from . import re_patterns
 import sys
 import re
 
@@ -65,40 +65,69 @@ invalid_only_ascii_codepoint_pattern = '[^\\\t\\\n\\\u0020-\\\u007e]'
 
 
 
-# Assemble basic grammatical elements
+# Assemble literal grammar
+_RAW_LIT_GRAMMAR = [# Whitespace
+                    ('tab', '\t'),
+                    ('space', '\x20'),
+                    ('indent', '{tab}{space}'),
+                    ('newline', '\n'),
+                    ('whitespace', '{indent}{newline}'),
+                    ('unicode_whitespace', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0' + '\u1680' +
+                                            '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
+                                            '\u2028\u2029\u202f\u205f\u3000')),
+                    # Special code points
+                    ('comment', '#'),
+                    ('assign_key_val', '='),
+                    ('open_noninline_list', '*'),
+                    ('start_inline_dict', '{'),
+                    ('end_inline_dict', '}'),
+                    ('start_inline_list', '['),
+                    ('end_inline_list', ']'),
+                    ('start_tag', '('),
+                    ('end_tag', ')'),
+                    ('end_tag_suffix', '>'),
+                    ('inline_separator', ','),
+                    ('block_prefix', '|'),
+                    ('block_suffix', '/')
+                    ('escaped_string', '\'"'),
+                    ('literal_string', '`'),
+                    ('alias_prefix', '$'),]
+
+LIT_GRAMMAR = {}
+for k, v in _RAW_LIT_GRAMMAR:
+    if k in ('start_inline_dict', 'end_inline_dict'):
+        LIT_GRAMMAR[k] = v
+    else:
+        LIT_GRAMMAR[k] = v.format(**LIT_GRAMMAR)
+
+
+
+
+# Assemble regex grammar
 # >>> unicode_whitespace = [cp for cp, data in unicodetools.ucd.proplist.items() if 'White_Space' in data]
-_RAW_GRAMMAR = [# Whitespace
-                ('space', '\\\u0020'),
-                ('tab', '\\\u0009'),
-                ('indent_cp_concat', '{space}{tab}'),
-                ('indent', '[{indent_cp_concat}]'),
-                ('newline', '\\\u0010'),
-                ('newline_cp_concat', '{newline}'),
-                ('whitespace_cp_concat', '{indent_cp_concat}{newline_cp_concat}'),
-                ('whitespace', '[{whitespace_cp_concat}]'),
-                ('unicode_whitespace_cp_concat', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0' + '\u1680' +
-                                                  '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
-                                                  '\u2028\u2029\u202f\u205f\u3000')),
+_RAW_RE_GRAMMAR = []
 
-                # Special characters
-                ('comment', '\\#'),
-                ('assign_key_val', '\\='),
-                ('open_noninline_list', '\\*'),
-                ('start_inline_dict', '\\{'),
-                ('end_inline_dict', '\\}'),
-                ('start_inline_list', '\\['),
-                ('end_inline_list', '\\]'),
-                ('start_tag', '\\('),
-                ('end_tag', '\\)'),
-                ('end_tag_suffix', '\\>'),
-                ('inline_separator', '\\,'),
-                ('block_prefix', '\\|'),
-                ('block_suffix', '\\/')
-                ('escaped_string', '[\'"]'),
-                ('literal_string', '\\`'),
-                ('alias_prefix', '\\$'),
+# Whitespace
+_RAW_RE_WS = [('space', re.escape(LIT_GRAMMAR['space'])),
+              ('indent', '[{0}]'.format(re.escape(LIT_GRAMMAR['indent']))),
+              ('newline', re.escape(LIT_GRAMMAR['newline'])),
+              ('whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['whitespace'])))]
+_RAW_RE_GRAMMAR.extend(_RAW_RE_WS)
 
-                # None type
+# Special characters
+for k in ('comment', 'assign_key_val', 'open_noninline_list',
+          'start_inline_dict', 'end_inline_dict',
+          'start_inline_list', 'end_inline_list',
+          'start_tag', 'end_tag', 'end_tag_suffix',
+          'inline_separator', 'block_prefix', 'block_suffix',
+          'escaped_string', 'literal_string', 'alias_prefix'):
+    v = re.escape(LIT_GRAMMAR[k])
+    if len(v) > 1:
+        v = '[{0}]'.format(v)
+    _RAW_RE_GRAMMAR[k] = v
+
+# Types
+_RAW_RE_TYPE = [# None type
                 ('none_type', 'none'),
                 ('none_type_reserved_word', '[nN][oO][nN][eE]'),
 
@@ -157,8 +186,8 @@ _RAW_GRAMMAR = [# Whitespace
                 ('unquoted_unicode_key', '_*{unicode_start}{unicode_continue}*'),
                 ('ascii_alias', '{alias_prefix}{unquoted_ascii_key}'),
                 ('unicode_alias', '{alias_prefix}{unquoted_unicode_key}'),
-                ('unquoted_ascii_string', '{unquoted_ascii_key}(?:\x20{ascii_continue}+)+'),
-                ('unquoted_unicode_string', '{unquoted_unicode_key}(?:\x20{unicode_continue}+)+'),
+                ('unquoted_ascii_string', '{unquoted_ascii_key}(?:{space}{ascii_continue}+)+'),
+                ('unquoted_unicode_string', '{unquoted_unicode_key}(?:{space}{unicode_continue}+)+'),
                 ('si_mu_prefix', '\u00B5|\u03BC'),
                 ('ascii_unquoted_unit', '''
                                         [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
@@ -174,8 +203,13 @@ _RAW_GRAMMAR = [# Whitespace
                 ('ascii_key_keypath', '(?:{unquoted_ascii_key}|{open_noninline_list})(?:\\.(?:{unquoted_ascii_key}|{open_noninline_list}))+'),
                 ('ascii_val_keypath', '(?:{alias_prefix}?{unquoted_ascii_key}(?:.{unquoted_ascii_key})*'),
                 ('unicode_key_keypath', '(?:{unquoted_unicode_key}|{open_noninline_list})(?:\\.(?:{unquoted_unicode_key}|{open_noninline_list}))+'),
-                ('unicode_val_keypath', '(?:{alias_prefix}?{unquoted_unicode_key}(?:.{unquoted_unicode_key})*'),
-]
+                ('unicode_val_keypath', '(?:{alias_prefix}?{unquoted_unicode_key}(?:.{unquoted_unicode_key})*')]
+_RAW_RE_GRAMMAR.extend(_RAW_RE_TYPES)
 
-
+RE_GRAMMAR = {}
+for k, v in _RAW_RE_GRAMMAR:
+    if k in ('start_inline_dict', 'end_inline_dict'):
+        RE_GRAMMAR[k] = v
+    else:
+        RE_GRAMMAR[k] = v.format(**RE_GRAMMAR)
 
