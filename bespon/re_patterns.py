@@ -14,23 +14,8 @@ from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
 
-from .version import __version__
 import sys
-import itertools
 from . import coding
-
-
-# pylint: disable=E0602, W0622
-if sys.version_info.major == 2:
-    str = unicode
-    chr = unichr
-    range = xrange
-# pylint: enable=E0602, W0622
-# pylint: disable=W0622
-if sys.maxunicode == 0xFFFF:
-    chr = coding.chr_surrogate
-    ord = coding.ord_surrogate
-# pylint: enable=W0622
 
 
 
@@ -444,24 +429,6 @@ else:
          \\\U0001E800-\\\U0001E8CF\\\U0001E8D7-\\\U0001E943\\\U0001E94B-\\\U0001EEEF\\\U0001EEF2-\\\U0001EFFF]
         '''.replace('\x20', '').replace('\n', '')
 
-BIDI_R_AL_SET = set([chr(cp) for cp in itertools.chain([range(0x00ad, 0x00ad),
-                                                        range(0x034f, 0x034f),
-                                                        range(0x061c, 0x061c),
-                                                        range(0x115f, 0x1160),
-                                                        range(0x17b4, 0x17b5),
-                                                        range(0x180b, 0x180e),
-                                                        range(0x200b, 0x200f),
-                                                        range(0x202a, 0x202e),
-                                                        range(0x2060, 0x206f),
-                                                        range(0x3164, 0x3164),
-                                                        range(0xfe00, 0xfe0f),
-                                                        range(0xfeff, 0xfeff),
-                                                        range(0xffa0, 0xffa0),
-                                                        range(0xfff0, 0xfff8),
-                                                        range(0x1bca0, 0x1bca3),
-                                                        range(0x1d173, 0x1d17a),
-                                                        range(0xe0000, 0xe0fff)])])
-
 
 
 
@@ -701,6 +668,9 @@ else:
         '''.replace('\x20', '').replace('\n', '')
 
 
+# ascii_invalid_literal = set([cp for cp in default_invalid_literal if cp < 128])
+# ascii_valid_literal = set(range(0, 128)) - ascii_invalid_literal
+ASCII_INVALID_LITERAL = '[^\\\u0009-\\\u000A\\\u0020-\\\u007E]'
 
 
 # Subset of default invalid literals that cannot be disabled.
