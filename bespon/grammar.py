@@ -97,12 +97,12 @@ for k, v_lit in _RAW_LIT_SPECIAL:
 # Types
 _RAW_RE_TYPE = [# None type
                 ('none_type', 'none'),
-                ('none_type_reserved_word', '[nN][oO][nN][eE]'),
+                ('none_type_invalid_word', '[nN][oO][nN][eE]'),
 
                 # Boolean
                 ('bool_true', 'true'),
                 ('bool_false', 'false'),
-                ('bool_reserved_word', '[tT][rR][uU][eE]|[fF][aA][lL][sS][eE]'),
+                ('bool_invalid_word', '[tT][rR][uU][eE]|[fF][aA][lL][sS][eE]'),
 
                 # Basic numeric elements
                 ('sign', '[+-]'),
@@ -143,7 +143,7 @@ _RAW_RE_TYPE = [# None type
                               '''.replace('\x20', '').replace('\n', '')),
                 ('infinity', '{opt_sign_indent}inf'),
                 ('not_a_number', '{opt_sign_indent}nan'),
-                ('float_reserved_word', '{opt_sign_indent}(?:[iI][nN][fF]|[nN][aA][nN])'),
+                ('float_invalid_word', '{opt_sign_indent}(?:[iI][nN][fF]|[nN][aA][nN])'),
                 ('float', '{dec_float}|{hex_float}|{infinity}|{not_a_number}'),
 
                 # Unquoted strings
@@ -173,7 +173,11 @@ _RAW_RE_TYPE = [# None type
 
                 # Alias path
                 ('ascii_alias_path', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_ascii_key})(?:{path_separator}{unquoted_ascii_key})+'),
-                ('unicode_alias_path', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_unicode_key})(?:{path_separator}{unquoted_unicode_key})+')]
+                ('unicode_alias_path', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_unicode_key})(?:{path_separator}{unquoted_unicode_key})+'),
+
+                # Binary types
+                ('base16', '{lower_hex_digit}+|{upper_hex_digit}+'),
+                ('base64', '[A-Za-z0-9+/=]+')]
 
 _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 
