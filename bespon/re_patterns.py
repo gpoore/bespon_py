@@ -488,7 +488,7 @@ UNPAIRED_SURROGATE = '[\\\uD800-\\\uDBFF](?=[^\\\uDC00-\\\uDFFF]|$)|(?<![\\\uD80
 # default_invalid_literal_less_private_use_unassigned_reserved_surrogates = default_invalid_literal - private_use - unassigned_reserved - surrogates
 # default_invalid_literal_less_private_use_unassigned_reserved = default_invalid_literal_less_private_use_unassigned_reserved_surrogates | surrogates
 if sys.maxunicode == 0xFFFF:
-    DEFAULT_INVALID_LITERAL = '''
+    UNICODE_INVALID_LITERAL = '''
         {UNPAIRED_SURROGATE}
         |
         [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u0378-\\\u0379\\\u0380-\\\u0383\\\u038B\\\u038D\\\u03A2\\\u0530\\\u0557-\\\u0558\\\u0560
@@ -583,7 +583,7 @@ if sys.maxunicode == 0xFFFF:
         [\\\uDB41-\\\uDBFF][\\\uDC00-\\\uDFFF]
         '''.replace('\x20', '').replace('\n', '').replace('{UNPAIRED_SURROGATE}', UNPAIRED_SURROGATE)
 else:
-    DEFAULT_INVALID_LITERAL = '''
+    UNICODE_INVALID_LITERAL = '''
         [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u0378-\\\u0379\\\u0380-\\\u0383\\\u038B\\\u038D\\\u03A2\\\u0530\\\u0557-\\\u0558\\\u0560
          \\\u0588\\\u058B-\\\u058C\\\u0590\\\u05C8-\\\u05CF\\\u05EB-\\\u05EF\\\u05F5-\\\u05FF\\\u061C-\\\u061D\\\u070E\\\u074B-\\\u074C\\\u07B2-\\\u07BF
          \\\u07FB-\\\u07FF\\\u082E-\\\u082F\\\u083F\\\u085C-\\\u085D\\\u085F-\\\u089F\\\u08B5\\\u08BE-\\\u08D3\\\u0984\\\u098D-\\\u098E\\\u0991-\\\u0992
@@ -673,7 +673,7 @@ ASCII_INVALID_LITERAL = '[^\\\u0009-\\\u000A\\\u0020-\\\u007E]'
 
 # Subset of default invalid literals that cannot be disabled.
 if sys.maxunicode == 0xFFFF:
-    INVALID_LITERALS_LESS_PRIVATE_USE_UNASSIGNED_RESERVED = '''
+    UNICODE_INVALID_LITERAL_LESS_PRIVATE_USE_UNASSIGNED_RESERVED = '''
         {UNPAIRED_SURROGATE}
         |
         [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u061C\\\u200E-\\\u200F\\\u2028-\\\u202E\\\u2066-\\\u2069\\\uFDD0-\\\uFDEF\\\uFEFF
@@ -685,7 +685,7 @@ if sys.maxunicode == 0xFFFF:
         \\\uDBFF[\\\uDFFE-\\\uDFFF]
         '''.replace('\x20', '').replace('\n', '').replace('{UNPAIRED_SURROGATE}', UNPAIRED_SURROGATE)
 else:
-    INVALID_LITERALS_LESS_PRIVATE_USE_UNASSIGNED_RESERVED = '''
+    UNICODE_INVALID_LITERAL_LESS_PRIVATE_USE_UNASSIGNED_RESERVED = '''
         [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u061C\\\u200E-\\\u200F\\\u2028-\\\u202E\\\u2066-\\\u2069\\\uD800-\\\uDFFF\\\uFDD0-\\\uFDEF
          \\\uFEFF\\\uFFFE-\\\uFFFF\\\U0001FFFE-\\\U0001FFFF\\\U0002FFFE-\\\U0002FFFF\\\U0003FFFE-\\\U0003FFFF\\\U0004FFFE-\\\U0004FFFF
          \\\U0005FFFE-\\\U0005FFFF\\\U0006FFFE-\\\U0006FFFF\\\U0007FFFE-\\\U0007FFFF\\\U0008FFFE-\\\U0008FFFF\\\U0009FFFE-\\\U0009FFFF

@@ -8,6 +8,9 @@
 #
 
 
+# pylint: disable=C0301
+
+
 from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
@@ -23,9 +26,10 @@ if sys.version_info.major == 2:
 import collections
 import re
 from . import erring
-from . import unicoding
+from . import escape
 from . import tooling
-from . import defaults
+from . import load_types
+from . import grammar
 
 
 
@@ -89,411 +93,135 @@ class BespONDecoder(object):
     '''
     Decode BespON in a string or stream.
     '''
-    def __init__(self, only_ascii=False, unquoted_strings=True, unquoted_unicode=False,
-                 dialect=None, reserved_chars=None, reserved_words=None,
-                 dict_parsers=None, list_parsers=None, string_parsers=None, parser_aliases=None,
-                 **kwargs):
-        arg_bools = (only_ascii, unquoted_strings, unquoted_unicode)
-        if not all(x in (True, False) for x in arg_bools):
-            raise erring.ConfigError('Arguments "only_ascii", "unquoted_strings", "unquoted_unicode" must be boolean')
-        # In sanity checks, it is important to keep in mind that
-        # `unquoted_strings` and `unquoted_unicode` are separate and don't
-        # necessarily overlap.  It would be possible to have unquoted Unicode
-        # characters in a reserved word, which would not count as a string that
-        # needs quoting.
+    def __init__(self, *args, **kwargs):
+        # Process args
+        if args:
+            raise TypeError('Explicit keyword arguments are required')
+
+        only_ascii = kwargs.pop('only_ascii', False)
+        unquoted_strings = kwargs.pop('unquoted_strings', True)
+        unquoted_unicode = kwargs.pop('unquoted_unicode', False)
+        ints = kwargs.pop('ints', True)
+        if any(x not in (True, False) for x in (only_ascii, unquoted_strings, unquoted_unicode, ints)):
+            raise TypeError
         if only_ascii and unquoted_unicode:
-            raise erring.ConfigError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
-        # Default settings for allowed characters and quoting
+            raise ValueError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
         self.only_ascii = only_ascii
         self.unquoted_strings = unquoted_strings
         self.unquoted_unicode = unquoted_unicode
-        # Settings that are actually used; these may be changed via parser
-        # directives `(bespon ...)>`.
-        self._only_ascii__current = only_ascii
-        self._unquoted_strings__current = unquoted_strings
-        self._unquoted_unicode__current = unquoted_unicode
+        self.ints = ints
+
+        custom_parsers = kwargs.pop('custom_parsers', None)
+        custom_types = kwargs.pop('custom_types', None)
+        if not all(x is None for x in (custom_parsers, custom_types)):
+            raise NotImplementedError
+        self.custom_parsers = custom_parsers
+        self.custom_types = custom_types
+
+        if kwargs:
+            raise TypeError('Unexpected keyword argument(s) {0}'.format(', '.join('{0}'.format(k) for k in kwargs)))
 
 
-        if dialect is not None and not isinstance(dialect, str):
-            raise erring.ConfigError('"dialect" must be None or a Unicode string')
-        if reserved_chars is None and reserved_words is None:
-            self.dialect = dialect or 'bespon'
+        # Generate parser dicts
+
+
+        # Create unescape functions
+        self.unescape = escape.Unescape()
+
+
+        # Create dict of token-based parsing functions
+        token_functions = {'comment': self._parse_token_comment,
+                           'open_noninline_list': self._parse_token_open_noninline_list,
+                           'start_inline_dict': self._parse_token_start_inline_dict,
+                           'end_inline_dict': self._parse_token_end_inline_dict,
+                           'start_inline_list': self._parse_token_start_inline_list,
+                           'end_inline_list': self._parse_token_end_inline_list,
+                           'start_tag': self._parse_token_start_tag,
+                           'end_tag': self._parse_token_end_tag,
+                           'inline_element_separator': self._parse_token_inline_element_separator,
+                           'block_prefix': self._parse_token_block_prefix,
+                           'escaped_string_singlequote_delim': self._parse_token_escaped_string_singlequote_delim,
+                           'escaped_string_doublequote_delim': self._parse_token_escaped_string_doublequote_delim,
+                           'literal_string_delim': self._parse_token_literal_string_delim,
+                           'alias_prefix': self._parse_token_alias_prefix}
+        # The parser for unquoted strings or other elements will raise an
+        # error if it doesn't find a valid unquoted token, so no special error
+        # handling needs to be specified at this point.
+        parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_element)
+        parse_token[''] = self._parse_token_goto_next_line
+        for token_name, func in token_functions:
+            token = grammar.LIT_GRAMMAR[token_name]
+            parse_token[token] = func
+        self._parse_token = parse_token
+
+
+        # Assemble regular expressions
+        if self.only_ascii:
+            invalid_literal = grammar.RE_GRAMMAR['ascii_invalid_literal']
+            self._invalid_literal_re = re.compile(invalid_literal)
         else:
-            self.dialect = dialect or 'bespon.custom'
+            invalid_literal = grammar.RE_GRAMMAR['unicode_invalid_literal']
+            self._invalid_literal_re = re.compile(invalid_literal)
+            bidi = grammar.RE_GRAMMAR['bidi']
+            ignorable = grammar.RE_GRAMMAR['default_ignorable']
+            invalid_literal_or_bidi_or_ignorable = '(?P<invalid_literal>{0})|(?P<bidi>{1})|(?P<default_ignorable>{2})'.format(invalid_literal, bidi, ignorable)
+            self._invalid_literal_or_bidi_or_ignorable_re = re.compile(invalid_literal_or_bidi_or_default_ignorable)
+            invalid_literal_or_bidi = '(?P<invalid_literal>{0})|(?P<bidi>{1})'.format(invalid_literal, bidi)
+            self._invalid_literal_or_bidi_re = re.compile(invalid_literal_or_bidi)
+            invalid_literal_or_default_ignorable = '(?P<invalid_literal>{0})|(?P<default_ignorable>{1})'.format(invalid_literal, ignorable)
+            self._invalid_literal_or_default_ignorable_re = re.compile(invalid_literal_or_default_ignorable)
 
+        self._newline_re = re.compile(grammar.RE_GRAMMAR['newline'])
 
-        # Create a UnicodeFilter instance
-        # Provide shortcuts to some of its attributes
-        self._unicodefilter = unicoding.UnicodeFilter(**kwargs)
-        self._literals = self._unicodefilter.literals
-        self._nonliterals_less_surrogates = self._unicodefilter.nonliterals_less_surrogates
-        self._newlines = self._unicodefilter.newlines
-        self._newline_chars = self._unicodefilter.newline_chars
-        self._newline_chars_str = self._unicodefilter.newline_chars_str
-        self._spaces = self._unicodefilter.spaces
-        self._spaces_str = self._unicodefilter.spaces_str
-        self._indents = self._unicodefilter.indents
-        self._indents_str = self._unicodefilter.indents_str
-        self._whitespace = self._unicodefilter.whitespace
-        self._whitespace_str = self._unicodefilter.whitespace_str
-        self._unicode_whitespace = self._unicodefilter.unicode_whitespace
-        self._unicode_whitespace_str = self._unicodefilter.unicode_whitespace_str
-        self._unicode_whitespace_re = re.compile('[{0}]'.format(re.escape(self._unicode_whitespace_str)))
-        self._unicode_newlines = unicoding.UNICODE_NEWLINES
-
-
-        arg_dicts = (reserved_chars, reserved_words, dict_parsers, list_parsers, string_parsers, parser_aliases)
-        if not all(x is None or isinstance(x, dict) for x in arg_dicts):
-            raise TypeError('Arguments "reserved_chars", "reserved_words", "*_parsers", "parser_aliases" must be dicts')
-
-
-        # Take care of reserved characters and related dict for parsing
-        if reserved_chars is None:
-            final_reserved_chars = defaults.RESERVED_CHARS
-        else:
-            # For custom reserved characters, do basic consistency checks
-            for k, v in reserved_chars.items():
-                if k not in defaults.RESERVED_CHARS:
-                    raise erring.ConfigError('"reserved_chars" contains unknown key "{0}"'.format(k))
-                if v is not None and (not isinstance(v, str) or len(v) != 1):
-                    raise erring.ConfigError('"reserved_chars" must map to None or to Unicode strings of length 1 (on narrow Python builds, this limits the range of acceptable code points)')
-                if v in '+-._0123456789' or ord('a') <= ord(v) <= ord('z') or ord('A') <= ord(v) <= ord('Z'):
-                    # Don't allow alphanumerics, or characters used in defining digits, to be reserved chars
-                    raise erring.ConfigError('"reserved_chars" cannot include the plus, hyphen, period, underscore, or 0-9, a-z, A-Z')
-            if len(set(v for k, v in reserved_chars.items() if v is not None)) != len(k for k, v in reserved_chars.items() if v is not None):
-                raise erring.ConfigError('"reserved_chars" contains duplicate mappings to a single code point')
-            # Need a `defaultdict`, so that don't have to worry about whether
-            # all elements are present
-            final_reserved_chars = collections.defaultdict(lambda: None, reserved_chars)
-            for o, c in (('start_type', 'end_type'), ('start_list', 'end_list'), ('start_dict', 'end_dict')):
-                if not ((final_reserved_chars[o] is None and final_reserved_chars[c] is None) or (final_reserved_chars[o] is not None and final_reserved_chars[c] is not None)):
-                    raise erring.ConfigError('Inconsistent "reserved_chars"; opening and closing delimiters must be defined in pairs')
-            if final_reserved_chars['start_type'] is not None and final_reserved_chars['end_type_suffix'] is None:
-                raise erring.ConfigError('Inconsistent "reserved_chars"; must define "end_type_suffix"')
-            if any(final_reserved_chars[k] is not None for k in ('comment', 'literal_string', 'escaped_string')) and final_reserved_chars['block_suffix'] is None:
-                raise erring.ConfigError('Inconsistent "reserved_chars"; cannot define comments or quoted strings without defining "block_suffix"')
-            if any(final_reserved_chars[k] is not None for k in ('start_type', 'start_list', 'start_dict')) and final_reserved_chars['separator'] is None:
-                raise erring.ConfigError('Inconsistent "reserved_chars"; cannot define explicit typing or collection objects without defining "separator"')
-            if final_reserved_chars['assign_key_val'] is None:
-                raise erring.ConfigError('Inconsistent "reserved_chars"; must define "assign_key_val"')
-        self._reserved_chars = final_reserved_chars
-
-        self._reserved_chars_literal_string = self._reserved_chars['literal_string']
-        self._reserved_chars_escaped_string = self._reserved_chars['escaped_string']
-        self._reserved_chars_list_item = self._reserved_chars['list_item']
-        self._reserved_chars_comment = self._reserved_chars['comment']
-        self._reserved_chars_separator = self._reserved_chars['separator']
-        self._reserved_chars_end_list = self._reserved_chars['end_list']
-        self._reserved_chars_end_dict = self._reserved_chars['end_dict']
-        self._reserved_chars_end_type_with_suffix = self._reserved_chars['end_type'] + self._reserved_chars['end_type_suffix']
-        self._reserved_chars_assign_key_val = self._reserved_chars['assign_key_val']
-        self._reserved_chars_block_suffix = self._reserved_chars['block_suffix']
-
-        char_functions = {'comment':         self._parse_line_comment,
-                          'start_type':      self._parse_line_start_type,
-                          'end_type':        self._parse_line_end_type,
-                          'start_list':      self._parse_line_start_list,
-                          'end_list':        self._parse_line_end_list,
-                          'start_dict':      self._parse_line_start_dict,
-                          'end_dict':        self._parse_line_end_dict,
-                          'literal_string':  self._parse_line_literal_string,
-                          'escaped_string':  self._parse_line_escaped_string,
-                          'assign_key_val':  self._parse_line_assign_key_val,
-                          'separator':       self._parse_line_separator,
-                          'list_item':       self._parse_line_list_item}
-        # Dict of functions for proceeding with parsing, based on the next
-        # character.
-        parse_line = collections.defaultdict(lambda: self._parse_line_unquoted_string)
-        parse_line[''] = self._parse_line_goto_next
-        for c in self._whitespace:
-            parse_line[c] = self._parse_line_whitespace
-        for k, v in final_reserved_chars.items():
-            if k in char_functions and v is not None:
-                # `*_suffix` characters don't need parsing functions
-                parse_line[v] = char_functions[k]
-        self._parse_line = parse_line
-
-
-        # Characters that can't appear in normal unquoted strings.  This is
-        # all reserved characters except for the suffix characters.  The
-        # suffix characters are always safe, because they only have special
-        # meaning when immediately following special characters.
-        #
-        # A case could be made for allowing some of the reserved characters
-        # unquoted.  `list_item` (`*`) only has an effect in non-inline syntax,
-        # at the beginning of a line, when followed by an indentation
-        # character.  Likewise, `literal_string` and `escaped_string`
-        # (quotation marks) only function as string escapes at the beginning
-        # of text.  The comment character could be required to be at the
-        # beginning of a line or be preceded by whitespace.  All of these
-        # would work in principle, but they also increase cognitive load.
-        # Instead of the user thinking "just quote it" when encountering a
-        # reserved character, the user may instead start thinking about
-        # the context and whether quoting is required.  Given that bespon
-        # goes to great lengths to provide powerful and convenient quoting,
-        # that would be undesirable.  The rules must be few and plain.
-        #
-        # The inline object delimiters and separator must always be special in
-        # inline syntax, unless special context and nesting rules are used, in
-        # which case cognitive load is also increased to undesirable levels.
-        # It would be possible to allow them in non-inline syntax, but that
-        # would make switching between inline and non-inline syntax more
-        # complex.  A primary design principle is that anything valid in one
-        # context must be valid in all.
-        self._not_unquoted_str = ''.join(v for k, v in self._reserved_chars.items() if k not in ('end_type_suffix', 'block_suffix') and v is not None)
-        self._not_unquoted = set(self._not_unquoted_str)
-        if self._literals is not None:
-            self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) in self._nonliterals_less_surrogates)
-        else:
-            self._allowed_ascii = ''.join(chr(n) for n in range(128) if chr(n) not in self._not_unquoted and chr(n) not in self._nonliterals_less_surrogates)
-        self._end_unquoted_string_re__ascii = re.compile('[^{0}]'.format(re.escape(self._allowed_ascii)))
-        self._end_unquoted_string_re__unicode = re.compile('|'.join(re.escape(c) for c in self._not_unquoted))
-        self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
-
-
-        # Regex for integers, including hex, octal, and binary.
-        # It's easier to write out regex with whitespace but no comments, and
-        # then replace whitespace with empty string, than to worry about using
-        # `re.VERBOSE` later, when combining into a large regex.
-        pattern_int = r'''
-                       (?P<num_int_base10> [+-]?[1-9](?:_[0-9]|[0-9])* $ | [+-]?0 $ ) |
-                       (?P<num_int_base16> [+-]?0x [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* $ ) |
-                       (?P<num_int_base8> [+-]?0o [0-7](?:_[0-7]|[0-7])* $ ) |
-                       (?P<num_int_base2> [+-]?0b [01](?:_[01]|[01])* $ )
-                       '''
-        pattern_int = pattern_int.replace(' ', '').replace('\n', '')
-        self._int_re = re.compile(pattern_int)
-
-        # Catch leading zeros, uppercase X, O, B
-        pattern_invalid_int = r'''
-                               (?P<invalid_int>
-                                  [+-]? (?: 0+(?:_[0-9]|[0-9])* |
-                                            0X [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* |
-                                            0O [0-7](?:_[0-7]|[0-7])* |
-                                            0B [01](?:_[01]|[01])*
-                                        )
-                                  $
-                               )
-                               '''
-        pattern_invalid_int = pattern_invalid_int.replace(' ', '').replace('\n', '')
-        self._invalid_int_re = re.compile(pattern_invalid_int)
-
-        # Regex for floats, including hex.
-        pattern_float = r'''
-                         (?P<num_float_base10>
-                             [+-]? (?: \. [0-9](?:_[0-9]|[0-9])* (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                       (?:[1-9](?:_[0-9]|[0-9])*|0)
-                                          (?: \. (?:[0-9](?:_[0-9]|[0-9])*)? (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                              [eE][+-]?[0-9](?:_[0-9]|[0-9])*
-                                          )
-                                   ) $
-                         ) |
-                         (?P<num_float_base16>
-                             [+-]? 0x (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                          [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
-                                             (?: \. (?:[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*)? (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                                 [pP][+-]?[0-9](?:_[0-9]|[0-9])*
-                                             )
-                                      ) $
-                         )
-                         '''
-        pattern_float = pattern_float.replace(' ', '').replace('\n', '')
-        self._float_re = re.compile(pattern_float)
-
-        pattern_invalid_float = r'''
-                                 (?P<invalid_float>
-                                    [+-]? (?: (?: 0+(?:_[0-9]|[0-9])
-                                                  (?: \. (?:[0-9](?:_[0-9]|[0-9])*)? (?:[eE][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                                      [eE][+-]?[0-9](?:_[0-9]|[0-9])*
-                                                  )
-                                              ) |
-                                              0X (?: \.[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])* (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                                     [0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*
-                                                        (?: \. (?:[0-9a-fA-F](?:_[0-9a-fA-F]|[0-9a-fA-F])*)? (?:[pP][+-]?[0-9](?:_[0-9]|[0-9])*)? |
-                                                            [pP][+-]?[0-9](?:_[0-9]|[0-9])*
-                                                        )
-                                                 )
-                                          ) $
-                                 )
-                                 '''
-        pattern_invalid_float = pattern_invalid_float.replace(' ', '').replace('\n', '')
-        self._invalid_float_re = re.compile(pattern_invalid_float)
-
-
-        # Take care of `reserved_words`
-        if reserved_words is None:
-            self._reserved_words = defaults.RESERVED_WORDS
-        else:
-            for k in reserved_words:
-                if self._unicode_whitespace_re.search(k):
-                    raise erring.ConfigError('"reserved_words" cannot contain words with Unicode whitespace characters')
-                if self._int_re.match(k) or self._invalid_int_re.match(k) or self._float_re.match(k) or self._invalid_float_re.match(k):
-                    raise erring.ConfigError('"reserved_words" cannot contain words that match the pattern for integers or floats, or the pattern for invalid integers or floats')
-                if not self.unquoted_unicode:
-                    m = self._unicodefilter.ascii_less_newlines_and_nonliterals_re.match(k)
-                    if not m or m.group(0) != k:
-                        raise erring.ConfigError('"reserved_words" cannot contain words with non-ASCII characters when "unquoted_unicode" = False')
-            self._reserved_words = reserved_words
-
-        self._boolean_reserved_words_re = re.compile('|'.join(re.escape(k) for k, v in self._reserved_words.items() if v in (True, False)))
-
-
-        # Assemble a regex for matching all special unquoted values
-        reserved_words_lower_set = set([w.lower() for w in self._reserved_words])
-        pattern_reserved_words_case_insensitive = '(?P<reserved_words>{0})'.format('|'.join(''.join('[{0}]'.format(re.escape(c+c.upper())) for c in w) + '$' for w in reserved_words_lower_set))
-        pattern_reserved_words_int_float_invalid = '{r}|{i}|{f}|{inv_i}|{inv_f}'.format(r=pattern_reserved_words_case_insensitive, i=pattern_int, f=pattern_float, inv_i=pattern_invalid_int, inv_f=pattern_invalid_float)
-        # Quick identification of strings for unquoted value checking
-        self._reserved_words_int_float_invalid_re = re.compile(pattern_reserved_words_int_float_invalid)
-        self._reserved_words_int_float_starting_chars = set('+-.0123456789' + ''.join(w[0] + w[0].upper() for w in reserved_words_lower_set))
-        self._reserved_words_int_float_ending_chars = set('.0123456789abcdefABCDEF' + ''.join(w[-1] + w[-1].upper() for w in reserved_words_lower_set))
-
-
-        # Required form for all type names
-        pattern_type_key = r'[a-zA-Z][0-9a-zA-Z_-]*(?:\:\:[a-zA-Z][0-9a-zA-Z_-]*|\.[a-zA-Z][0-9a-zA-Z_-]*)*$'
-        self._type_name_check_re = re.compile(pattern_type_key)
-        self._type_key_re = re.compile(pattern_type_key.rstrip('$'))
-
-
-        # Take care of parsers and parser aliases
-        for d in (dict_parsers, list_parsers, string_parsers):
-            if d is not None:
-                for k, v in d.items():
-                    if not isinstance(k, str) or not hasattr(v, '__call__'):
-                        raise TypeError('All parser dicts must map Unicode strings to functions (callable)'.format(k, v))
-                    if any(k.startswith(p) for p in defaults.RESERVED_TYPE_PREFIXES) or k in defaults.RESERVED_TYPES:
-                        raise erring.ConfigError('User-defined parser "{0}" has a name that is a reserved type name, or that begins with a reserved type prefix'.format(k))
-                    if not self._type_name_check_re.match(k):
-                        raise erring.ConfigError('User-defined parser "{0}" has a name that does not fit the required form for parser names; use a name of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
-        if dict_parsers is None:
-            self._dict_parsers = defaults.DICT_PARSERS
-        else:
-            self._dict_parsers = dict_parsers
-        if list_parsers is None:
-            self._list_parsers = defaults.LIST_PARSERS
-        else:
-            self._list_parsers = list_parsers
-        if string_parsers is None:
-            self._string_parsers = defaults.STRING_PARSERS
-        else:
-            self._string_parsers = string_parsers
-
-        if all(x is None for x in (dict_parsers, list_parsers, string_parsers)):
-            self.__bytes_parsers = defaults._BYTES_PARSERS
-            self.__num_parsers = defaults._NUM_PARSERS
-        else:
-            if set(self._dict_parsers) & set(self._list_parsers) & set(self._string_parsers):
-                raise erring.ConfigError('Overlap between dict, list, and string parsers is not allowed')
-            self.__bytes_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'bytes'])
-            self.__num_parsers = set([p for p in self._string_parsers if p.split('::')[-1].split('.')[0] == 'num'])
-
-        # Need a way to look up parsers by category
-        self._parsers = {'dict':   self._dict_parsers,
-                         'list':   self._list_parsers,
-                         'string': self._string_parsers}
-
-        if parser_aliases is None:
-            self._parser_aliases = defaults.PARSER_ALIASES
-            for k, v in self._parser_aliases.items():
-                self._string_parsers[k] = self._string_parsers[v]
-        else:
-            self._parser_aliases = parser_aliases
-            for k, v in self._parser_aliases.items():
-                if not isinstance(k, str) or not self._type_name_check_re.match(k):
-                    raise erring.ConfigError('Parser alias "{0}" should be a Unicode string of the form "namespace::type.sub_type", etc., using only ASCII alphanumerics plus the period, double colon, and underscore'.format(k))
-                found = False
-                if k in self._dict_parsers or k in self._list_parsers or k in self._string_parsers:
-                    raise erring.ConfigError('Parse alias "{0}" is already a type name'.format(k))
-                if v in self._dict_parsers:
-                    self._dict_parsers[k] = self._dict_parsers[v]
-                    found = True
-                elif v in self._list_parsers:
-                    self._list_parsers[k] = self._list_parsers[v]
-                    found = True
-                elif v in self._string_parsers:
-                    self._string_parsers[k] = self._string_parsers[v]
-                    if v in self.__bytes_parsers:
-                        self.__bytes_parsers.update(k)
-                    found = True
-                if not found:
-                    raise ValueError('Alias "{0}" => "{1}" maps to unknown type'.format(k, v))
-
-        # Need a way to look up category for a given parser
-        # Note that parsers can't overlap multiple categories
-        parser_cats = {}
-        for cat, dct in self._parsers.items():
-            for k in dct:
-                parser_cats[k] = cat
-        self._parser_cats = parser_cats
-
-        # Set default parsers in each category
-        self._dict_parsers[None] = self._dict_parsers['dict']
-        self._list_parsers[None] = self._list_parsers['list']
-        self._string_parsers[None] = self._string_parsers['str']
-
-
-        # Dict of regexes for identifying closing delimiters.  Automatically
-        # generates needed regex on the fly.  Regexes for opening delimiters
-        # aren't needed; performed as pure string operations.
+        # Dict of regexes for identifying closing delimiters for inline
+        # escaped strings.  Needed regexes are automatically generated on the
+        # fly.  Note that opening delimiters are handled by normal string
+        # methods, as are closing delimiters for block strings.  Because
+        # block string delimiters are enclosed within `|` and `/`, lookbehind
+        # and lookahead for escapes or other delimiter characters is unneeded.
+        escaped_string_singlequote_delim = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim'],
+        escaped_string_doublequote_delim = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim'],
+        literal_string_delim = grammar.LIT_GRAMMAR['literal_string_delim']
         def gen_closing_delim_regex(delim):
-            c = delim[0]
-            if c == self._reserved_chars_escaped_string:
-                if delim == self._reserved_chars_escaped_string:
-                    p = r'(?:\\.|[^{c}])*({c})'.format(c=re.escape(c))
+            c_0 = delim[0]
+            if c_0 == escaped_string_singlequote_delim or c_0 == escaped_string_doublequote_delim:
+                if delim == escaped_string_singlequote_delim or delim == escaped_string_doublequote_delim:
+                    pattern = r'(?:\\.|[^{delim_char}\\]+)*({delim_char})'.format(delim_char=re.escape(c_0))
                 else:
-                    p = r'(?:\\.|[^{c}])*({c}{{{n}}}(?!{c}){s}*)'.format(c=re.escape(c), n=len(delim), s=re.escape(self._reserved_chars_block_suffix))
-            elif delim == self._reserved_chars_literal_string:
-                p = "'"
+                    # The pattern here is a bit complicated to deal with the
+                    # possibility of escapes and of runs of the delimiter that
+                    # are too short or too long.  It would be possible just to
+                    # look for runs of the delimiter of the correct length,
+                    # bounded by non-delimiters or a leading `\<delim>`.  Then
+                    # any leading backslashes could be stripped and counted to
+                    # determine whether the first delim is literal or escaped.
+                    # Some simple benchmarks suggest that that approach would
+                    # typically be only a few percent faster before the
+                    # additional overhead of checking backslashes and possibly
+                    # re-invoking the regex are considered.  So alternatives
+                    # don't seem worthwhile.
+                    n = len(delim)
+                    pattern = r'''
+                               (?: \\. | [^{delim_char}\\]+ | {delim_char}{{{1,n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
+                               ({delim_char}{{{n}}}(?!{delim_char}))
+                               '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
+            elif c_0 == literal_string_delim:
+                if delim == literal_string_delim:
+                    pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
+                else:
+                    n = len(delim)
+                    pattern = r'(?<!{delim_char}){delim_char}{{{n}}}(?!{delim_char})'.format(delim_char=re.escape(c_0), n=n)
             else:
-                p = r'(?<!{c}){c}{{{n}}}(?!{c}){s}*'.format(c=re.escape(c), n=len(delim), s=re.escape(self._reserved_chars_block_suffix))
-            return re.compile(p)
+                raise ValueError
+            return re.compile(pattern)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
 
-        # Regexes for working with unquoted keys and with keypaths
-        pattern_unquoted_key = r'[^\d\.{uws}{na}][^\.{uws}{na}]*'.format(uws=re.escape(self._unicode_whitespace_str),
-                                                                         na=re.escape(self._not_unquoted_str))
-        pattern_keypath_element = r'''
-                                   (?: {uk} |
-                                       \[ \* | (?:[+-]?(?:0|[1-9][0-9]*)) \] |
-                                       \{{ (?:[^\.{uws}{na}]+ | (?: ) | ) \}}
-                                   )
-                                   '''.format(uk=pattern_unquoted_key,
-                                              uws=re.escape(self._unicode_whitespace_str),
-                                              na=re.escape(self._not_unquoted_str))
-        pattern_keypath = r'{ke}(?:\.{ke})*'.format(ke=pattern_keypath_element)
 
 
-
-        # There are multiple regexes for unquoted keys.  Plain unquoted keys
-        # need to be distinguished from keys describing key paths.
-        pattern_unquoted_key = r'[^{uws}{na}]+'.format(uws=re.escape(self._unicode_whitespace_str),
-                                                       na=re.escape(self._not_unquoted_str))
-        self._unquoted_key_re = re.compile(pattern_unquoted_key)
-
-        pattern_keypath_element = r'''
-                                   [^\.{uws}{na}\d][^\.{uws}{na}]* |  # Identifier-style
-                                   \[ (?: \+ | [+-]?[0-9]+) \] |  # Bracket-enclosed list index
-                                   \{{ (?: [^{uws}{na}]+ | '[^']*' | "(?:\\.|[^"])*" ) \}}  # Brace-enclosed unquoted string, or once-quoted inline string
-                                   '''
-        pattern_keypath_element = pattern_keypath_element.format(uws=re.escape(self._unicode_whitespace_str),
-                                                                 na=re.escape(self._not_unquoted_str))
-        self._keypath_element_re = re.compile(pattern_keypath_element, re.VERBOSE)
-
-        pattern_keypath = r'''
-                           (?:{kpe})
-                           (?:\. (?:{kpe}) )*
-                           '''
-        pattern_keypath = pattern_keypath.format(kpe=pattern_keypath_element)
-        self._keypath_re = re.compile(pattern_keypath, re.VERBOSE)
-
-        self._unquoted_string_fragment_re = re.compile(r'[^{0}]+'.format(re.escape(self._not_unquoted_str)))
-
-        # Whether to keep raw abstract syntax tree for debugging, or go ahead
-        # and convert it into full Python objects
-        self._debug_raw_ast = False
-
-
-    def _unwrap_inline(self, s_list):
+    @staticmethod
+    def _unwrap_inline(s_list, newline=grammar.LIT_GRAMMAR['newline'],
+                       unicode_whitespace_set=set(grammar.LIT_GRAMMAR['unicode_whitespace'])):
         '''
         Unwrap an inline string.
 
@@ -508,11 +236,11 @@ class BespONDecoder(object):
         allowed in block strings.
         '''
         s_list_inline = []
-        newline_chars_str = self._newline_chars_str
-        unicode_whitespace = self._unicode_whitespace
         for line in s_list[:-1]:
-            line_strip_nl = line.rstrip(newline_chars_str)
-            if line_strip_nl[-1] in unicode_whitespace:
+            line_strip_nl = line.rstrip(newline)
+            # Don't need to use line_strip_nl[-1:]; inline strings can't have
+            # empty lines
+            if line_strip_nl[-1] in unicode_whitespace_set:
                 s_list_inline.append(line_strip_nl)
             else:
                 s_list_inline.append(line_strip_nl + '\x20')
@@ -520,45 +248,90 @@ class BespONDecoder(object):
         return ''.join(s_list_inline)
 
 
-    def _unicode_to_bytes(self, s):
+    def _check_invalid_literal_or_bidi_or_default_ignorable(self, normalized_string):
         '''
-        Encode a Unicode string to bytes.
+        Check the decoded, newline-normalized source for invalid code points
+        and code points that trigger additional checking later.
         '''
-        s = self._unicodefilter.non_ascii_to_ascii_newlines(s)
-        try:
-            s_bytes = s.encode('ascii')
-        except UnicodeEncodeError as e:
-            raise erring.BinaryStringEncodeError(s, e, self.state.traceback)
-        return s_bytes
+        # General regex form:
+        #    (?P<invalid_literal>{0})|(?P<bidi>{1})|(?P<default_ignorable>{2})
+        #
+        # A regex that catches everything is used at first.  If it finds
+        # something other than an invalid literal, then scanning picks up
+        # at the last location with a more focused regex.  This intentionally
+        # involves scanning any characters that trigger a match twice
+        # (using `<last_match>.start()`), so that any overlap between
+        # categories will be detected.
+        invalid_literal = False
+        invalid_literal_index = None
+        self._bidi = False
+        self._default_ignorable = False
+        m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string)
+        if m_all is not None:
+            if m_all.lastgroup == 'invalid_literal':
+                invalid_literal = True
+                invalid_literal_index = m_all.start()
+            elif m_all.lastgroup == 'bidi':
+                self._bidi = True
+                m_inv_ign = self._invalid_literal_or_default_ignorable_re.search(normalized_string, m_all.start())
+                if m_inv_ign is not None:
+                    if m_inv_ign.lastgroup == 'invalid_literal':
+                        invalid_literal = True
+                        invalid_literal_index = m_inv_ign.start()
+                    else:
+                        self._default_ignorable = True
+                        m_inv = self._invalid_literal_re.search(normalized_string, m_inv_ign.start())
+                        if m_inv:
+                            invalid_literal = True
+                            invalid_literal_index = m_inv_ign.m_inv()
+            elif m_all.lastgroup == 'default_ignorable':
+                self._default_ignorable = True
+                m_inv_bidi = self._invalid_literal_or_bidi_re.search(normalized_string, m_all.start())
+                if m_inv_bidi is not None:
+                    if m_inv_bidi.lastgroup == 'invalid_literal':
+                        invalid_literal = True
+                        invalid_literal_index = m_inv_bidi.start()
+                    else:
+                        self._bidi = True
+                        m_inv = self._invalid_literal_re.search(normalized_string, m_inv_bidi.start())
+                        if m_inv:
+                            invalid_literal = True
+                            invalid_literal_index = m_inv.start()
+            else:
+                raise erring.BespONException('There is a bug in the regular expression that checks for invalid code points')
+        if invalid_literal:
+            invalid_code_point = normalized_string[invalid_literal_index]
+            if ord(invalid_code_point) <= 0xFFFF:
+                invalid_esc = '\\u{0:04x}'.format(ord(invalid_code_point))
+            else:
+                invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
+            invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
+            raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
 
 
-    def decode(self, s):
+    def decode(self, string_or_bytes):
         '''
-        Decode a Unicode string into objects.
+        Decode a Unicode string or byte string into Python objects.
         '''
-        if not isinstance(s, str):
-            raise TypeError('BespONDecoder only decodes Unicode strings')
+        # Decode if necessary
+        if isinstance(string_or_bytes, str):
+            raw_source = string_or_bytes
+        else:
+            try:
+                raw_string = string_or_bytes.decode('utf8')
+            except Exception as e:
+                raise erring.BespONException('Cannot decode binary source:\n   {0}'.format(e))
 
-        # Check for characters that may not appear literally
-        if self._unicodefilter.has_nonliterals(s):
-            trace = self._unicodefilter.trace_nonliterals(s)
-            msg = '\n  Nonliterals traceback\n' + self._unicodefilter.format_trace(trace)
-            raise erring.InvalidLiteralCharacterError(msg)
-        if self.only_ascii and self._unicodefilter.has_non_ascii(s):
-            trace = self._unicodefilter.trace_nonliterals(s)
-            msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
-            raise erring.InvalidLiteralCharacterError(msg)
+        # Normalize newlines and check code points
+        normalized_string = raw_string.replace('\r\n', '\n')
+        del raw_string
+        self._check_invalid_literal_or_bidi_or_default_ignorable(normalized_string)
 
-        # Store reference to string in case needed later
-        self._string = s
-
-        # Create a generator for lines from the source, keeping newlines
-        # Then parse to AST, and convert AST to Python objects
-        self._line_iter = iter(s.splitlines(True))
-        return self._parse_lines_to_py_obj()
+        line_iter = iter(normalized_string.splitlines(True))
+        return self._parse(line_iter)
 
 
-    def _parse_lines_to_py_obj(self):
+    def _parse(self):
         '''
         Process lines from source into abstract syntax tree (AST).  All
         collection types, and key-value pairs, are initially represented as

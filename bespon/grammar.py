@@ -206,7 +206,12 @@ for k, v in _RAW_RE_GRAMMAR:
         RE_GRAMMAR[k] = v
     else:
         RE_GRAMMAR[k] = v.format(**RE_GRAMMAR)
-
+# Additional data not needed previously.  Added here to avoid any potential
+# issues due to `str.format()`.
+RE_GRAMMAR['ascii_invalid_literal'] = re_patterns.ASCII_INVALID_LITERAL
+RE_GRAMMAR['unicode_invalid_literal'] = re_patterns.UNICODE_INVALID_LITERAL
+RE_GRAMMAR['bidi'] = re_patterns.BIDI_R_AL
+RE_GRAMMAR['default_ignorable'] = re_patterns.DEFAULT_IGNORABLE
 
 
 
