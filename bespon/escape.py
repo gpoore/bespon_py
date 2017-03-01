@@ -32,9 +32,22 @@ if sys.maxunicode == 0xFFFF:
 
 
 
+def basic_unicode_escape(code_point):
+    '''
+    Basic backslash-escape.  Useful for creating error messages, etc.
+    '''
+    n = ord(code_point)
+    if n <= 0xFFFF:
+        return '\\u{0:04x}'.format(n)
+    return '\\U{0:08x}'.format(n)
+
+
+
+
 class Escape(object):
     '''
-    Backslash-escape and backslash-unescape Unicode strings and byte strings.
+    Replace code points and bytes in Unicode strings and byte strings with
+    their escaped equivalents when they cannot be represented literally.
     '''
     def __init__(self, only_ascii=False, brace_escapes=True, x_escapes=True):
         if not all(opt in (True, False) for opt in (only_ascii, brace_escapes, x_escapes)):
@@ -199,7 +212,8 @@ class Escape(object):
 
 class Unescape(object):
     '''
-    Backslash-escape and backslash-unescape Unicode strings and byte strings.
+    Replace escaped code points and bytes in Unicode strings and byte strings
+    with their unescaped equivalents.
     '''
     def __init__(self):
         # Dicts for unescaping start with all short escapes; factory

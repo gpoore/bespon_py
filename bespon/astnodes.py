@@ -115,6 +115,8 @@ class RootNode(list):
         #### Need to add `.open` once enable embedding with starting in
         #### inline
 
+        # #### Need final_val
+
     def check_append_scalar_key(self, obj):
         raise erring.Bug('A key-value pair cannot be appended directly at root level', obj)
 
@@ -242,15 +244,15 @@ class ScalarNode(object):
     '''
     basetype = 'scalar'
     __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
-                 ['delim', 'block', 'implicit_type', 'continuation_indent'])
+                 ['delim', 'block', 'implicit_type', 'continuation_indent',
+                  'raw_val'])
 
     def __init__(self, state, init_common=_init_common,
-                 delim=None, block=None, implicit_type=None,
-                 continuation_indent=None):
+                 delim=None, block=None, implicit_type=None):
         self.delim = delim
         self.block = block
         self.implicit_type = implicit_type
-        self.continuation_indent = continuation_indent
+        self.continuation_indent = state.continuation_indent
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
         init_common(self, state)

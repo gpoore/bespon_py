@@ -41,7 +41,7 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                                             '\u2028\u2029\u202f\u205f\u3000'))]
 
 _RAW_LIT_SPECIAL = [# Special code points
-                    ('comment', '#'),
+                    ('comment_delim', '#'),
                     ('assign_key_val', '='),
                     ('open_noninline_list', '*'),
                     ('start_inline_dict', '{'),
@@ -60,7 +60,38 @@ _RAW_LIT_SPECIAL = [# Special code points
                     ('path_separator', '.'),
                     ('alias_prefix', '$'),
                     ('home_alias', '~'),
-                    ('self_alias', '_')]
+                    ('self_alias', '_'),
+                    # Tokens that are invalid when encountered after certain
+                    # other tokens.  The logic here is a little subtle.  Doc
+                    # comments and tags are parsed and then stored until being
+                    # used, unlike other objects that are immediately added to
+                    # the AST.  Whenever a scalar or collection object is
+                    # added to the AST, any stored doc comment and tag are
+                    # applied to it.  Because doc comments and tags are
+                    # stored, there is a danger of a stored object never being
+                    # used.
+                    #
+                    # One way to deal with this would be to have a check at
+                    # the relevant tokens for an unused doc comment or tag.
+                    # Another option, which is implemented, is to look ahead
+                    # after doc comments and tags to check for a valid
+                    # following token.  During the lookahead, all following
+                    # whitespace and line comments (as opposed to doc
+                    # comments) are discarded.  The next token after this
+                    # procedure is then checked against a set of invalid
+                    # tokens.  The invalid tokens are those that would either
+                    # close an object (as opposed to opening it, so that the
+                    # stored doc comment or tag would be used), or start an
+                    # object that is invalid in the current context (a second
+                    # doc comment or tag).  Any other token will either start
+                    # a valid object, or will be a universally invalid token
+                    # that triggers its own error.  Note that there is an
+                    # exception for dicts in non-inline syntax, since two
+                    # doc comment/tag pairs can follow each other
+                    # sequentially, with the first being applied to the dict
+                    # and the second applying to the first key.
+                    ('doc_comment_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
+                    ('tag_invalid_next_token', '{doc_comment_invalid_follower}{start_tag}')]
 
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
@@ -74,6 +105,7 @@ for k, v in _RAW_LIT_GRAMMAR:
 # definition format
 LIT_GRAMMAR['ascii_other_newline_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['ascii_other_newline'])
 LIT_GRAMMAR['unicode_other_newline_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['unicode_other_newline'])
+
 
 
 
@@ -178,7 +210,6 @@ _RAW_RE_TYPE = [# None type
                 # Binary types
                 ('base16', '{lower_hex_digit}+|{upper_hex_digit}+'),
                 ('base64', '[A-Za-z0-9+/=]+')]
-
 _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 
 # Escapes (no string formatting is performed on these, so braces are fine)
@@ -197,7 +228,6 @@ _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2
                # could be a valid escape.
                ('ascii_escape', '{x_escape}|\\\\{space}*(?:{ascii_other_newline})|\\\\.|\\\\'),
                ('unicode_escape', '{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\\\{space}*(?:{unicode_other_newline})|\\\\.|\\\\')]
-
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
 RE_GRAMMAR = {}
@@ -231,3 +261,7 @@ SHORT_BACKSLASH_UNESCAPES = {'\\\\': '\\',
                              '\\v': '\v'}
 
 SHORT_BACKSLASH_ESCAPES = {v: k for k, v in SHORT_BACKSLASH_UNESCAPES.items()}
+
+
+# Non-textual parameters
+PARAMS = {'max_delim_length': 3*30,}

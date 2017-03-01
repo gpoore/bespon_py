@@ -18,11 +18,6 @@ from __future__ import (division, print_function, absolute_import,
 from .version import __version__
 import sys
 
-if sys.version_info.major == 2:
-    str = unicode
-    __chr__ = chr
-    chr = unichr
-
 import collections
 import re
 from . import erring
@@ -30,6 +25,19 @@ from . import escape
 from . import tooling
 from . import load_types
 from . import grammar
+from .ast import Ast
+from .astnodes import ScalarNode
+
+if sys.version_info.major == 2:
+    str = unicode
+    __chr__ = chr
+    chr = unichr
+
+# pylint:  disable=W0622
+if sys.maxunicode == 0xFFFF:
+    chr = coding.chr_surrogate
+    ord = coding.ord_surrogate
+# pylint:  enable=W0622
 
 
 
@@ -42,10 +50,12 @@ class State(object):
     '''
     __slots__ = ['source', 'source_include_depth',
                  'source_initial_nesting_depth',
-                 'indent', 'at_line_start', 'inline', 'inline_indent',
+                 'indent', 'continuation_indent', 'at_line_start',
+                 'inline', 'inline_indent',
                  'first_lineno', 'first_column', 'last_lineno', 'last_column',
                  'nesting_depth',
-                 'next_tag', 'start_root_tag', 'end_root_tag']
+                 'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
+                 'next_doc_comment', 'line_comments']
     def __init__(self, source=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
                  indent=None, at_line_start=True,
@@ -68,11 +78,12 @@ class State(object):
         if not all(x in (True, False) for x in (at_line_start, inline)):
             raise TypeError('Invalid keyword argument value')
 
-        self.source = source or '<string>'
+        self.source = source or '<data>'
         self.source_include_depth = source_include_depth
         self.source_initial_nesting_depth = source_initial_nesting_depth
 
         self.indent = indent
+        self.continuation_indent = None
         self.at_line_start = at_line_start
         self.inline = inline
         self.inline_indent = inline_indent
@@ -83,8 +94,12 @@ class State(object):
         self.nesting_depth = self.source_initial_nesting_depth
 
         self.next_tag = None
+        self.in_tag = False
         self.start_root_tag = None
         self.end_root_tag = None
+
+        self.next_doc_comment = None
+        self.line_comments = False
 
 
 
@@ -105,7 +120,7 @@ class BespONDecoder(object):
         if any(x not in (True, False) for x in (only_ascii, unquoted_strings, unquoted_unicode, ints)):
             raise TypeError
         if only_ascii and unquoted_unicode:
-            raise ValueError('Setting "only_ascii" = True is incompatible with "unquoted_unicode" = True')
+            raise ValueError('Setting "only_ascii"=True is incompatible with "unquoted_unicode"=True')
         self.only_ascii = only_ascii
         self.unquoted_strings = unquoted_strings
         self.unquoted_unicode = unquoted_unicode
@@ -125,11 +140,29 @@ class BespONDecoder(object):
         # Generate parser dicts
 
 
-        # Create unescape functions
-        self.unescape = escape.Unescape()
+        # Create escape and unescape functions
+        self.escape_unicode = escape.basic_unicode_escape
+        unescape = escape.Unescape()
+        self.unescape_unicode = unescape.unescape_unicode
+        self.unescape_bytes = unescape.unescape_bytes
 
 
         # Create dict of token-based parsing functions
+        #
+        # In general, having a valid starting code point for an unquoted
+        # string or keypath is a necessary but not sufficient condition for
+        # finding a valid string or keypath, due to the possibility of a
+        # leading underscore.  It is simplest always to attempt a match and
+        # then perform a check for success, rather than to try to
+        # micro-optimize out the underscore case so that a check isn't usually
+        # needed.  This also simplifies the handling of missing code points in
+        # the parsing dict; since matches are checked for validity, an invalid
+        # code point will automatically be caught by the standard procedure.
+        # Futhermore, this approach greatly simplifies the handling of Unicode
+        # surrogate pairs under narrow Python builds.  The high surrogates
+        # will simply invoke an attempt at a match, which will fail for
+        # invalid code points.
+        parse_token = collections.defaultdict(self._parse_token_unquoted_string_or_keypath)
         token_functions = {'comment': self._parse_token_comment,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
@@ -144,14 +177,12 @@ class BespONDecoder(object):
                            'escaped_string_doublequote_delim': self._parse_token_escaped_string_doublequote_delim,
                            'literal_string_delim': self._parse_token_literal_string_delim,
                            'alias_prefix': self._parse_token_alias_prefix}
-        # The parser for unquoted strings or other elements will raise an
-        # error if it doesn't find a valid unquoted token, so no special error
-        # handling needs to be specified at this point.
-        parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_element)
-        parse_token[''] = self._parse_token_goto_next_line
         for token_name, func in token_functions:
             token = grammar.LIT_GRAMMAR[token_name]
             parse_token[token] = func
+        for c in '1234567890-+':
+            parse_token[c] = self._parse_token_number_or_number_unit
+        parse_token[''] = self._parse_line_goto_next
         self._parse_token = parse_token
 
 
@@ -182,6 +213,7 @@ class BespONDecoder(object):
         escaped_string_singlequote_delim = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim'],
         escaped_string_doublequote_delim = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim'],
         literal_string_delim = grammar.LIT_GRAMMAR['literal_string_delim']
+        comment_delim = grammar.LIT_GRAMMAR['comment_delim']
         def gen_closing_delim_regex(delim):
             c_0 = delim[0]
             if c_0 == escaped_string_singlequote_delim or c_0 == escaped_string_doublequote_delim:
@@ -205,8 +237,8 @@ class BespONDecoder(object):
                                (?: \\. | [^{delim_char}\\]+ | {delim_char}{{{1,n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
                                ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
-            elif c_0 == literal_string_delim:
-                if delim == literal_string_delim:
+            elif c_0 == literal_string_delim or c_0 == comment_delim:
+                if delim == literal_string_delim or delim == comment_delim:
                     pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
                 else:
                     n = len(delim)
@@ -216,12 +248,19 @@ class BespONDecoder(object):
             return re.compile(pattern)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
+        # Regexes for working with default ignorables
+        default_ignorable = grammar.RE_GRAMMAR['default_ignorable']
+        invalid_di_pattern = '{delim}{di}+{delim}'
+        self._invalid_default_ignorable_singlequote_re = re.compile(invalid_di_pattern.format(delim=re.escape(escaped_string_singlequote_delim), di=default_ignorable))
+        self._invalid_default_ignorable_doublequote_re = re.compile(invalid_di_pattern.format(delim=re.escape(escaped_string_doublequote_delim), di=default_ignorable))
+        self._invalid_default_ignorable_literal_re = re.compile(invalid_di_pattern.format(delim=re.escape(literal_string_delim), di=default_ignorable))
+        self._invalid_default_ignorable_comment_re = re.compile(invalid_di_pattern.format(delim=re.escape(comment_delim), di=default_ignorable))
+
 
 
 
     @staticmethod
-    def _unwrap_inline(s_list, newline=grammar.LIT_GRAMMAR['newline'],
-                       unicode_whitespace_set=set(grammar.LIT_GRAMMAR['unicode_whitespace'])):
+    def _unwrap_inline_string(s_list, unicode_whitespace_set=set(grammar.LIT_GRAMMAR['unicode_whitespace'])):
         '''
         Unwrap an inline string.
 
@@ -237,9 +276,10 @@ class BespONDecoder(object):
         '''
         s_list_inline = []
         for line in s_list[:-1]:
-            line_strip_nl = line.rstrip(newline)
+            line_strip_nl = line[:-1]
             # Don't need to use line_strip_nl[-1:]; inline strings can't have
-            # empty lines
+            # empty lines (the last line could be empty before the final
+            # delimiter, but it's handled separately, so that's not an issue)
             if line_strip_nl[-1] in unicode_whitespace_set:
                 s_list_inline.append(line_strip_nl)
             else:
@@ -266,7 +306,12 @@ class BespONDecoder(object):
         invalid_literal_index = None
         self._bidi = False
         self._default_ignorable = False
-        m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string)
+        # A single, leading BOM is allowed, but for simplicity the regex
+        # doesn't account for that, so a manual check is needed.
+        if normalized_string[0:1] == '\uFEFF':
+            m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string, 1)
+        else:
+            m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string)
         if m_all is not None:
             if m_all.lastgroup == 'invalid_literal':
                 invalid_literal = True
@@ -328,227 +373,330 @@ class BespONDecoder(object):
         self._check_invalid_literal_or_bidi_or_default_ignorable(normalized_string)
 
         line_iter = iter(normalized_string.splitlines(True))
-        return self._parse(line_iter)
+        del normalized_string
+
+        data = self._parse_lines(line_iter)
+
+        return data
 
 
-    def _parse(self):
+    def _parse_lines(self, line_iter):
         '''
-        Process lines from source into abstract syntax tree (AST).  All
-        collection types, and key-value pairs, are initially represented as
-        `AstObj` instances.  At the end, these are processed into actual dicts,
-        lists, etc.  All other other objects appear in the AST as literals that
-        do not require final parsing (null, bool, string, binary, int, float,
-        etc.)
-
-        Note that the root node of the AST is a `RootAstObj` instance, which
-        may only contain a single object.  At the root level, a BespON file
-        may only contain a single scalar, or a single collection type.
+        Process lines from source into abstract syntax tree (AST).  Then
+        process the AST into standard Python objects.
         '''
-        # Reset regex for finding end of unquoted strings, based on decoder
-        # settings.  This could have been reset during any previous parsing
-        # by a `(bespon ...)>`.
-        if self.unquoted_unicode:
-            self._end_unquoted_string_re = self._end_unquoted_string_re__unicode
-        else:
-            self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
-        # For the same reason, also reset all internal parsing to defaults
-        self._only_ascii__current = self.only_ascii
-        self._unquoted_strings__current = self.unquoted_strings
-        self._unquoted_unicode__current = self.unquoted_unicode
-
-        self.state = State()
-        self._unicodefilter.state = self.state
-
-        self._ast = Ast(self)
+        state = State()
+        ast = Ast(state)
 
         # Start by extracting the first line and stripping any BOM
-        line = self._parse_line_goto_next()
-        if line:
-            if line[0] == '\uFEFF':
-                line = line[1:]
-            elif line[0] == '\uFFFE':
-                raise erring.ParseError('Encountered non-character U+FFFE, indicating string decoding with incorrect endianness', self.state.traceback)
+        line = next(line_iter)
+        if line[:1] == '\uFEFF':
+            line = line[1:]
+            state.first_column += 1
+            state.last_column += 1
 
-        parse_line = self._parse_line
+        self._ast = ast
+        self._state = state
+        self._line_iter = line_iter
+
+        parse_token = self._parse_token
         while line is not None:
-            line = parse_line[line[:1]](line)
+            line = parse_token[line[:1]](line)
 
-        self._ast.finalize()
+        self._ast = None
+        self._state = None
+        self._line_iter = None
 
-        if not self._ast:
-            raise erring.ParseError('There was no data to load', self.state)
+        ast.finalize()
+        if not ast.root:
+            raise erring.ParseError('There was no data to load', None)
 
-        self._string = None
-        self.state = None
-        self._unicodefilter.state = None
+        data = ast.root.final_val
 
-        if self._debug_raw_ast:
-            return
-        else:
-            self._ast.pythonize()
-            return self._ast.root[0]
+        return data
 
 
-    def _parser_directives(self, d):
+    def _parse_line_goto_next(self, line, next=next,
+                              whitespace=grammar.LIT_GRAMMAR['whitespace']):
         '''
-        Process parser directives.
+        Go to next line.  Used when parsing completes on a line, and no
+        additional parsing is needed for that line.
 
-        This has security implications, so it is important that all
-        implementations get it right.  A parser directive can never set
-        `only_ascii` to False, or set `unquoted_strings` and `unquoted_unicode`
-        to True, if that conflicts with the settings with which the decoder
-        was created.  Elevating to non-ASCII characters could cause issues
-        with some forms of data transmission.  Elevating quoting could increase
-        the potential for homoglyph issues or other security issues related
-        to Unicode.
-
-        It is important to keep in mind that `unquoted_strings` and
-        `unquoted_unicode` are separate and don't necessarily overlap.  It
-        would be possible to have unquoted Unicode characters in a keyword,
-        which would not count as a string that needs quoting.
+        The `line` argument is needed so that this can be used in the
+        `_parse_lines` dict of functions as the value for the empty string
+        key.  When the function is used directly as part of other parsing
+        functions, this argument isn't actually needed.  However, it is kept
+        mandatory to maintain parallelism between all of the `_parse_line_*()`
+        functions, since some of these do require a `line` argument.
         '''
-        for k, v in d.items():
-            if k == 'only_ascii' and v in (True, False):
-                if v and not self.only_ascii:
-                    if self._unicodefilter.has_non_ascii(self._string):
-                        trace = self._unicodefilter.trace_nonliterals(self._string)
-                        msg = '\n  Non-ASCII traceback ("only_ascii"=True)\n' + self._unicodefilter.format_trace(trace)
-                        raise erring.InvalidLiteralCharacterError(msg)
-                    self._only_ascii__current = True
-                elif not v and self.only_ascii:
-                    raise erring.ParseError('Parser directive has requested "only_ascii" = False, but decoder is set to use "only_ascii" = True', self.state.traceback)
-            elif k == 'unquoted_strings' and v in (True, False):
-                if v and not self.unquoted_strings:
-                    raise erring.ParseError('Parser directive has requested "unquoted_strings" = True, but decoder is set to use "unquoted_strings" = False', self.state.traceback)
-                elif not v and self.unquoted_strings:
-                    self._unquoted_strings__current = False
-            elif k == 'unquoted_unicode' and v in (True, False):
-                if v and not self.unquoted_unicode:
-                    raise erring.ParseError('Parser directive has requested "unquoted_unicode" = True, but decoder is set to use "unquoted_unicode" = False', self.state.traceback)
-                elif not v and self.unquoted_unicode:
-                    self._unquoted_unicode__current = False
-                    self._end_unquoted_string_re = self._end_unquoted_string_re__ascii
-            else:
-                raise erring.ParseError('Invalid or unsupported parser directives', self.state.traceback)
+        line = next(self._line_iter, None)
+        if line is None:
+            return line
+        state = self._state
+        lineno = state.last_lineno + 1
+        state.first_lineno = lineno
+        state.last_lineno = lineno
+        line_ws_strip = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_ws_strip)
+        indent = line[:indent_len]
+        state.indent = indent
+        state.continuation_indent = indent
+        state.at_line_start = True
+        column = indent_len + 1
+        state.first_column = column
+        state.last_column = column
+        return line_ws_strip
 
 
-    def _parse_line_get_next(self, line=None):
+    def _parse_line_get_next(self, line, next=next):
         '''
         Get next line.  For use in lookahead in string scanning, etc.
         '''
+        state = self._state
         line = next(self._line_iter, None)
-        self.state.end_lineno += 1
+        state.last_lineno += 1
+        state.last_column = 1
         return line
 
 
-    def _parse_line_start_next(self, line=None):
+    def _parse_line_start_last(self, line, whitespace=grammar.LIT_GRAMMAR['whitespace']):
         '''
         Reset everything after `_parse_line_get_next()`, so that it's
         equivalent to using `_parse_line_goto_next()`.  Useful when
-        `_parse_line_get_next()` is used for lookahead, but nothing is consumed.
+        `_parse_token_get_next_line()` is used for lookahead, but nothing is
+        consumed.
         '''
-        if line is not None:
-            state = self.state
-            rest = line.lstrip(self._whitespace_str)
-            state.indent = line[:len(line)-len(rest)]
-            state.at_line_start = True
-            state.start_lineno = state.end_lineno
-            return rest
+        if line is None:
+            return line
+        state = self._state
+        state.first_lineno = state.last_lineno
+        line_ws_strip = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_ws_strip)
+        indent = line[:indent_len]
+        state.indent = indent
+        state.continuation_indent = indent
+        state.at_line_start = True
+        column = indent_len + 1
+        state.first_column = column
+        state.last_column = column
+        return line_ws_strip
+
+
+    def _parse_line_continue_last(self, line, at_line_start=False,
+                                  whitespace=grammar.LIT_GRAMMAR['whitespace']):
+        '''
+        Reset everything after `_parse_line_get_next()`, to continue on
+        with the next line after having consumed part of it.
+        '''
+        line_ws_strip = line.lstrip(whitespace)
+        if line_ws_strip == '':
+            return self._parse_line_goto_next(line)
+        state = self._state
+        state.first_lineno = state.last_lineno
+        state.indent = state.continuation_indent
+        state.at_line_start = at_line_start
+        column = state.last_column + 1 + len(line) - len(line_ws_strip)
+        state.first_column = column
+        state.last_column = column
         return line
 
 
-    def _parse_line_continue_next(self, line=None):
+    def _parse_line_continue_last_to_next_significant_token(self, line, at_line_start=False,
+                                                            comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                                                            whitespace=grammar.LIT_GRAMMAR['whitespace']):
         '''
-        Reset everything after `_parse_line_get_next()`, to continue on with
-        the next line after having consumed part of it.
+        Skip ahead to the next significant token (token other than whitespace
+        and line comments).  Used in checking ahead after doc comments, tags,
+        possible keys, etc. to see whether what follows is potentially valid
+        or should trigger an immediate error.
         '''
-        state = self.state
-        state.at_line_start = False
-        state.start_lineno = state.end_lineno
-        return line
-
-
-    def _parse_line_goto_next(self, line=None):
-        '''
-        Go to next line, after current parsing is complete.
-        '''
-        line = next(self._line_iter, None)
-        if line is not None:
-            state = self.state
-            rest = line.lstrip(self._whitespace_str)
-            state.indent = line[:len(line)-len(rest)]
-            state.at_line_start = True
-            state.end_lineno += 1
-            state.start_lineno = state.end_lineno
-            return rest
-        return line
-
-
-    def _parse_line_comment(self, line):
-        '''
-        Parse comments.
-        '''
-        len_delim = len(line)
-        line = line.lstrip(self._reserved_chars_comment)
-        len_delim -= len(line)
-        delim = self._reserved_chars_comment*len_delim
-        if len(delim) < 3:
-            if line.startswith('%!bespon'):
-                if self.state.start_lineno != 1:
-                    raise erring.ParseError('Encountered "%!bespon", but not on first line', self.state.traceback)
-                elif self.state.indent or not self.state.at_line_start:
-                    raise erring.ParseError('Encountered "%!bespon", but not at beginning of line', self.state.traceback)
-                elif line[len('%!bespon'):].rstrip(self._whitespace_str):
-                    raise erring.ParseError('Encountered unknown parser directives: "{0}"'.format(line.rstrip(self._newline_chars_str)), self.state.traceback)
-                else:
-                    line = self._parse_line_goto_next()
-            else:
-                line = self._parse_line_goto_next()
+        state = self._state
+        line_ws_strip = line.lstrip(whitespace)
+        if line_ws_strip == '':
+            line = self._parse_line_goto_next(line_ws_strip)
+            if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                    if line == '':
+                        line = self._parse_line_goto_next(line)
+                    else:
+                        line = self._parse_token_line_comment(line)
+            return line
         else:
-            line = line[len(delim):]
-            indent = self.state.indent
-            end_delim_re = self._closing_delim_re_dict[delim]
-            text_after_opening_delim = line.lstrip(self._whitespace_str)
-            empty_line = False
-            while True:
-                if delim in line:
-                    m = end_delim_re.search(line)
-                    if m:
-                        if (empty_line and len(m.group(0)) == len(delim)):
-                            raise erring.ParseError('Incorrect closing delimiter for multi-line comment containing empty line(s)', self.state.traceback)
-                        if len(m.group(0)) > len(delim) + 2:
-                            raise erring.ParseError('Incorrect closing delimiter for multi-line comment', self.state.traceback)
-                        if len(m.group(0)) == len(delim) + 2:
-                            if self.state.start_lineno == self.state.end_lineno:
-                                raise erring.ParseError('Multi-line comment may not begin and end on the same line', self.state.traceback)
-                            if text_after_opening_delim or line[:m.start()].lstrip(self._indents_str):
-                                raise erring.ParseError('In multi-line comments, opening delimiter may not be followed by anything and closing delimiter may not be preceded by anything', self.state.traceback)
-                        line = line[m.end():].lstrip(self._whitespace_str)
-                        if not self.state.inline and len(m.group(0)) == len(delim):
-                            if self.state.start_lineno == self.state.end_lineno and self.state.at_line_start:
-                                if line[:1] and line[:1] != '%':
-                                    raise erring.ParseError('Inline comment is causing indeterminate indenation in non-inline syntax', self.state.traceback)
-                            elif self.state.start_lineno != self.state.end_lineno:
-                                if line[:1] and line[:1] != '%':
-                                    raise erring.ParseError('Inline comment is causing indeterminate indenation in non-inline syntax', self.state.traceback)
-                                self._parse_line_continue_next()
-                                if line[:1] and line[:1] == '%':
-                                    self.state.at_line_start == True
+            state.first_lineno = state.last_lineno
+            state.indent = state.continuation_indent
+            state.at_line_start = at_line_start
+            column = state.last_column + 1 + len(line) - len(line_ws_strip)
+            state.first_column = column
+            state.last_column = column
+            if line_ws_strip[:1] == comment_delim and line_ws_strip[1:2] != comment_delim:
+                line = self._parse_token_line_comment(line_ws_strip)
+                if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                    while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                        if line == '':
+                            line = self._parse_line_goto_next(line)
                         else:
-                            self._parse_line_continue_next()
-                        break
-                line = self._parse_line_get_next()
-                if line is None:
-                    raise erring.ParseError('Never found end of multi-line comment', self.state.traceback)
-                if not empty_line and not line.lstrip(self._unicode_whitespace_str):
-                    # Important to test this after the first lookahead, since
-                    # the remainder of the starting line could very well be
-                    # whitespace
-                    empty_line = True
-                if not line.startswith(indent) and line.lstrip(self._whitespace_str):
-                    raise erring.ParseError('Indentation error in multi-line comment', self.state.traceback)
-        while line is not None and not line.lstrip(self._whitespace_str):
-            line = self._parse_line_goto_next()
+                            line = self._parse_token_line_comment(line)
+                return line
+            else:
+                return line_ws_strip
+
+
+    def _parse_delim_inline_literal(self, name, delim, line,
+                                    whitespace=grammar.LIT_GRAMMAR['whitespace']):
+        '''
+        Find the closing delimiter for an inline literal element that contains
+        no escapes (inline literal string or inline doc comment).
+        '''
+        state = self._state
+        closing_delim_re = self._closing_delim_re_dict[delim]
+        found = False
+        if delim in line:
+            m = closing_delim_re.search(line)
+            if m is not None:
+                found = True
+                content = line[:m.start()]
+                line = line[m.end():]
+                state.last_column += 2*len(delim) + len(content)
+        if found:
+            return (content, content, line)
+        raw_content_list = []
+        raw_content_list.append(line)
+        indent = state.indent
+        line = self._parse_line_get_next(line)
+        if line is None:
+            raise erring.ParseError('Unterminated {0}'.format(name), state)
+        line_strip_ws = line.lstrip(whitespace)
+        if line_strip_ws == '':
+            raise erring.ParseError('Unterminated {0}'.format(name), state)
+        continuation_indent = line[:len(line)-len(line_strip_ws)]
+        len_continuation_indent = len(continuation_indent)
+        state.continuation_indent = continuation_indent
+        if not indent.startswith(continuation_indent):
+            raise erring.IndentationError(state)
+        while True:
+            if delim in line:
+                m = closing_delim_re.search(line)
+                if m is not None:
+                    line_content = line[len_continuation_indent:m.start()]
+                    line = line[m.end():]
+                    raw_content_list.append(line_content)
+                    state.last_column += m.end()
+                    break
+            raw_content_list.append(line)
+            line = self._parse_line_get_next(line)
+            if line is None:
+                raise erring.ParseError('Unterminated {0}'.format(name), state)
+            if not line.startswith(continuation_indent) or line[len_continuation_indent:len_continuation_indent+1] in whitespace:
+                raise erring.IndentationError(state)
+        return (raw_content_list, self._unwrap_inline_string(raw_content_list), line)
+
+
+    def _parse_token_line_comment(self, line,
+                                  comment_delim=grammar.LIT_GRAMMAR['comment_delim']):
+        '''
+        Parse a line comment.  This is used in `_parse_token_comment()` and
+        `_parse_line_continue_last_to_next_significant_token()` to ensure
+        uniform handling.  In many cases, line comments could actually be
+        dealt with in those functions by simply calling
+        `_parse_line_goto_next()`.  However, when default ignorables are
+        present, additional processing is necessary.  No checking is done
+        for `#` followed by `#`, since this function is only ever called with
+        valid line comments.  This function receives the line with the
+        leading `#` still intact.
+        '''
+        state = self._state
+        state.line_comments = True
+        if self._default_ignorable:
+            m = self._invalid_default_ignorable_comment_re.search(line)
+            if m is not None:
+                # Index:  +1 for `#` at start of match
+                index = m.start() + 1
+                # Column:  +1 for `#` at start of match, zero indexing is fine
+                column = state.first_column + m.start() + 1
+                code_point = self.escape_unicode(line[index:index+1])
+                erring.ParseError('Invalid pattern of comment characters "{0}" surrounding default ignorable code point "{1}" (column {2})'.format(comment_delim, code_point, column), state)
+        return self._parse_line_goto_next('')
+
+
+
+    def _parse_token_comment(self, line,
+                             comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                             max_delim_length=grammar.PARAMS['max_delim_length'],
+                             ScalarNode=ScalarNode,
+                             invalid_next_token_set=set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token'])):
+        '''
+        Parse inline comments.
+        '''
+        state = self._state
+        line_delim_strip = line.lstrip(comment_delim)
+        len_delim = len(line) - len(line_delim_strip)
+        if len_delim == 1:
+            return self._parse_token_line_comment(line)
+        elif len_delim == 2:
+            raise erring.ParseError('Invalid comment start "{0}"; use "{1}" for a line comment, or "{3}<comment>{3}" for a doc comment'.format(comment_delim*2, comment_delim, comment_delim*3), state)
+        else:
+            if state.in_tag:
+                raise erring.ParseError('Doc comments are not allowed in tags', state)
+            if len_delim % 3 != 0 or len_delim > max_delim_length:
+                raise erring.ParseError('Doc comment delims must have lengths that are multiples of 3 and are no longer than {0} characters'.format(max_delim_length), state)
+            delim = line[:len_delim]
+            raw_content, content, line = self._parse_delim_inline_literal('doc comment', delim, line_delim_strip)
+            node = ScalarNode(state, delim=delim, block=False)
+            if self._full_ast:
+                node.raw_val = raw_content
+            node.final_val = content
+            node.implicit_type = 'doc_comment'
+            state.next_doc_comment = node
+            line = self._parse_line_continue_last_to_next_significant_token(line)
+            if not node.inline and node.at_line_start and node.last_lineno == state.first_lineno:
+                raise erring.ParseError('In non-inline mode, doc comments that start a line cannot be followed immediately by data', node)
+            if line is not None and line[0] in invalid_next_token_set:
+                raise erring.ParseError('Doc comment was never applied to an object', node, state)
+            return line
+
+
+    def _parse_token_open_noninline_list(self, line,
+                                         open_noninline_list=grammar.LIT_GRAMMAR['open_noninline_list'],
+                                         path_separator=grammar.LIT_GRAMMAR['path_separator']):
+        '''
+        Open a non-inline list, or start a keypath that has a list as its
+        first element.
+        '''
+        next_char = line[1:2]
+        if next_char == open_noninline_list:
+            raise erring.ParseError('Invalid double list opening "{0}"'.format(line[:2]), self._state)
+        elif next_char == path_separator:
+            return self._parse_token_unquoted_string_or_keypath(line)
+        self._ast.open_noninline_list()
+        return self._parse_line_continue_last_to_next_significant_token(line, at_line_start=True)
+
+
+    def _start_inline_dict(self, line):
+        '''
+        Start an inline dict.
+        '''
+        self._ast.start_dict_inline()
+        return self._parse_line_continue_last_to_next_significant_token(line)
+
+
+    def _parse_line_start_dict(self, line):
+        '''
+        Parse line segment beginning with opening curly brace.
+        '''
+        m_keypath = self._keypath_re.match(line)
+        if m_keypath:
+            line = self._parse_line_keypath(line, m_keypath)
+        else:
+            state = self.state
+            if state.inline and not state.indent.startswith(state.inline_indent):
+                raise erring.ParseError('Indentation error', state.traceback)
+            elif not state.inline:
+                state.start_inline()
+            self._ast.append_collection('dict', state.inline_indent)
+            self._ast.pos.open = True
+            line = line[1:].lstrip(self._whitespace_str)
+            if not line:
+                line = self._parse_line_goto_next()
         return line
 
 
@@ -666,25 +814,7 @@ class BespONDecoder(object):
         return line
 
 
-    def _parse_line_start_dict(self, line):
-        '''
-        Parse line segment beginning with opening curly brace.
-        '''
-        m_keypath = self._keypath_re.match(line)
-        if m_keypath:
-            line = self._parse_line_keypath(line, m_keypath)
-        else:
-            state = self.state
-            if state.inline and not state.indent.startswith(state.inline_indent):
-                raise erring.ParseError('Indentation error', state.traceback)
-            elif not state.inline:
-                state.start_inline()
-            self._ast.append_collection('dict', state.inline_indent)
-            self._ast.pos.open = True
-            line = line[1:].lstrip(self._whitespace_str)
-            if not line:
-                line = self._parse_line_goto_next()
-        return line
+
 
     def _parse_line_end_dict(self, line):
         '''

@@ -430,7 +430,9 @@ else:
 
 
 
-# Default ignorable.  A quoted string cannot consist of these alone.
+# Default ignorable.  A quoted string cannot consist of these alone.  As in
+# the bidi case, unassigned code points are included, since this actually
+# simplifies the pattern somewhat.
 #
 # default_ignorable = set([cp for cp, data in unicodetools.ucd.derivedcoreproperties.items() if 'Default_Ignorable_Code_Point' in data])
 if sys.maxunicode == 0xFFFF:

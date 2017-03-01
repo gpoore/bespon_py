@@ -38,7 +38,7 @@ class Ast(object):
     '''
     __slots__ = ['state', 'full_ast', 'max_nesting_depth',
                  'source', 'root', 'pos',
-                 '_unresolved_nodes', '_tag_cached_pos']
+                 '_unresolved_nodes', '_in_tag_cached_pos']
 
     def __init__(self, state, full_ast=False, max_nesting_depth=100):
         self.state = state
@@ -51,7 +51,7 @@ class Ast(object):
         self.source = astnodes.SourceNode(state)
         self.pos = self.source
         self._unresolved_nodes = []
-        self._tag_cached_pos = None
+        self._in_tag_cached_pos = None
 
     def __bool__(self):
         if len(self.source) > 0 and len(self.root) > 0:
@@ -60,6 +60,12 @@ class Ast(object):
 
     if sys.version_info.major == 2:
         __nonzero__ = __bool__
+
+
+    def append_doc_comment(self, obj):
+        state = self.state
+
+        state.next_doc_comment = obj
 
 
     def append_scalar_key(self, obj, DictlikeNode=astnodes.DictlikeNode):
@@ -221,9 +227,9 @@ class Ast(object):
         # ahead.  Don't need to check indent, because that will be checked
         # when the tagged object is appended to the AST.
         state = self.state
-        if self._tag_cached_pos is not None:
-            raise erring.ParseError('Cannot nest tags; encountered "(" before a previous tag was complete', state)
-        self._tag_cached_pos = self.pos
+        if state.in_tag:
+            raise erring.ParseError('Cannot nest tags; encountered "(" before a previous tag was complete', state, state.next_tag)
+        self._in_tag_cached_pos = self.pos
         external_inline = state.inline
         if not external_inline:
             state.inline = True
@@ -250,11 +256,11 @@ class Ast(object):
         state.inline = pos.external_inline
         state.next_tag = pos
         # Tags aren't collections, so don't decrement `.nesting_depth`
-        self.pos = self._tag_cached_pos
-        self._tag_cached_pos = None
+        self.pos = self._in_tag_cached_pos
+        state.in_tag = False
 
 
-    def open_collection_inline(self):
+    def open_inline_collection(self):
         '''
         Open a collection object in inline syntax after ",".
         '''
@@ -272,7 +278,7 @@ class Ast(object):
             raise erring.ParseError('Misplaced object separator "," or missing object/key-value pair', state)
 
 
-    def open_list_non_inline(self, ListlikeNode=astnodes.ListlikeNode):
+    def open_noninline_list(self, ListlikeNode=astnodes.ListlikeNode):
         '''
         Open a list-like object in non-inline syntax at `*`.
         '''
@@ -413,3 +419,4 @@ class Ast(object):
                 else:
                     remaining_nodes.append(node)
             unresolved_nodes = remaining_nodes
+        # #### make finalize do all resolving except pythonize?
