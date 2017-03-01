@@ -148,7 +148,7 @@ class Ast(object):
 
 
 
-    def start_dict_inline(self, DictlikeNode=astnodes.DictlikeNode):
+    def start_inline_dict(self, DictlikeNode=astnodes.DictlikeNode):
         '''
         Start an inline dict-like object at "{".
         '''
@@ -162,7 +162,7 @@ class Ast(object):
         self.append_collection(dict_obj)
 
 
-    def end_dict_inline(self):
+    def end_inline_dict(self):
         '''
         End an inline dict-like object at "}".
         '''
@@ -184,7 +184,7 @@ class Ast(object):
         self.pos = pos
 
 
-    def start_list_inline(self, ListlikeNode=astnodes.ListlikeNode):
+    def start_inline_list(self, ListlikeNode=astnodes.ListlikeNode):
         '''
         Start an inline list-like object at "[".
         '''
@@ -198,7 +198,7 @@ class Ast(object):
         self.append_collection(list_obj)
 
 
-    def end_list_inline(self):
+    def end_inline_list(self):
         '''
         End an inline list-like object at "]".
         '''

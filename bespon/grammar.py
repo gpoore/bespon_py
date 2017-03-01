@@ -61,6 +61,8 @@ _RAW_LIT_SPECIAL = [# Special code points
                     ('alias_prefix', '$'),
                     ('home_alias', '~'),
                     ('self_alias', '_'),
+                    # Combinations
+                    ('end_tag_with_suffix', '{end_tag}{end_tag_suffix}'),
                     # Tokens that are invalid when encountered after certain
                     # other tokens.  The logic here is a little subtle.  Doc
                     # comments and tags are parsed and then stored until being

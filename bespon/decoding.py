@@ -163,7 +163,7 @@ class BespONDecoder(object):
         # will simply invoke an attempt at a match, which will fail for
         # invalid code points.
         parse_token = collections.defaultdict(self._parse_token_unquoted_string_or_keypath)
-        token_functions = {'comment': self._parse_token_comment,
+        token_functions = {'comment': self._parse_token_comment_delim,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
                            'end_inline_dict': self._parse_token_end_inline_dict,
@@ -541,6 +541,83 @@ class BespONDecoder(object):
                 return line_ws_strip
 
 
+    def _parse_token_open_noninline_list(self, line,
+                                         open_noninline_list=grammar.LIT_GRAMMAR['open_noninline_list'],
+                                         path_separator=grammar.LIT_GRAMMAR['path_separator']):
+        '''
+        Open a non-inline list, or start a keypath that has a list as its
+        first element.
+        '''
+        next_char = line[1:2]
+        if next_char == open_noninline_list:
+            raise erring.ParseError('Invalid double list opening "{0}"'.format(line[:2]), self._state)
+        elif next_char == path_separator:
+            return self._parse_token_unquoted_string_or_keypath(line)
+        self._ast.open_noninline_list()
+        return self._parse_line_continue_last(line, at_line_start=True)
+
+
+    def _parse_token_start_inline_dict(self, line):
+        '''
+        Start an inline dict.
+        '''
+        self._ast.start_inline_dict()
+        return self._parse_line_continue_last(line)
+
+
+    def _parse_token_end_inline_dict(self, line):
+        '''
+        End an inline dict.
+        '''
+        self._ast.end_inline_dict()
+        return self._parse_line_continue_last(line)
+
+
+    def _parse_token_start_inline_list(self, line):
+        '''
+        Start an inline list.
+        '''
+        self._ast.start_inline_list()
+        return self._parse_line_continue_last(line)
+
+
+    def _parse_token_end_inline_list(self, line):
+        '''
+        End an inline list.
+        '''
+        self._ast.end_inline_list()
+        return self._parse_line_continue_last(line)
+
+
+    def _parse_token_start_tag(self, line):
+        '''
+        Start a tag.
+        '''
+        self._ast.start_tag()
+        self._parse_line_continue_last(line)
+
+
+    def _parse_token_end_tag(self, line,
+                             end_tag_with_suffix=grammar.LIT_GRAMMAR['end_tag_with_suffix']):
+        '''
+        End a tag.
+        '''
+        if line[:2] != end_tag_with_suffix:
+            raise erring.ParseError('Invalid end tag delimiter', self._state)
+        # Account for end tag suffix
+        self._state.last_column += 1
+        self._ast.end_tag()
+        self._parse_line_continue_last(line)
+
+
+    def _parse_token_inline_element_separator(self, line):
+        '''
+        Parse an element separator in a dict or list.
+        '''
+        self._ast.open_inline_collection()
+        self._parse_line_continue_last(line)
+
+
     def _parse_delim_inline_literal(self, name, delim, line,
                                     whitespace=grammar.LIT_GRAMMAR['whitespace']):
         '''
@@ -618,12 +695,11 @@ class BespONDecoder(object):
         return self._parse_line_goto_next('')
 
 
-
-    def _parse_token_comment(self, line,
-                             comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
-                             max_delim_length=grammar.PARAMS['max_delim_length'],
-                             ScalarNode=ScalarNode,
-                             invalid_next_token_set=set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token'])):
+    def _parse_token_comment_delim(self, line,
+                                   comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                                   max_delim_length=grammar.PARAMS['max_delim_length'],
+                                   ScalarNode=ScalarNode,
+                                   invalid_next_token_set=set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token'])):
         '''
         Parse inline comments.
         '''
@@ -653,597 +729,3 @@ class BespONDecoder(object):
             if line is not None and line[0] in invalid_next_token_set:
                 raise erring.ParseError('Doc comment was never applied to an object', node, state)
             return line
-
-
-    def _parse_token_open_noninline_list(self, line,
-                                         open_noninline_list=grammar.LIT_GRAMMAR['open_noninline_list'],
-                                         path_separator=grammar.LIT_GRAMMAR['path_separator']):
-        '''
-        Open a non-inline list, or start a keypath that has a list as its
-        first element.
-        '''
-        next_char = line[1:2]
-        if next_char == open_noninline_list:
-            raise erring.ParseError('Invalid double list opening "{0}"'.format(line[:2]), self._state)
-        elif next_char == path_separator:
-            return self._parse_token_unquoted_string_or_keypath(line)
-        self._ast.open_noninline_list()
-        return self._parse_line_continue_last_to_next_significant_token(line, at_line_start=True)
-
-
-    def _start_inline_dict(self, line):
-        '''
-        Start an inline dict.
-        '''
-        self._ast.start_dict_inline()
-        return self._parse_line_continue_last_to_next_significant_token(line)
-
-
-    def _parse_line_start_dict(self, line):
-        '''
-        Parse line segment beginning with opening curly brace.
-        '''
-        m_keypath = self._keypath_re.match(line)
-        if m_keypath:
-            line = self._parse_line_keypath(line, m_keypath)
-        else:
-            state = self.state
-            if state.inline and not state.indent.startswith(state.inline_indent):
-                raise erring.ParseError('Indentation error', state.traceback)
-            elif not state.inline:
-                state.start_inline()
-            self._ast.append_collection('dict', state.inline_indent)
-            self._ast.pos.open = True
-            line = line[1:].lstrip(self._whitespace_str)
-            if not line:
-                line = self._parse_line_goto_next()
-        return line
-
-
-    def _parse_line_start_type(self, line):
-        '''
-        Parse explicit typing.
-        '''
-        state = self.state
-        if state.inline:
-            indent = state.inline_indent
-        else:
-            indent = state.indent
-        line = line[1:].lstrip(self._whitespace_str)
-        kvarg_list = []
-        next_key = None
-        awaiting_key = True
-        awaiting_val = False
-        while True:
-            if line == '':
-                while line == '':
-                    line = self._parse_line_get_next()
-                    if line is None:
-                        raise erring.ParseError('Text ended while looking for end of explicit type declaration', state.traceback)
-                    line_lstrip_whitespace = line.lstrip(self._whitespace_str)
-                    if line_lstrip_whitespace and not line.startswith(indent):
-                        raise erring.ParseError('Indentation error in explicit type declaration', state.traceback)
-                    line = line_lstrip_whitespace
-
-            if line[:2] == self._reserved_chars_end_type_with_suffix:
-                if awaiting_val:
-                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
-                if next_key is not None:
-                    kvarg_list.append((next_key, True))
-                state.set_type(kvarg_list)
-                line = line[2:].lstrip(self._whitespace_str)
-                self._parse_line_continue_next()
-                break
-            elif line[:1] == self._reserved_chars_separator:
-                if awaiting_key:
-                    raise erring.ParseError('Invalid explicit type declaration; extra "{0}"'.format(self._reserved_chars_separator), state.traceback)
-                if awaiting_val:
-                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
-                if next_key is not None:
-                    kvarg_list.append((next_key, True))
-                    next_key = None
-                awaiting_key = True
-                line = line[1:].lstrip(self._whitespace_str)
-            elif line[:1] == self._reserved_chars_assign_key_val:
-                if next_key is None:
-                    raise erring.ParseError('Invalid explicit type declaration; missing key in key-value pair', state.traceback)
-                if awaiting_val:
-                    raise erring.ParseError('Invalid explicit type declaration; missing value in key-value pair', state.traceback)
-                awaiting_val = True
-                line = line[1:].lstrip(self._whitespace_str)
-            elif awaiting_val:
-                m = self._boolean_reserved_words_re.match(line)
-                if m:
-                    w = m.group(0)
-                    v = self._reserved_words[w]
-                    awaiting_val = False
-                    kvarg_list.append((next_key, v))
-                    next_key = None
-                    line = line[m.end():].lstrip(self._whitespace_str)
-                else:
-                    raise erring.ParseError('Invalid explicit type declaration, or type declaration using unsupported features', state.traceback)
-            elif awaiting_key:
-                m = self._type_key_re.match(line)
-                if m:
-                    next_key = m.group(0)
-                    line = line[m.end():].lstrip(self._whitespace_str)
-                    awaiting_key = False
-                else:
-                    raise erring.ParseError('Invalid explicit type declaration', state.traceback)
-            else:
-                raise erring.ParseError('Invalid explicit type declaration, or type declaration using unsupported features', state.traceback)
-        return line
-
-
-    def _parse_line_end_type(self, line):
-        '''
-        Parse line segment beginning with closing parenthesis.
-        '''
-        raise erring.ParseError('Unexpected closing parenthesis', self.state.traceback)
-
-
-    def _parse_line_start_list(self, line):
-        '''
-        Parse line segment beginning with opening square bracket.
-        '''
-        m_keypath = self._keypath_re.match(line)
-        if m_keypath:
-            line = self._parse_line_keypath(line, m_keypath)
-        else:
-            state = self.state
-            ######## Maybe move logic to Ast?
-            if state.inline and not state.indent.startswith(state.inline_indent):
-                raise erring.ParseError('Indentation error', state.traceback)
-            elif not state.inline:
-                state.start_inline()
-            self._ast.append_collection('list', state.inline_indent)
-            self._ast.pos.open = True
-            line = line[1:].lstrip(self._whitespace_str)
-            if not line:
-                line = self._parse_line_goto_next()
-        return line
-
-    def _parse_line_end_list(self, line):
-        '''
-        Parse line segment beginning with closing square bracket.
-        '''
-        self._ast.end_list_inline()
-        line = line[1:].lstrip(self._whitespace_str)
-        if not line:
-            line = self._parse_line_goto_next()
-        return line
-
-
-
-
-    def _parse_line_end_dict(self, line):
-        '''
-        Parse line segment beginning with closing curly brace.
-        '''
-        self._ast.end_dict_inline()
-        line = line[1:].lstrip(self._whitespace_str)
-        if not line:
-            line = self._parse_line_goto_next()
-        return line
-
-
-    def _parse_line_literal_string(self, line):
-        '''
-        Parse single-quoted string.
-        '''
-        len_delim = len(line)
-        line = line.lstrip("'")
-        len_delim -= len(line)
-        delim = "'"*len_delim
-        if len(delim) == 1:
-            s, line = line.split(delim, 1)
-            if line[:1] == delim:
-                raise erring.ParseError('Invalid quotation mark following end of quoted string', self.state.traceback)
-        elif len(delim) == 2:
-            s = ''
-        else:
-            end_delim_re = self._closing_delim_re_dict[delim]
-            match_group_num = 0
-            s, line = self._parse_line_get_quoted_string(line, delim, end_delim_re, match_group_num)
-        return self._parse_line_resolve_quoted_string(line, s, delim)
-
-    def _parse_line_escaped_string(self, line):
-        '''
-        Parse double-quoted string.
-        '''
-        len_delim = len(line)
-        line = line.lstrip('"')
-        len_delim -= len(line)
-        delim = '"'*len_delim
-        if delim == '""':
-            s = ''
-        else:
-            end_delim_re = self._closing_delim_re_dict[delim]
-            match_group_num = 1
-            m = end_delim_re.match(line)
-            if m:
-                s = line[:m.start(match_group_num)]
-                line = line[m.end(match_group_num):]
-                if m.end(match_group_num) - m.start(match_group_num) > len(delim):
-                    raise erring.ParseError('A block string may not begin and end on the same line', self.state.traceback)
-            else:
-                s, line = self._parse_line_get_quoted_string(line, delim, end_delim_re, match_group_num)
-        return self._parse_line_resolve_quoted_string(line, s, delim)
-
-
-    def _parse_line_get_quoted_string(self, line, delim, end_delim_re, match_group_num):
-        '''
-        Parse a quoted string, once the opening delim has been determined
-        and stripped, and a regex for the closing delim has been assembled.
-        '''
-        s_lines = [line]
-        # No need to check for consistent indentation here; that is done
-        # during determination of `effective_indent`
-        state = self.state
-        if state.at_line_start:
-            indent = state.indent
-        elif state.inline:
-            indent = state.inline_indent
-        elif state.type:
-            indent = state.type_indent
-        else:
-            indent = state.indent
-        while True:
-            line = self._parse_line_get_next()
-            if line is None:
-                raise erring.ParseError('Text ended while scanning quoted string', state.traceback)
-            if not line.startswith(indent) and line.lstrip(self._whitespace_str):
-                raise erring.ParseError('Indentation error within quoted string', state.traceback)
-            if delim not in line:
-                s_lines.append(line)
-            else:
-                m = end_delim_re.search(line)
-                if not m:
-                    s_lines.append(line)
-                else:
-                    end_delim = m.group(match_group_num)
-                    s_lines.append(line[:m.start(match_group_num)])
-                    line = line[m.end(match_group_num):].lstrip(self._whitespace_str)
-                    break
-        if len(delim) == len(end_delim):
-            # Make sure indentation is consistent and there are no empty lines
-            if len(s_lines) > 2:
-                for s_line in s_lines[1:-1]:
-                    if not s_line.lstrip(self._unicode_whitespace_str):
-                        raise erring.ParseError('Inline strings cannot contain empty lines', state.traceback)
-                indent = s_lines[1][:len(s_lines[1].lstrip(self._indents_str))]
-                len_indent = len(indent)
-                for n, s_line in enumerate(s_lines[1:]):
-                    if not s_line.startswith(indent) or s_line[len_indent:len_indent+1] in self._unicode_whitespace:
-                        raise erring.ParseError('Inconsistent indentation or leading Unicode whitespace within inline string', state.traceback)
-                    s_lines[n+1] = s_line[len_indent:]
-            else:
-                s_lines[1] = s_lines[1].lstrip(self._indents_str)
-            # Take care of any leading/trailing spaces that separate delimiter
-            # characters from identical characters in string.
-            if len(delim) >= 3:
-                dc = delim[0]
-                if s_lines[0][:1] in self._spaces and s_lines[0].lstrip(self._spaces_str)[:1] == dc:
-                    s_lines[0] = s_lines[0][1:]
-                if s_lines[-1][-1:] in self._spaces and s_lines[-1].rstrip(self._spaces_str)[-1:] == dc:
-                    s_lines[-1] = s_lines[-1][:-1]
-            # Unwrap
-            s = self._unwrap_inline(s_lines)
-        else:
-            if len(delim) < len(end_delim) - 2:
-                raise erring.ParseError('Invalid ending delimiter for block string', state.traceback)
-            if s_lines[0].lstrip(self._whitespace_str):
-                raise erring.ParseError('Characters are not allowed immediately after the opening delimiter of a block string', state.traceback)
-            if s_lines[-1].lstrip(self._indents_str):
-                raise erring.ParseError('Characters are not allowed immediately before the closing delimiter of a block string', state.traceback)
-            indent = s_lines[-1]
-            len_indent = len(indent)
-            if state.at_line_start and state.indent != indent:
-                raise erring.ParseError('Opening and closing delimiters for block string do not have matching indentation', state.traceback)
-            for n, s_line in enumerate(s_lines[1:-1]):
-                if s_line.startswith(indent):
-                    s_lines[n+1] = s_line[len_indent:]
-                else:
-                    if s_line.lstrip(self._whitespace_str):
-                        raise erring.ParseError('Inconsistent indent in block string', state.traceback)
-                    s_lines[n+1] = line.lstrip(self._indents_str)
-            if len(delim) == len(end_delim) - 2:
-                s_lines[-2] = s_lines[-2].rstrip(self._newline_chars_str)
-            s = ''.join(s_lines[1:-1])
-        return (s, line)
-
-
-    def _parse_line_resolve_quoted_string(self, line, s, delim):
-        state = self.state
-        if state.type and state.type_obj in self.__bytes_parsers:
-            s = self._unicodefilter.non_ascii_to_ascii_newlines(s)
-            s = self._unicode_to_bytes(s)
-            if delim[0] == '"':
-                s = self._unicodefilter.unescape_bytes(s)
-        elif delim[0] == '"':
-            s = self._unicodefilter.unescape(s)
-
-        if state.type:
-            try:
-                s = self._string_parsers[self.state.type_obj](s)
-            except KeyError:
-                raise erring.ParseError('Unknown explicit type "{0}" applied to string'.format(state.type_obj), state.traceback_type)
-            except Exception as e:
-                raise erring.ParseError('Could not convert quoted string to type "{0}":\n  {1}'.format(state.type_obj, e), state.traceback)
-
-        state.set_stringlike(s)
-        if state.start_lineno == state.end_lineno:
-            state.at_line_start = False
-        else:
-            self._parse_line_continue_next()
-
-        line = line.lstrip(self._whitespace_str)
-        if not line or line[:1] == '%':
-            while line is not None:
-                if line[:1] == '%':
-                    line = self._parse_line_comment(line)
-                else:
-                    line = line.lstrip(self._whitespace_str)
-                    if not line:
-                        line = self._parse_line_goto_next()
-                    else:
-                        break
-        if line is not None and line[:1] == '=' and line[1:2] != '=':
-            if state.inline:
-                if not state.indent.startswith(state.inline_indent):
-                    raise erring.ParseError('Indentation error', self.state.traceback)
-            else:
-                if state.stringlike_end_lineno != self.state.start_lineno:
-                    raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
-            line = line[1:].lstrip(self._whitespace_str)
-            self._ast.append_stringlike_key()
-        else:
-            self._ast.append_stringlike()
-        return line
-
-
-    def _parse_line_assign_key_val(self, line):
-        '''
-        Parse line segment beginning with equals sign.
-        '''
-        m = self._opening_delim_equals_re.match(line)
-        delim_len = len(m.group(0))
-        if delim_len == 1:
-            raise erring.ParseError('Unexpected equals sign "="', self.state.traceback)
-        elif delim_len < 3:
-            raise erring.ParseError('Unexpected series of equals signs', self.state.traceback)
-        else:
-            if not self.state.at_line_start:
-                raise erring.ParseError('Must be at beginning of line to specify a data path', self.state.traceback)
-            raise erring.ParseError('Unsupported branch')
-        return line
-
-    def _parse_line_list_item(self, line):
-        nc = line[1:2]
-        if nc != '' and nc not in self._whitespace:
-            line = self._parse_line_unquoted_string(line)
-        else:
-            # Opening list involves all needed checks for attempting to open
-            # two lists on the same line, being in inline syntax, etc.
-            self._ast.open_list_non_inline()
-            line_lstrip_whitespace = line[1:].lstrip(self._whitespace_str)
-            indent_after_list_item = line[1:len(line)-len(line_lstrip_whitespace)]
-            line = line_lstrip_whitespace
-            if line:
-                if self.state.indent[-1:] == '\t' and indent_after_list_item[:1] == '\t':
-                    self.state.indent += indent_after_list_item
-                else:
-                    self.state.indent += '\x20' + indent_after_list_item
-            else:
-                line = self._parse_line_goto_next()
-        return line
-
-    def _parse_line_separator(self, line):
-        self._ast.open_collection_inline()
-        line = line[1:].lstrip(self._whitespace_str)
-        if not line:
-            line = self._parse_line_goto_next()
-        return line
-
-    def _parse_line_pipe(self, line):
-        m = self._opening_delim_pipe_re.match(line)
-        if not m:
-            if line[1:2] == '\x20':
-                self.state.set_stringlike(line[2:])
-                line = self._parse_line_goto_next()
-            elif line[1:2] in self._unicode_whitespace:
-                raise erring.ParseError('Invalid whitespace character after pipe "|"')
-            else:
-                line = self._parse_line_unquoted_string(line)
-        else:
-            delim = m.group(0)
-            if not self.state.at_line_start:
-                raise erring.ParseError('Pipe-quoted strings ( {0} ) are only allowed at the beginning of lines'.format(delim), self.state.traceback)
-            if line[len(delim):].lstrip(self._whitespace_str):
-                raise erring.ParseError('Cannot have characters after opening delimiter of pipe-quoted string')
-            line = self._parse_line_get_next()
-            end_delim_re = self._closing_delim_re_dict[delim]
-            indent = self.state.indent
-            len_indent = len(indent)
-            pattern = indent + delim
-            s_list = []
-            while True:
-                if line.startswith(pattern):
-                    m = end_delim_re.find(line)
-                    if not m or len(delim) < len(m.group(0)) - 2:
-                        raise erring.ParseError('Invalid closing delimiter for pipe-quoted string', self.state.traceback)
-                    if not s_list:
-                        s = ''
-                    else:
-                        end_delim = m.group(0)
-                        if len(delim) == len(end_delim):
-                            for s_line in s_list:
-                                if not s_line.lstrip(self._unicode_whitespace_str):
-                                    raise erring.ParseError('Wrapped pipe-quoted string cannot contain empty lines; use block pipe-quoted string instead')
-                            line_indent = s_list[0][len(indent)+1:]
-                            len_line_indent = len(line_indent)
-                            if not line_indent.lstrip(self._indents_str):
-                                raise erring.ParseError('Invalid indentation in pipe-quoted string', self.state.traceback)
-                            for n, s_line in enumerate(s_list):
-                                if not s_line.startswith(line_indent) or s_line[len_line_indent:len_line_indent+1] in self._unicode_whitespace:
-                                    raise erring.ParseError('Invalid indentation in pipe-quoted string', self.state.traceback)
-                                s_list[n] = s_line[len_line_indent:]
-                            s = self._unwrap_inline(s_list)
-                        else:
-                            if len(delim) == len(end_delim) - 2:
-                                s_list[-1] = s_list[-1].rstrip(self._newline_chars_str)
-                            for s_line in s_list:
-                                if s_line.startswith(indent) and s_line[len_indent:len_indent+1] in self._indents:
-                                    line_indent = s_line[:len_indent+1]
-                                    break
-                            len_line_indent = len(line_indent)
-                            for n, s_line in enumerate(s_list):
-                                if s_line.startswith(line_indent):
-                                    s_list[n] = s_line[len_line_indent:]
-                                else:
-                                    if s_line.lstrip(self._whitespace_str):
-                                        raise erring.ParseError('Invalid indentation in pipe-quoted block string', self.state.traceback)
-                                    s_list[n] = s_line.lstrip(self._indents_str)
-                            s = ''.join(s_list)
-                    break
-                else:
-                    s_list.append(line)
-                    line = self._parse_line_get_next()
-                    if line is None:
-                        raise erring.ParseError('Text ended while scanning pipe-quoted string', self.state.traceback)
-            self.state.set_stringlike(s)
-            line = line.lstrip(self._whitespace_str)
-            if not line:
-                line = self._parse_line_goto_next()
-        return line
-
-
-    def _parse_line_whitespace(self, line):
-        '''
-        Parse line segment beginning with whitespace.
-        '''
-        raise erring.ParseError('Unexpected whitespace; if you are seeing this message, there is a bug in the parser', self.state.traceback)
-
-
-    def _parse_line_invalid_unquoted(self, line):
-        '''
-        Parse line segment beginning with code point >= 128 when unquoted
-        Unicode is not allowed.
-        '''
-        raise erring.ParseError('Unquoted non-ASCII characters are not allowed by default; retry with "unquoted_unicode" = True if the source is trustworthy/appropriate security measures are in place', self.state.traceback)
-
-
-    def _parse_line_unquoted_string(self, line):
-        state = self.state
-        check_kv = True
-        m = self._end_unquoted_string_re.search(line)
-        if m:
-            s = line[:m.start()].rstrip(self._whitespace_str)
-            if s == '':
-                if not self._unquoted_unicode__current and ord(line[:1]) >= 128:
-                    raise erring.ParseError('Encountered unquoted Unicode when "unquoted_unicode" = False', state.traceback)
-                else:
-                    raise erring.ParseError('Unquoted string of length zero; if you are seeing this message, there is a bug in the parser', state.traceback)
-            line = line[m.start():]
-            state.set_stringlike(s)
-            state.at_line_start = False
-        else:
-            s = line.rstrip(self._whitespace_str)
-            s_line_0 = line
-            state.set_stringlike(s)
-            line = self._parse_line_goto_next()
-            indent = None
-            if state.stringlike_at_line_start:
-                indent = state.stringlike_indent
-            elif line is not None and line:
-                if state.indent.startswith(state.stringlike_indent) and len(state.indent) > len(state.stringlike_indent):
-                    indent = state.indent
-                else:
-                    check_kv = False
-            if indent is not None:
-                s_list = [s_line_0]
-                len_indent = len(indent)
-                while line is not None and line and state.indent == indent:
-                    m = self._end_unquoted_string_re.search(line)
-                    if m:
-                        if m.start() == 0:
-                            break
-                        s_list.append(line[:m.start()])
-                        line = line[m.start():]
-                        state.stringlike_end_lineno = state.start_lineno
-                        line = self._parse_line_continue_next()
-                        break
-                    else:
-                        s_list.append(line)
-                        state.stringlike_end_lineno = state.start_lineno
-                        line = self._parse_line_goto_next()
-
-                # Leading whitespace will have already been stripped
-                s_list[-1] = s_list[-1].rstrip(self._whitespace_str)
-                for s_line in s_list:
-                    if s_line[:1] in self._unicode_whitespace:
-                        raise erring.ParseError('Unquoted strings cannot contain lines beginning with Unicode whitespace characters', state.traceback)
-                s = self._unwrap_inline(s_list)
-                state.stringlike_obj = s
-
-        if s[0] in self._unicode_whitespace or s[-1] in self._unicode_whitespace:
-            raise erring.ParseError('Unquoted strings cannot begin or end with Unicode whitespace characters', state.traceback)
-
-        # If typed string, update `stringlike_obj`
-        # Could use `set_stringlike` after this, but the current approach
-        # is more efficient for multi-line unquoted strings
-        if state.type:
-            if not self._unquoted_strings__current and not self._reserved_words_int_float_invalid_re.match(s):
-                raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False')
-            if state.type_obj in self.__bytes_parsers:
-                s = self._unicode_to_bytes(s)
-            try:
-                state.stringlike_obj = self._string_parsers[state.type_obj](s)
-            except Exception as e:
-                raise erring.ParseError('Could not convert unquoted string to type "{0}":\n  {1}'.format(state.type, e), state.traceback)
-        elif s[0] in self._reserved_words_int_float_starting_chars and s[-1] in self._reserved_words_int_float_ending_chars:
-            m = self._reserved_words_int_float_invalid_re.match(s)
-            if m:
-                g = m.lastgroup
-                if g == 'reserved_words':
-                    try:
-                        s = self._reserved_words[s]
-                    except KeyError:
-                        raise erring.ParseError('Invalid capitalization for reserved word "{0}"'.format(s), state.traceback)
-                elif g.startswith('num_int'):
-                    s = self._string_parsers['int'](s, g.replace('_', '.'))
-                elif g.startswith('num_float'):
-                    s = self._string_parsers['float'](s, g.replace('_', '.'))
-                else:
-                    raise erring.ParseError('Invalid {0} literal'.format(g.split('_', 1)[1]), state.traceback)
-                state.stringlike_obj = s
-            elif not self._unquoted_strings__current:
-                raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False', state.traceback)
-        elif not self._unquoted_strings__current:
-            raise erring.ParseError('Encountered unquoted string when "unquoted_strings" = False', state.traceback)
-
-        if not check_kv:
-            self._ast.append_stringlike()
-        else:
-            if not line or line[:1] == '%':
-                while line is not None:
-                    if line[:1] == '%':
-                        line = self._parse_line_comment(line)
-                    else:
-                        line = line.lstrip(self._whitespace_str)
-                        if not line:
-                            line = self._parse_line_goto_next()
-                        else:
-                            break
-            if line is not None and line[:1] == '=' and line[1:2] != '=':
-                if state.inline:
-                    if not state.indent.startswith(state.inline_indent):
-                        raise erring.ParseError('Indentation error', self.state.traceback)
-                else:
-                    if state.stringlike_end_lineno != state.start_lineno:
-                        raise erring.ParseError('In a key-value pair in non-inline syntax, the equals sign "=" must follow the key on the same line', self.state.traceback)
-                line = line[1:].lstrip(self._whitespace_str)
-                self._ast.append_stringlike_key()
-            else:
-                self._ast.append_stringlike()
-        return line
