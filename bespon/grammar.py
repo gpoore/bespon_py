@@ -115,18 +115,29 @@ LIT_GRAMMAR['unicode_other_newline_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAM
 _RAW_RE_GRAMMAR = [('backslash', '\\\\'),
                    ('non_ascii', '[^\\\u0000-\\\u007f]')]
 
+# Regex patterns
+_RE_PATTERNS = [('ascii_xid_start', re_patterns.ASCII_XID_START),
+                ('unicode_xid_start_less_fillers', re_patterns.XID_START_LESS_FILLERS),
+                ('ascii_xid_continue', re_patterns.ASCII_XID_CONTINUE),
+                ('xid_continue_less_fillers', re_patterns.XID_CONTINUE_LESS_FILLERS),
+                ('ascii_invalid_literal', re_patterns.ASCII_INVALID_LITERAL),
+                ('unicode_invalid_literal', re_patterns.UNICODE_INVALID_LITERAL),
+                ('bidi', re_patterns.BIDI_R_AL),
+                ('default_ignorable', re_patterns.DEFAULT_IGNORABLE)]
+
 # Whitespace
 _RAW_RE_WS = [('space', re.escape(LIT_GRAMMAR['space'])),
               ('indent', '[{0}]'.format(re.escape(LIT_GRAMMAR['indent']))),
               ('newline', re.escape(LIT_GRAMMAR['newline'])),
               ('ascii_other_newline', '{0}|[{1}]'.format(re.escape('\r\n'), re.escape(LIT_GRAMMAR['ascii_other_newline']))),
               ('unicode_other_newline', '{0}|[{1}]'.format(re.escape('\r\n'), re.escape(LIT_GRAMMAR['unicode_other_newline']))),
-              ('whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['whitespace'])))]
+              ('whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['whitespace']))),
+              ('unicode_whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['unicode_whitespace'])))]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_WS)
 
 # Special characters
-for k, v_lit in _RAW_LIT_SPECIAL:
-    _RAW_RE_GRAMMAR[k] = re.escape(v_lit)
+for k, v in _RAW_LIT_SPECIAL:
+    _RAW_RE_GRAMMAR[k] = re.escape(LIT_GRAMMAR[k])
 
 # Types
 _RAW_RE_TYPE = [# None type
@@ -181,10 +192,10 @@ _RAW_RE_TYPE = [# None type
                 ('float', '{dec_float}|{hex_float}|{infinity}|{not_a_number}'),
 
                 # Unquoted strings
-                ('ascii_start', re_patterns.ASCII_START),
-                ('unicode_start', re_patterns.XID_START_LESS_FILLERS),
-                ('ascii_continue', re_patterns.ASCII_CONTINUE),
-                ('unicode_continue', re_patterns.XID_CONTINUE_LESS_FILLERS),
+                ('ascii_start', '{ascii_xid_start}'),
+                ('unicode_start', '{xid_start_less_fillers}'),
+                ('ascii_continue', '{ascii_xid_continue}'),
+                ('unicode_continue', '{xid_continue_less_fillers}'),
                 ('unquoted_ascii_key', '_*{ascii_start}{ascii_continue}*'),
                 ('unquoted_unicode_key', '_*{unicode_start}{unicode_continue}*'),
                 ('unquoted_ascii_string', '{unquoted_ascii_key}(?:{space}{ascii_continue}+)+'),
@@ -232,18 +243,15 @@ _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2
                ('unicode_escape', '{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\\\{space}*(?:{unicode_other_newline})|\\\\.|\\\\')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
+_raw_key_not_formatted = set(k for k, v in _RAW_LIT_SPECIAL) | set(k for k, v in _RE_PATTERNS)
+
 RE_GRAMMAR = {}
 for k, v in _RAW_RE_GRAMMAR:
-    if k in ('start_inline_dict', 'end_inline_dict'):
+    if k in _raw_key_not_formatted:
         RE_GRAMMAR[k] = v
     else:
         RE_GRAMMAR[k] = v.format(**RE_GRAMMAR)
-# Additional data not needed previously.  Added here to avoid any potential
-# issues due to `str.format()`.
-RE_GRAMMAR['ascii_invalid_literal'] = re_patterns.ASCII_INVALID_LITERAL
-RE_GRAMMAR['unicode_invalid_literal'] = re_patterns.UNICODE_INVALID_LITERAL
-RE_GRAMMAR['bidi'] = re_patterns.BIDI_R_AL
-RE_GRAMMAR['default_ignorable'] = re_patterns.DEFAULT_IGNORABLE
+
 
 
 

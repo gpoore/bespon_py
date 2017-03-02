@@ -190,8 +190,8 @@ else:
         '''.replace('\x20', '').replace('\n', '')
 
 
-# ascii_start = set(cp for cp in xid_start_less_fillers if cp < 128)
-ASCII_START = '[A-Za-z]'
+# ascii_xid_start = set(cp for cp in xid_start_less_fillers if cp < 128)
+ASCII_XID_START = '[A-Za-z]'
 
 
 # xid_continue_less_fillers = set([cp for cp, data in unicodetools.ucd.derivedcoreproperties.items() if 'XID_Continue' in data and cp not in hangul_fillers])
@@ -394,8 +394,8 @@ else:
         '''.replace('\x20', '').replace('\n', '')
 
 
-# ascii_continue = set(cp for cp in xid_continue_less_fillers if cp < 128)
-ASCII_CONTINUE = '[0-9A-Z\\\u005Fa-z]'
+# ascii_xid_continue = set(cp for cp in xid_continue_less_fillers if cp < 128)
+ASCII_XID_CONTINUE = '[0-9A-Z_a-z]'
 
 
 
