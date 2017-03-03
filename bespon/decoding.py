@@ -26,7 +26,7 @@ from . import tooling
 from . import load_types
 from . import grammar
 from .ast import Ast
-from .astnodes import ScalarNode
+from .astnodes import RootNode, ScalarNode
 
 if sys.version_info.major == 2:
     str = unicode
@@ -42,7 +42,7 @@ if sys.maxunicode == 0xFFFF:
 
 WHITESPACE = grammar.LIT_GRAMMAR['whitespace']
 UNICODE_WHITESPACE = grammar.LIT_GRAMMAR['unicode_whitespace']
-UNICODE_WHITESPACE_SET = set(UNICODE_WHITESPACE_SET)
+UNICODE_WHITESPACE_SET = set(UNICODE_WHITESPACE)
 ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim'],
 ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim'],
 LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
@@ -53,6 +53,7 @@ END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
 DOC_COMMENT_INVALID_NEXT_TOKEN_SET = set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token'])
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
+WHITESPACE_OR_COMMENT_SET = set(WHITESPACE) | set(COMMENT_DELIM)
 
 
 
@@ -70,12 +71,14 @@ class State(object):
                  'first_lineno', 'first_column', 'last_lineno', 'last_column',
                  'nesting_depth',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
-                 'next_doc_comment', 'line_comments']
+                 'next_doc_comment', 'line_comments',
+                 'type_data', 'full_ast']
     def __init__(self, source=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
                  indent=None, at_line_start=True,
                  inline=False, inline_indent=None,
-                 first_lineno=1, first_column=1):
+                 first_lineno=1, first_column=1,
+                 type_data=None, full_ast=False):
         if not all(x is None or isinstance(x, str) for x in (source, indent, inline_indent)):
             raise TypeError('Invalid keyword argument value')
         if any(x is not None and x.lstrip('\x20\t') for x in (indent, inline_indent)):
@@ -115,6 +118,13 @@ class State(object):
 
         self.next_doc_comment = None
         self.line_comments = False
+
+        # #### need to check implementation on these
+        if type_data is None:
+            self.type_data = load_types.CORE_TYPES
+        else:
+            self.type_data = type_data
+        self.full_ast = full_ast
 
 
 
@@ -177,8 +187,8 @@ class BespONDecoder(object):
         # surrogate pairs under narrow Python builds.  The high surrogates
         # will simply invoke an attempt at a match, which will fail for
         # invalid code points.
-        parse_token = collections.defaultdict(self._parse_token_unquoted_string_or_keypath)
-        token_functions = {'comment': self._parse_token_comment_delim,
+        parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_keypath)
+        token_functions = {'comment_delim': self._parse_token_comment_delim,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
                            'end_inline_dict': self._parse_token_end_inline_dict,
@@ -192,7 +202,7 @@ class BespONDecoder(object):
                            'escaped_string_doublequote_delim': self._parse_token_escaped_string_doublequote_delim,
                            'literal_string_delim': self._parse_token_literal_string_delim,
                            'alias_prefix': self._parse_token_alias_prefix}
-        for token_name, func in token_functions:
+        for token_name, func in token_functions.items():
             token = grammar.LIT_GRAMMAR[token_name]
             parse_token[token] = func
         for c in '1234567890-+':
@@ -209,10 +219,13 @@ class BespONDecoder(object):
         else:
             invalid_literal = grammar.RE_GRAMMAR['unicode_invalid_literal']
             self._invalid_literal_re = re.compile(invalid_literal)
+            non_ascii = grammar.RE_GRAMMAR['non_ascii']
+            ascii_invalid_literal = grammar.RE_GRAMMAR['ascii_invalid_literal']
+            self._non_ascii_or_invalid_ascii_re = re.compile('(?P<non_ascii>{0})|(?P<invalid_literal>{1})'.format(non_ascii, ascii_invalid_literal))
             bidi = grammar.RE_GRAMMAR['bidi']
             ignorable = grammar.RE_GRAMMAR['default_ignorable']
             invalid_literal_or_bidi_or_ignorable = '(?P<invalid_literal>{0})|(?P<bidi>{1})|(?P<default_ignorable>{2})'.format(invalid_literal, bidi, ignorable)
-            self._invalid_literal_or_bidi_or_ignorable_re = re.compile(invalid_literal_or_bidi_or_default_ignorable)
+            self._invalid_literal_or_bidi_or_ignorable_re = re.compile(invalid_literal_or_bidi_or_ignorable)
             invalid_literal_or_bidi = '(?P<invalid_literal>{0})|(?P<bidi>{1})'.format(invalid_literal, bidi)
             self._invalid_literal_or_bidi_re = re.compile(invalid_literal_or_bidi)
             invalid_literal_or_default_ignorable = '(?P<invalid_literal>{0})|(?P<default_ignorable>{1})'.format(invalid_literal, ignorable)
@@ -257,9 +270,9 @@ class BespONDecoder(object):
                                (?: \\. | [^{delim_char}\\]+ | {delim_char}{{{1,n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
                                ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
-            elif c_0 == literal_string_delim or c_0 == comment_delim:
+            elif c_0 == literal_string_delim or (c_0 == comment_delim and len(delim) >= 3):
                 group = 0
-                if delim == literal_string_delim or delim == comment_delim:
+                if delim == literal_string_delim:
                     pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
                 else:
                     n = len(delim)
@@ -348,8 +361,41 @@ class BespONDecoder(object):
         self._bidi_last_scalar_last_lineno = 0
         self._bidi_last_scalar_last_line = ''
         self._default_ignorable = False
-        # A single, leading BOM is allowed, but for simplicity the regex
+
+        # Pure ASCII may be specified as a requirement.  Even in this case,
+        # a single, leading BOM is allowed, but for simplicity the regex
         # doesn't account for that, so a manual check is needed.
+        if self.only_ascii:
+            if normalized_string[0:1] == '\uFEFF':
+                m_inv = self.invalid_literal_re.search(normalized_string, 1)
+            else:
+                m_inv = self.invalid_literal_re.search(normalized_string)
+            if m_inv is not None:
+                invalid_literal_index = m_inv.start()
+                invalid_code_point = normalized_string[invalid_literal_index]
+                invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
+                invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
+                raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
+            return
+
+        # Even if pure ASCII isn't required, it is worth checking for, given
+        # the comparatively much larger amount of time required to run the
+        # full Unicode regexes.  This falls back to full Unicode if non-ASCII
+        # code points are found.
+        if normalized_string[0:1] == '\uFEFF':
+            m_ascii = self._non_ascii_or_invalid_ascii_re.search(normalized_string, 1)
+        else:
+            m_ascii = self._non_ascii_or_invalid_ascii_re.search(normalized_string)
+        if m_ascii is None:
+            return
+        elif m_ascii.lastgroup == 'invalid_literal':
+            invalid_literal_index = m_ascii.start()
+            invalid_code_point = normalized_string[invalid_literal_index]
+            invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
+            invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
+            raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
+
+        # If the pure ASCII check fails, fall back to full Unicode.
         if normalized_string[0:1] == '\uFEFF':
             m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string, 1)
         else:
@@ -402,7 +448,7 @@ class BespONDecoder(object):
         '''
         # Decode if necessary
         if isinstance(string_or_bytes, str):
-            raw_source = string_or_bytes
+            raw_string = string_or_bytes
         else:
             try:
                 raw_string = string_or_bytes.decode('utf8')
@@ -430,17 +476,27 @@ class BespONDecoder(object):
         state = State()
         ast = Ast(state)
 
-        # Start by extracting the first line and stripping any BOM
-        line = next(line_iter)
-        if line[:1] == '\uFEFF':
-            line = line[1:]
-            state.first_column += 1
-            state.last_column += 1
-
         self._full_ast = full_ast
         self._ast = ast
         self._state = state
         self._line_iter = line_iter
+
+        # Start by extracting the first line and stripping any BOM
+        # #### deal with empty line?
+        line = next(line_iter)
+        if line[:1] == '\uFEFF':
+            # Don't increment column, because that would throw off indentation
+            # for subsequent lines
+            line = line[1:]
+        line = self._parse_line_start_last(line)
+        if line == '':
+            while line is not None and line == '':
+                line = self._parse_line_goto_next(line)
+        root = RootNode(state)
+        ast.root = root
+        ast._unresolved_nodes.append(root)
+        ast.source.check_append_root(root)
+        ast.pos = root
 
         parse_token = self._parse_token
         while line is not None:
@@ -496,8 +552,8 @@ class BespONDecoder(object):
             state.first_column = 1
             state.last_column = 1
             return line
-        line_ws_strip = line.lstrip(whitespace)
-        indent_len = len(line) - len(line_ws_strip)
+        line_strip_ws = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_strip_ws)
         indent = line[:indent_len]
         state.indent = indent
         state.continuation_indent = indent
@@ -505,7 +561,7 @@ class BespONDecoder(object):
         column = indent_len + 1
         state.first_column = column
         state.last_column = column
-        return line_ws_strip
+        return line_strip_ws
 
 
     def _parse_line_get_next(self, line, next=next):
@@ -538,8 +594,8 @@ class BespONDecoder(object):
             state.first_column = 1
             state.last_column = 1
             return line
-        line_ws_strip = line.lstrip(whitespace)
-        indent_len = len(line) - len(line_ws_strip)
+        line_strip_ws = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_strip_ws)
         indent = line[:indent_len]
         state.indent = indent
         state.continuation_indent = indent
@@ -547,31 +603,37 @@ class BespONDecoder(object):
         column = indent_len + 1
         state.first_column = column
         state.last_column = column
-        return line_ws_strip
+        return line_strip_ws
 
 
     def _parse_line_continue_last(self, line, at_line_start=False,
-                                  whitespace=WHITESPACE):
+                                  whitespace=WHITESPACE,
+                                  whitespace_or_comment_set=WHITESPACE_OR_COMMENT_SET):
         '''
         Reset everything after `_parse_line_get_next()`, to continue on
         with the next line after having consumed part of it.
         '''
-        line_ws_strip = line.lstrip(whitespace)
-        if line_ws_strip == '':
-            return self._parse_line_goto_next(line)
         state = self._state
+        if line[:1] not in whitespace_or_comment_set:
+            state.first_column += 1
+            state.last_column += 1
+            return line
+        line_strip_ws = line.lstrip(whitespace)
+        if line_strip_ws == '':
+            return self._parse_line_goto_next(line)
         state.first_lineno = state.last_lineno
         state.indent = state.continuation_indent
         state.at_line_start = at_line_start
-        column = state.last_column + 1 + len(line) - len(line_ws_strip)
+        column = state.last_column + 1 + len(line) - len(line_strip_ws)
         state.first_column = column
         state.last_column = column
-        return line
+        return line_strip_ws
 
 
     def _parse_line_continue_last_to_next_significant_token(self, line, at_line_start=False,
                                                             comment_delim=COMMENT_DELIM,
-                                                            whitespace=WHITESPACE):
+                                                            whitespace=WHITESPACE,
+                                                            whitespace_or_comment_set=WHITESPACE_OR_COMMENT_SET):
         '''
         Skip ahead to the next significant token (token other than whitespace
         and line comments).  Used in checking ahead after doc comments, tags,
@@ -579,9 +641,13 @@ class BespONDecoder(object):
         or should trigger an immediate error.
         '''
         state = self._state
-        line_ws_strip = line.lstrip(whitespace)
-        if line_ws_strip == '':
-            line = self._parse_line_goto_next(line_ws_strip)
+        if line[:1] not in whitespace_or_comment_set:
+            state.first_column += 1
+            state.last_column += 1
+            return line
+        line_strip_ws = line.lstrip(whitespace)
+        if line_strip_ws == '':
+            line = self._parse_line_goto_next(line_strip_ws)
             if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                 while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                     if line == '':
@@ -593,11 +659,11 @@ class BespONDecoder(object):
             state.first_lineno = state.last_lineno
             state.indent = state.continuation_indent
             state.at_line_start = at_line_start
-            column = state.last_column + 1 + len(line) - len(line_ws_strip)
+            column = state.last_column + 1 + len(line) - len(line_strip_ws)
             state.first_column = column
             state.last_column = column
-            if line_ws_strip[:1] == comment_delim and line_ws_strip[1:2] != comment_delim:
-                line = self._parse_token_line_comment(line_ws_strip)
+            if line_strip_ws[:1] == comment_delim and line_strip_ws[1:2] != comment_delim:
+                line = self._parse_token_line_comment(line_strip_ws)
                 if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                     while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                         if line == '':
@@ -606,7 +672,7 @@ class BespONDecoder(object):
                             line = self._parse_token_line_comment(line)
                 return line
             else:
-                return line_ws_strip
+                return line_strip_ws
 
 
     def _check_bidi(self):
@@ -667,7 +733,7 @@ class BespONDecoder(object):
         Start a tag.
         '''
         self._ast.start_tag()
-        self._parse_line_continue_last(line[1:])
+        return self._parse_line_continue_last(line[1:])
 
 
     def _parse_token_end_tag(self, line, end_tag_with_suffix=END_TAG_WITH_SUFFIX):
@@ -679,7 +745,7 @@ class BespONDecoder(object):
         # Account for end tag suffix
         self._state.last_column += 1
         self._ast.end_tag()
-        self._parse_line_continue_last(line[1:])
+        return self._parse_line_continue_last(line[1:])
 
 
     def _parse_token_inline_element_separator(self, line):
@@ -687,7 +753,7 @@ class BespONDecoder(object):
         Parse an element separator in a dict or list.
         '''
         self._ast.open_inline_collection()
-        self._parse_line_continue_last(line[1:])
+        return self._parse_line_continue_last(line[1:])
 
 
     def _parse_delim_inline(self, name, delim, line, whitespace=WHITESPACE,
@@ -698,13 +764,12 @@ class BespONDecoder(object):
         state = self._state
         closing_delim_re, group = self._closing_delim_re_dict[delim]
         found = False
-        if delim in line:
-            m = closing_delim_re.search(line)
-            if m is not None:
-                found = True
-                content = line[:m.start()]
-                line = line[m.end():]
-                state.last_column += 2*len(delim) + len(content)
+        m = closing_delim_re.search(line)
+        if m is not None:
+            found = True
+            content = line[:m.start()]
+            line = line[m.end():]
+            state.last_column += 2*len(delim) + len(content)
         if found:
             return ((content,), content, line)
         content_lines = []
@@ -729,7 +794,7 @@ class BespONDecoder(object):
                         raise erring.IndentationError(state)
                     else:
                         raise erring.ParseError('A Unicode whitespace or default ignorable code point was found where a wrapped line was expected to start', state)
-            elif line[0] in unicode_whitespace:
+            elif line[0] in unicode_whitespace_set:
                 state.last_column += len(continuation_indent)
                 if line[0] in whitespace:
                     raise erring.IndentationError(state)
@@ -812,6 +877,7 @@ class BespONDecoder(object):
             if self._full_ast:
                 node.raw_val = content_lines
             node.final_val = content
+            node.resolved = True
             node.implicit_type = 'doc_comment'
             state.next_doc_comment = node
             if bidi:
@@ -837,7 +903,7 @@ class BespONDecoder(object):
         if bidi:
             self._check_bidi()
         state = self._state
-        line_delim_strip = line.lstrip(comment_delim)
+        line_delim_strip = line.lstrip(literal_string_delim)
         len_delim = len(line) - len(line_delim_strip)
         if len_delim > 3 and (len_delim % 3 != 0 or len_delim > max_delim_length):
             raise erring.ParseError('Literal string delims must have lengths of 1 or 2, or multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
@@ -847,16 +913,42 @@ class BespONDecoder(object):
         if self._full_ast:
             node.raw_val = content_lines
         node.final_val = content
+        node.resolved = True
         node.implicit_type = 'literal_string'
         if bidi:
             self._bidi_last_scalar_last_line = content_lines[-1]
             self._bidi_last_scalar_last_lineno = node.last_lineno
         line = self._parse_line_continue_last_to_next_significant_token(line)
         if line is not None and line[:1] == assign_key_val:
-            if not self.inline and node.last_lineno != state.first_lineno:
+            if not state.inline and node.last_lineno != state.first_lineno:
                 raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
             self._ast.append_scalar_key(node)
+            line = self._parse_line_continue_last(line[1:])
         else:
             self._ast.append_scalar_val(node)
         return line
         # #### check for default ignorables by delimiters?
+
+
+    def _parse_token_unquoted_string_or_keypath(self, line):
+        raise NotImplementedError
+
+
+    def _parse_token_block_prefix(self, line):
+        raise NotImplementedError
+
+
+    def _parse_token_escaped_string_singlequote_delim(self, line):
+        raise NotImplementedError
+
+
+    def _parse_token_escaped_string_doublequote_delim(self, line):
+        raise NotImplementedError
+
+
+    def _parse_token_alias_prefix(self, line):
+        raise NotImplementedError
+
+
+    def _parse_token_number_or_number_unit(self, line):
+        raise NotImplementedError

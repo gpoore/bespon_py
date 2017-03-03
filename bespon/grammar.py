@@ -93,8 +93,7 @@ _RAW_LIT_SPECIAL = [# Special code points
                     # sequentially, with the first being applied to the dict
                     # and the second applying to the first key.
                     ('doc_comment_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
-                    ('tag_invalid_next_token', '{doc_comment_invalid_follower}{start_tag}')]
-
+                    ('tag_invalid_next_token', '{doc_comment_invalid_next_token}{start_tag}')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
 LIT_GRAMMAR = {}
@@ -117,13 +116,14 @@ _RAW_RE_GRAMMAR = [('backslash', '\\\\'),
 
 # Regex patterns
 _RE_PATTERNS = [('ascii_xid_start', re_patterns.ASCII_XID_START),
-                ('unicode_xid_start_less_fillers', re_patterns.XID_START_LESS_FILLERS),
+                ('xid_start_less_fillers', re_patterns.XID_START_LESS_FILLERS),
                 ('ascii_xid_continue', re_patterns.ASCII_XID_CONTINUE),
                 ('xid_continue_less_fillers', re_patterns.XID_CONTINUE_LESS_FILLERS),
                 ('ascii_invalid_literal', re_patterns.ASCII_INVALID_LITERAL),
                 ('unicode_invalid_literal', re_patterns.UNICODE_INVALID_LITERAL),
                 ('bidi', re_patterns.BIDI_R_AL),
                 ('default_ignorable', re_patterns.DEFAULT_IGNORABLE)]
+_RAW_RE_GRAMMAR.extend(_RE_PATTERNS)
 
 # Whitespace
 _RAW_RE_WS = [('space', re.escape(LIT_GRAMMAR['space'])),
@@ -137,7 +137,7 @@ _RAW_RE_GRAMMAR.extend(_RAW_RE_WS)
 
 # Special characters
 for k, v in _RAW_LIT_SPECIAL:
-    _RAW_RE_GRAMMAR[k] = re.escape(LIT_GRAMMAR[k])
+    _RAW_RE_GRAMMAR.append((k, re.escape(LIT_GRAMMAR[k])))
 
 # Types
 _RAW_RE_TYPE = [# None type
@@ -229,7 +229,7 @@ _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2}})'),
                ('u_escape', '\\\\u(?:{lower_hex_digit}{{4}}|{upper_hex_digit}{{4}})'),
                ('U_escape', '\\\\U(?:{lower_hex_digit}{{8}}|{upper_hex_digit}{{8}})'),
-               ('ubrace_escape', '\\\\u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}}))\\}}'),
+               ('ubrace_escape', '\\\\u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}})\\}}'),
                # The general escape patterns can include `\<spaces><newline>`,
                # but don't need to be compiled with re.DOTALL because the
                # newlines are specified explicitly and accounted for before

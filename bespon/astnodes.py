@@ -100,6 +100,8 @@ class RootNode(list):
 
         self.start_tag = state.start_root_tag
         self.end_tag = None
+        # #### tag needed for compatibility (ast resolving, etc.); refactor?
+        self.tag = None
         self.unresolved_child_count = 0
         self.nesting_depth = state.source_initial_nesting_depth
 
@@ -120,21 +122,21 @@ class RootNode(list):
     def check_append_scalar_key(self, obj):
         raise erring.Bug('A key-value pair cannot be appended directly at root level', obj)
 
-    def check_append_scalar_val(self, obj, full_ast=False):
+    def check_append_scalar_val(self, obj):
         if len(self) == 1:
             raise erring.ParseError('Only a single scalar or collection object is allowed at root level', obj)
         #### May need to revise consistency checks once add full support for
         #### embedded parsing
         if not obj.external_indent.startswith(self.indent):
             raise erring.IndentationError(obj)
-        if obj.resolved and not full_ast:
-            self.append(obj.final_val)
+        if obj.resolved:
+            self.append(obj)
+            self.resolved = True
         else:
             obj.parent = self
             obj.index = len(self)
             self.append(obj)
-            if not obj.resolved:
-                self.unresolved_child_count += 1
+            self.unresolved_child_count += 1
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
 
@@ -343,10 +345,10 @@ class ListlikeNode(list):
             else:
                 self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
 
-    def check_append_scalar_key(self, obj, full_ast=False):
+    def check_append_scalar_key(self, obj):
         raise erring.ParseError('Cannot append a key-value pair directly to a list-like object', obj)
 
-    def check_append_scalar_val(self, obj, full_ast=False):
+    def check_append_scalar_val(self, obj):
         if not self.open:
             if self.inline:
                 raise erring.ParseError('Cannot append to a closed list-like object; perhaps a "," is missing', obj)
@@ -370,14 +372,13 @@ class ListlikeNode(list):
                     raise erring.IndentationError(obj)
             else:
                 raise erring.IndentationError(obj)
-        if obj.resolved and not full_ast:
-            self.append(obj.final_val)
+        if obj.resolved:
+            self.append(obj)
         else:
             obj.parent = self
             obj.index = len(self)
             self.append(obj)
-            if not obj.resolved:
-                self.unresolved_child_count += 1
+            self.unresolved_child_count += 1
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
         self.open = False
@@ -446,7 +447,7 @@ class DictlikeNode(collections.OrderedDict):
         self.awaiting_val = False
         self.next_key = None
 
-    def check_append_scalar_key(self, obj, full_ast=False):
+    def check_append_scalar_key(self, obj):
         if self.inline:
             if not self.open:
                 raise erring.ParseError('Cannot add a key to a closed object; perhaps a "," is missing', obj)
@@ -466,19 +467,14 @@ class DictlikeNode(collections.OrderedDict):
                 raise erring.IndentationError(obj)
         if obj.basetype != 'scalar':
             raise erring.ParseError('Dict-like objects only take scalar types as keys', obj)
-        if full_ast:
-            if obj in self:
-                raise erring.ParseError('Duplicate keys are prohibited', obj)
-            self.next_key = obj
-        else:
-            if obj.final_val in self:
-                raise erring.ParseError('Duplicate keys are prohibited', obj)
-            self.next_key = obj.final_val
+        if obj in self:
+            raise erring.ParseError('Duplicate keys are prohibited', obj)
+        self.next_key = obj
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
         self.awaiting_val = True
 
-    def check_append_scalar_val(self, obj, full_ast=False):
+    def check_append_scalar_val(self, obj):
         if not self.awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
         if self.inline:
@@ -492,14 +488,13 @@ class DictlikeNode(collections.OrderedDict):
         # be consistent with the key indentation.  If the value has a tag,
         # the tag's indentation will have already been compared with the
         # value's indentation for consistency.
-        if obj.resolved and not full_ast:
-            self[self.next_key] = obj.final_val
+        if obj.resolved:
+            self[self.next_key] = obj
         else:
             obj.parent = self
             obj.index = self.next_key
             self[self.next_key] = obj
-            if not obj.resolved:
-                self.unresolved_child_count += 1
+            self.unresolved_child_count += 1
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
         self.awaiting_val = False
@@ -552,7 +547,7 @@ class TagNode(object):
     _collection_config_types = set(['init', 'deepinit', 'default',
                                     'deepdefault', 'recmerge', 'deeprecmerge'])
 
-    def check_append_scalar_key(self, obj, full_ast=False):
+    def check_append_scalar_key(self, obj):
         if not self.open:
             raise erring.ParseError('Cannot add a key to a closed object; perhaps a "," is missing', obj)
         if self.awaiting_val:
@@ -577,24 +572,18 @@ class TagNode(object):
                 if 'scalar' not in self.compatible_basetypes:
                     raise erring.ParseError('Incompatible argument "newline"', obj)
                 self.compatible_basetypes == set(['scalar'])
-        if full_ast:
-            self.next_key = obj
-        else:
-            self.next_key = obj.final_val
+        self.next_key = obj
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
         self.awaiting_val = True
 
-    def check_append_scalar_val(self, obj, full_ast=False):
+    def check_append_scalar_val(self, obj):
         if not obj.external_indent.startswith(self.inline_indent):
             raise erring.IndentationError(obj)
         if not self.awaiting_val:
             if (self.open and obj.basetype == 'scalar' and obj.final_val in self._type_data and
                     all(x is None for x in (self.type, self.label, self.newline, self.collection_config_type))):
-                if full_ast:
-                    self.type = obj
-                else:
-                    self.type = obj.final_val
+                self.type = obj
                 self.compatible_basetypes = set((self._type_data[obj.final_val].basetype,))
                 self.mutable = self._type_data[obj.final_val].mutable
             else:
@@ -605,12 +594,11 @@ class TagNode(object):
         else:
             if self.next_key in self._collection_config_types:
                 self.collection_config_type = self.next_key
-                if obj.resolved and not full_ast:
+                if obj.resolved:
                     self.collection_config_val = obj.final_val
                 else:
                     self.collection_config_val = obj
-                    if not obj.resolved:
-                        self.unresolved_child_count += 1
+                    self.unresolved_child_count += 1
             else:
                 if obj.basetype != 'scalar':
                     raise erring.ParseError('Only scalar values are allowed', obj)
@@ -627,10 +615,7 @@ class TagNode(object):
                         self.mutable = self._type_data[obj.final_val].mutable
                     except KeyError:
                         raise erring.ParseError('Unknown type "{0}"'.format(obj.final_val), obj)
-                if full_ast:
-                    setattr(self, self.next_key, obj)
-                else:
-                    setattr(self, self.next_key, obj.final_val)
+                setattr(self, self.next_key, obj)
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
         self.open = False

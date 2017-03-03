@@ -78,7 +78,7 @@ class DataType(object):
 
 
 
-_BASE16_RE = re.compile(b'(?:{0})$'.format(grammar.RE_GRAMMAR['base16'].encode('ascii')))
+_BASE16_RE = re.compile('(?:{0})$'.format(grammar.RE_GRAMMAR['base16'].encode('ascii')).encode('ascii'))
 
 def _base16_parser(b):
     # Need to remove any whitespace padding before decoding.  Also need to
@@ -91,7 +91,7 @@ def _base16_parser(b):
 
 
 if sys.version_info.major == 2:
-    _BASE64_RE = re.compile(b'(?:{0})$'.format(grammar.RE_GRAMMAR['base64'].encode('ascii')))
+    _BASE64_RE = re.compile('(?:{0})$'.format(grammar.RE_GRAMMAR['base64'].encode('ascii')).encode('ascii'))
 
     def _base64_parser(b):
         # Need to remove any whitespace padding before decoding.  Also need to

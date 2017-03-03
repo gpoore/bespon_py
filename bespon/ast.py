@@ -13,9 +13,7 @@
 from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
-
-from .version import __version__
-
+import sys
 from . import erring
 from . import astnodes
 
@@ -64,7 +62,6 @@ class Ast(object):
 
     def append_doc_comment(self, obj):
         state = self.state
-
         state.next_doc_comment = obj
 
 
@@ -81,7 +78,7 @@ class Ast(object):
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if obj.inline or (obj.external_indent == pos.indent and pos.basetype == 'dict'):
-            pos.check_append_scalar_key(obj, self.full_ast)
+            pos.check_append_scalar_key(obj)
         elif len(obj.external_indent) >= len(pos.indent):
             # Object will be in a dict, so its `.nesting_depth` is incorrect
             # and must be updated.  This won't be reflected in state, so
@@ -91,7 +88,7 @@ class Ast(object):
             dict_obj = DictlikeNode(obj)
             # No need to set `.open=True`; it is irrelevant in non-inline mode
             self.append_collection(dict_obj)
-            dict_obj.check_append_scalar_key(obj, self.full_ast)
+            dict_obj.check_append_scalar_key(obj)
         else:
             root = self.root
             while pos is not root and len(obj.external_indent) < len(pos.indent):
@@ -114,7 +111,7 @@ class Ast(object):
             # No need to check whether final pos is a dict; if a dict should
             # exist at this level, it must have already been created before
             # the lower level of the AST was reached.
-            pos.check_append_scalar_key(obj, self.full_ast)
+            pos.check_append_scalar_key(obj)
             self.state.nesting_depth = pos.nesting_depth
             self.pos = pos
 
@@ -129,7 +126,7 @@ class Ast(object):
         # a list element, the list opener `*` would have done the same thing.
         if not obj.resolved:
             self._unresolved_nodes.append(obj)
-        self.pos.append_scalar_val(obj, self.full_ast)
+        self.pos.check_append_scalar_val(obj)
 
 
     def append_collection(self, obj):
@@ -375,6 +372,7 @@ class Ast(object):
                 pos = parent
             state.nesting_depth = pos.nesting_depth
             self.pos = pos
+        self.resolve()
 
 
     def resolve(self):
@@ -400,23 +398,32 @@ class Ast(object):
         # contain an alias to itself, unless that alias is inside a mutable
         # collection.  This complicates the resolving process for immutable
         # objects, and requires a check for unresolvable situations.
-        full_ast = self.full_ast
         type_data = self.state.type_data
         unresolved_nodes = list(reversed(self._unresolved_nodes))
         while unresolved_nodes:
+            initial_unresolved_count = len(unresolved_nodes)
             remaining_nodes = []
             for node in unresolved_nodes:
                 if node.unresolved_child_count > 0:
                     remaining_nodes.append(node)
                 elif node.basetype == 'tag':
+                    # #### Check
                     node.resolved = True
                 elif node.tag is None or node.tag.resolved:
-                    if full_ast:
-                        raise NotImplementedError
+                    # #### Fix for other types
+                    if node.basetype == 'dict':
+                        node.final_val = type_data[node.basetype].parser((k.final_val, v.final_val) for k, v in node.items())
+                        node.parent.unresolved_child_count -= 1
+                    elif node.basetype == 'list':
+                        node.final_val = type_data[node.basetype].parser(x.final_val for x in node)
+                        node.parent.unresolved_child_count -= 1
+                    elif node.basetype == 'root':
+                        node.final_val = node[0].final_val
                     else:
-                        py_node = type_data[node.basetype].parser(node)
-                        node.parent[node.index] = py_node
+                        raise NotImplementedError
                 else:
                     remaining_nodes.append(node)
             unresolved_nodes = remaining_nodes
+            if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
+                raise erring.ParseError('Could not resolve all nodes', self.state)
         # #### make finalize do all resolving except pythonize?

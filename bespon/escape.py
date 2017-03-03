@@ -30,6 +30,9 @@ if sys.maxunicode == 0xFFFF:
 # pylint:  enable=W0622
 
 
+ASCII_NEWLINE_SET = set(grammar.LIT_GRAMMAR['ascii_other_newline'])
+UNICODE_NEWLINE_SET = set(grammar.LIT_GRAMMAR['unicode_other_newline'])
+
 
 
 def basic_unicode_escape(code_point):
@@ -232,7 +235,7 @@ class Unescape(object):
 
     @staticmethod
     def _unescape_unicode_char(s, int=int, chr=chr,
-                               unicode_newline_set=set([c for c in grammar.LIT_GRAMMAR['unicode_newline']])):
+                               unicode_newline_set=UNICODE_NEWLINE_SET):
         '''
         Given a string in `\\xHH`, `\\u{H....H}`, `\\uHHHH`, or `\\UHHHHHHHH`
         form, return the Unicode code point corresponding to the hex value of
@@ -264,7 +267,8 @@ class Unescape(object):
 
 
     @staticmethod
-    def _unescape_byte(b, int=int, chr=chr, _unicode_newline_set=set([c for c in grammar.LIT_GRAMMAR['unicode_newline'] if ord(c) < 128])):
+    def _unescape_byte(b, int=int, chr=chr,
+                       ascii_newline_set=ASCII_NEWLINE_SET):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
         to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return
@@ -280,7 +284,7 @@ class Unescape(object):
             v = chr(int(b[2:], 16)).encode('latin1')
         except ValueError:
             # Make sure we have the full pattern `\\<spaces><newline>`
-            if b[-1] in _unicode_newline_set:
+            if b[-1] in ascii_newline_set:
                 v = b''
             else:
                 b_esc = b.decode('latin1')
