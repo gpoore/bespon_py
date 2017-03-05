@@ -19,11 +19,18 @@ from . import re_patterns
 
 
 
-# General notes:
-#  * Use of "ascii" in a variable name indicates a restriction to code
+# General notes on suffixes in variable names.  Note that these suffixes only
+# have the meanings described below when used as suffixes.
+#  * Use of "ascii" suffix in a variable name indicates a restriction to code
 #    points in 0x00-0x7F, or 0-127 (that is, 7-bit).
-#  * Use of "unicode" in a variable name indicates that the full range of
-#    Unicode code points in 0x00-0x10FFFF is covered.
+#  * Use of "below_u0590" suffix in a variable name indicates a restriction
+#    to code points below 0x590, which is a convenient range because it
+#    contains very few invalid code points (only those in Unicode Cc) and
+#    does not contain any right-to-left code points.  Thus, regex patterns
+#    are only marginally more complex and slower than for the ASCII range,
+#    while rtl checks may be omitted.
+#  * Use of "unicode" suffix in a variable name indicates that the full range
+#    of Unicode code points in 0x00-0x10FFFF is covered.
 
 
 # Assemble literal grammar
@@ -32,13 +39,15 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                     ('space', '\x20'),
                     ('indent', '{tab}{space}'),
                     ('newline', '\n'),
-                    ('ascii_other_newline', '\n\v\f\r'),
-                    ('unicode_other_newline', '{ascii_other_newline}\u0085\u2028\u2029'),
+                    ('line_terminator_ascii', '\n\v\f\r'),
+                    ('line_terminator_unicode', '{line_terminator_ascii}\u0085\u2028\u2029'),
                     ('whitespace', '{indent}{newline}'),
                     # unicode_whitespace = set([cp for cp, data in unicodetools.ucd.proplist.items() if 'White_Space' in data])
                     ('unicode_whitespace', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680' +
                                             '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
-                                            '\u2028\u2029\u202f\u205f\u3000'))]
+                                            '\u2028\u2029\u202f\u205f\u3000')),
+                    # Other
+                    ('bom', '\uFEFF')]
 
 _RAW_LIT_SPECIAL = [# Special code points
                     ('comment_delim', '#'),
@@ -85,15 +94,19 @@ _RAW_LIT_SPECIAL = [# Special code points
                     # close an object (as opposed to opening it, so that the
                     # stored doc comment or tag would be used), or start an
                     # object that is invalid in the current context (a second
-                    # doc comment or tag).  Any other token will either start
-                    # a valid object, or will be a universally invalid token
-                    # that triggers its own error.  Note that there is an
-                    # exception for dicts in non-inline syntax, since two
-                    # doc comment/tag pairs can follow each other
-                    # sequentially, with the first being applied to the dict
-                    # and the second applying to the first key.
-                    ('doc_comment_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
-                    ('tag_invalid_next_token', '{doc_comment_invalid_next_token}{start_tag}')]
+                    # doc comment or tag).  Blocks are a special case
+                    # requiring additional lookahead, to determine their type.
+                    # Any other token will either start a valid object, or
+                    # will be a universally invalid token that triggers its
+                    # own error.  Note that there is an exception for dicts in
+                    # non-inline syntax, since two doc comment/tag pairs can
+                    # follow each other sequentially, with the first being
+                    # applied to the dict and the second applying to the first
+                    # key.
+                    ('doc_comment_invalid_next_token', '{block_prefix}{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
+                    ('tag_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
+                    # Numbers
+                    ('number_or_number_unit_start', '0123456789+-')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
 LIT_GRAMMAR = {}
@@ -104,35 +117,34 @@ for k, v in _RAW_LIT_GRAMMAR:
         LIT_GRAMMAR[k] = v.format(**LIT_GRAMMAR)
 # Add a few elements that couldn't conveniently be created with the grammar
 # definition format
-LIT_GRAMMAR['ascii_other_newline_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['ascii_other_newline'])
-LIT_GRAMMAR['unicode_other_newline_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['unicode_other_newline'])
+LIT_GRAMMAR['line_terminator_ascii_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_ascii'])
+LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_unicode'])
 
 
 
 
 # Assemble regex grammar
-_RAW_RE_GRAMMAR = [('backslash', '\\\\'),
-                   ('non_ascii', '[^\\\u0000-\\\u007f]')]
+_RAW_RE_GRAMMAR = [('backslash', '\\\\')]
 
 # Regex patterns
-_RE_PATTERNS = [('ascii_xid_start', re_patterns.ASCII_XID_START),
+_RE_PATTERNS = [('xid_start_ascii', re_patterns.XID_START_ASCII),
+                ('xid_start_below_u0590', re_patterns.XID_START_BELOW_U0590),
                 ('xid_start_less_fillers', re_patterns.XID_START_LESS_FILLERS),
-                ('ascii_xid_continue', re_patterns.ASCII_XID_CONTINUE),
+                ('xid_continue_ascii', re_patterns.XID_CONTINUE_ASCII),
+                ('xid_continue_below_u0590', re_patterns.XID_CONTINUE_BELOW_U0590),
                 ('xid_continue_less_fillers', re_patterns.XID_CONTINUE_LESS_FILLERS),
-                ('ascii_invalid_literal', re_patterns.ASCII_INVALID_LITERAL),
-                ('unicode_invalid_literal', re_patterns.UNICODE_INVALID_LITERAL),
-                ('bidi', re_patterns.BIDI_R_AL),
-                ('default_ignorable', re_patterns.DEFAULT_IGNORABLE)]
+                ('not_valid_ascii', re_patterns.NOT_VALID_LITERAL_ASCII),
+                ('not_valid_below_u0590', re_patterns.NOT_VALID_LITERAL_BELOW_U0590),
+                ('not_valid_unicode', re_patterns.NOT_VALID_LITERAL),
+                ('bidi_rtl', re_patterns.BIDI_R_AL),
+                ('private_use', re_patterns.PRIVATE_USE)]
 _RAW_RE_GRAMMAR.extend(_RE_PATTERNS)
 
 # Whitespace
 _RAW_RE_WS = [('space', re.escape(LIT_GRAMMAR['space'])),
               ('indent', '[{0}]'.format(re.escape(LIT_GRAMMAR['indent']))),
               ('newline', re.escape(LIT_GRAMMAR['newline'])),
-              ('ascii_other_newline', '{0}|[{1}]'.format(re.escape('\r\n'), re.escape(LIT_GRAMMAR['ascii_other_newline']))),
-              ('unicode_other_newline', '{0}|[{1}]'.format(re.escape('\r\n'), re.escape(LIT_GRAMMAR['unicode_other_newline']))),
-              ('whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['whitespace']))),
-              ('unicode_whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['unicode_whitespace'])))]
+              ('whitespace', '[{0}]'.format(re.escape(LIT_GRAMMAR['whitespace'])))]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_WS)
 
 # Special characters
@@ -192,33 +204,42 @@ _RAW_RE_TYPE = [# None type
                 ('float', '{dec_float}|{hex_float}|{infinity}|{not_a_number}'),
 
                 # Unquoted strings
-                ('ascii_start', '{ascii_xid_start}'),
-                ('unicode_start', '{xid_start_less_fillers}'),
-                ('ascii_continue', '{ascii_xid_continue}'),
-                ('unicode_continue', '{xid_continue_less_fillers}'),
-                ('unquoted_ascii_key', '_*{ascii_start}{ascii_continue}*'),
-                ('unquoted_unicode_key', '_*{unicode_start}{unicode_continue}*'),
-                ('unquoted_ascii_string', '{unquoted_ascii_key}(?:{space}{ascii_continue}+)+'),
-                ('unquoted_unicode_string', '{unquoted_unicode_key}(?:{space}{unicode_continue}+)+'),
-                ('si_mu_prefix', '\u00B5|\u03BC'),
-                ('ascii_unquoted_unit', '''
-                                        [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
-                                        [Xx][G-Zg-z][A-Za-z]* |
-                                        [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
-                                        %
+                ('unquoted_start_ascii', '{xid_start_ascii}'),
+                ('unquoted_start_below_u0590', '{xid_start_below_u0590}'),
+                ('unquoted_start_unicode', '{xid_start_less_fillers}'),
+                ('unquoted_continue_ascii', '{xid_continue_ascii}'),
+                ('unquoted_continue_below_u0590', '{xid_continue_below_u0590}'),
+                ('unquoted_continue_unicode', '{xid_continue_less_fillers}'),
+                ('unquoted_key_ascii', '_*{unquoted_start_ascii}{unquoted_continue_ascii}*'),
+                ('unquoted_key_below_u0590', '_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
+                ('unquoted_key_unicode', '_*{unquoted_start_unicode}{unquoted_continue_unicode}*'),
+                ('unquoted_string_ascii', '{unquoted_key_ascii}(?:{space}{unquoted_continue_ascii}+)+'),
+                ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}(?:{space}{unquoted_continue_below_u0590}+)+'),
+                ('unquoted_string_unicode', '{unquoted_key_unicode}(?:{space}{unquoted_continue_unicode}+)+'),
+                ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
+                ('unquoted_unit_ascii', '''
+                                        (?: [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
+                                            [Xx][G-Zg-z][A-Za-z]* |
+                                            [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
+                                            %
+                                        )
                                         '''.replace('\x20', '').replace('\n', '')),
-                ('unquoted_ascii_dec_number_unit', '(?:{dec_integer}|{dec_float}){ascii_unquoted_unit}'),
-                ('unquoted_unicode_dec_number_unit', '(?:{dec_integer}|{dec_float}){si_mu_prefix}?{ascii_unquoted_unit}'),
+                ('unquoted_dec_number_unit_ascii', '(?:{dec_integer}|{dec_float}){unquoted_unit_ascii}'),
+                ('unquoted_dec_number_unit_below_u0590', '(?:{dec_integer}|{dec_float}){si_mu_prefix}?{unquoted_unit_ascii}'),
+                ('unquoted_dec_number_unit_unicode', '{unquoted_dec_number_unit_below_u0590}'),
 
                 # Key path
-                ('ascii_key_path_element', '(?:{unquoted_ascii_key}|{open_noninline_list})'),
-                ('unicode_key_path_element', '(?:{unquoted_unicode_key}|{open_noninline_list})'),
-                ('ascii_key_path', '{ascii_key_path_element}(?:{path_separator}{ascii_key_path_element})+'),
-                ('unicode_key_path', '{unicode_key_path_element}(?:{path_separator}{unicode_key_path_element})+'),
+                ('key_path_element_ascii', '(?:{unquoted_key_ascii}|{open_noninline_list})'),
+                ('key_path_element_below_u0590', '(?:{unquoted_key_below_u0590}|{open_noninline_list})'),
+                ('key_path_element_unicode', '(?:{unquoted_key_unicode}|{open_noninline_list})'),
+                ('key_path_ascii', '{key_path_element_ascii}(?:{path_separator}{key_path_element_ascii})+'),
+                ('key_path_below_u0590', '{key_path_element_below_u0590}(?:{path_separator}{key_path_element_below_u0590})+'),
+                ('key_path_unicode', '{key_path_element_unicode}(?:{path_separator}{key_path_element_unicode})+'),
 
                 # Alias path
-                ('ascii_alias_path', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_ascii_key})(?:{path_separator}{unquoted_ascii_key})+'),
-                ('unicode_alias_path', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_unicode_key})(?:{path_separator}{unquoted_unicode_key})+'),
+                ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_ascii})(?:{path_separator}{unquoted_key_ascii})+'),
+                ('alias_path_below_u0590', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_below_u0590})(?:{path_separator}{unquoted_key_below_u0590})+'),
+                ('alias_path_unicode', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_unicode})(?:{path_separator}{unquoted_key_unicode})+'),
 
                 # Binary types
                 ('base16', '{lower_hex_digit}+|{upper_hex_digit}+'),
@@ -239,8 +260,8 @@ _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2
                # valid short escapes.  Invalid escapes are caught at that
                # point; the regex pattern just needs to catch everything that
                # could be a valid escape.
-               ('ascii_escape', '{x_escape}|\\\\{space}*(?:{ascii_other_newline})|\\\\.|\\\\'),
-               ('unicode_escape', '{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\\\{space}*(?:{unicode_other_newline})|\\\\.|\\\\')]
+               ('bytes_escape', '{x_escape}|\\\\{space}*{newline}|\\\\.|\\\\'),
+               ('unicode_escape', '{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\\\{space}*{newline}|\\\\.|\\\\')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
 _raw_key_not_formatted = set(k for k, v in _RAW_LIT_SPECIAL) | set(k for k, v in _RE_PATTERNS)
@@ -274,4 +295,4 @@ SHORT_BACKSLASH_ESCAPES = {v: k for k, v in SHORT_BACKSLASH_UNESCAPES.items()}
 
 
 # Non-textual parameters
-PARAMS = {'max_delim_length': 3*30,}
+PARAMS = {'max_delim_length': 3*30}

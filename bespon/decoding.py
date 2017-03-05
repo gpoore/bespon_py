@@ -40,21 +40,28 @@ if sys.maxunicode == 0xFFFF:
 # pylint:  enable=W0622
 
 
+INDENT = grammar.LIT_GRAMMAR['indent']
 WHITESPACE = grammar.LIT_GRAMMAR['whitespace']
 UNICODE_WHITESPACE = grammar.LIT_GRAMMAR['unicode_whitespace']
 UNICODE_WHITESPACE_SET = set(UNICODE_WHITESPACE)
-ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim'],
-ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim'],
+ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim']
+ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim']
 LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
 COMMENT_DELIM = grammar.LIT_GRAMMAR['comment_delim']
 OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
-DOC_COMMENT_INVALID_NEXT_TOKEN_SET = set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token'])
+DOC_COMMENT_INVALID_NEXT_TOKEN_SET = set(grammar.LIT_GRAMMAR['doc_comment_invalid_next_token']) | set([''])
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
-WHITESPACE_OR_COMMENT_SET = set(WHITESPACE) | set(COMMENT_DELIM)
-
+WHITESPACE_OR_COMMENT_OR_EMPTY_SET = set(WHITESPACE) | set(COMMENT_DELIM) | set([''])
+BOM = grammar.LIT_GRAMMAR['bom']
+BLOCK_PREFIX = grammar.LIT_GRAMMAR['block_prefix']
+BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
+BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
+                       ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM])
+NEWLINE = grammar.LIT_GRAMMAR['newline']
+NUMBER_OR_NUMBER_UNIT_START = grammar.LIT_GRAMMAR['number_or_number_unit_start']
 
 
 
@@ -62,7 +69,7 @@ class State(object):
     '''
     Keep track of state.  This includes information about the source, the
     current location within the source, the current parsing context,
-    a cached tag for the next object that is parsed, etc.
+    a cached doc comment and tag for the next object that is parsed, etc.
     '''
     __slots__ = ['source', 'source_include_depth',
                  'source_initial_nesting_depth',
@@ -93,7 +100,9 @@ class State(object):
                 raise ValueError('Invalid keyword argument value')
             else:
                 raise TypeError('Invalid keyword argument value')
-        if not all(x in (True, False) for x in (at_line_start, inline)):
+        if not all(x in (True, False) for x in (at_line_start, inline, full_ast)):
+            raise TypeError('Invalid keyword argument value')
+        if type_data is not None and not (isinstance(type_data, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in type_data)):
             raise TypeError('Invalid keyword argument value')
 
         self.source = source or '<data>'
@@ -119,11 +128,7 @@ class State(object):
         self.next_doc_comment = None
         self.line_comments = False
 
-        # #### need to check implementation on these
-        if type_data is None:
-            self.type_data = load_types.CORE_TYPES
-        else:
-            self.type_data = type_data
+        self.type_data = type_data or load_types.CORE_TYPES
         self.full_ast = full_ast
 
 
@@ -162,14 +167,15 @@ class BespONDecoder(object):
             raise TypeError('Unexpected keyword argument(s) {0}'.format(', '.join('{0}'.format(k) for k in kwargs)))
 
 
-        # Generate parser dicts
+        # Parser and type info access
+        self._type_data = load_types.CORE_TYPES
 
 
         # Create escape and unescape functions
         self.escape_unicode = escape.basic_unicode_escape
-        unescape = escape.Unescape()
-        self.unescape_unicode = unescape.unescape_unicode
-        self.unescape_bytes = unescape.unescape_bytes
+        self.unescape = escape.Unescape()
+        self.unescape_unicode = self.unescape.unescape_unicode
+        self.unescape_bytes = self.unescape.unescape_bytes
 
 
         # Create dict of token-based parsing functions
@@ -198,50 +204,38 @@ class BespONDecoder(object):
                            'end_tag': self._parse_token_end_tag,
                            'inline_element_separator': self._parse_token_inline_element_separator,
                            'block_prefix': self._parse_token_block_prefix,
-                           'escaped_string_singlequote_delim': self._parse_token_escaped_string_singlequote_delim,
-                           'escaped_string_doublequote_delim': self._parse_token_escaped_string_doublequote_delim,
+                           'escaped_string_singlequote_delim': self._parse_token_escaped_string,
+                           'escaped_string_doublequote_delim': self._parse_token_escaped_string,
                            'literal_string_delim': self._parse_token_literal_string_delim,
                            'alias_prefix': self._parse_token_alias_prefix}
         for token_name, func in token_functions.items():
             token = grammar.LIT_GRAMMAR[token_name]
             parse_token[token] = func
-        for c in '1234567890-+':
+        for c in NUMBER_OR_NUMBER_UNIT_START:
             parse_token[c] = self._parse_token_number_or_number_unit
         parse_token[''] = self._parse_line_goto_next
         self._parse_token = parse_token
 
 
-
         # Assemble regular expressions
-        if self.only_ascii:
-            invalid_literal = grammar.RE_GRAMMAR['ascii_invalid_literal']
-            self._invalid_literal_re = re.compile(invalid_literal)
-        else:
-            invalid_literal = grammar.RE_GRAMMAR['unicode_invalid_literal']
-            self._invalid_literal_re = re.compile(invalid_literal)
-            non_ascii = grammar.RE_GRAMMAR['non_ascii']
-            ascii_invalid_literal = grammar.RE_GRAMMAR['ascii_invalid_literal']
-            self._non_ascii_or_invalid_ascii_re = re.compile('(?P<non_ascii>{0})|(?P<invalid_literal>{1})'.format(non_ascii, ascii_invalid_literal))
-            bidi = grammar.RE_GRAMMAR['bidi']
-            ignorable = grammar.RE_GRAMMAR['default_ignorable']
-            invalid_literal_or_bidi_or_ignorable = '(?P<invalid_literal>{0})|(?P<bidi>{1})|(?P<default_ignorable>{2})'.format(invalid_literal, bidi, ignorable)
-            self._invalid_literal_or_bidi_or_ignorable_re = re.compile(invalid_literal_or_bidi_or_ignorable)
-            invalid_literal_or_bidi = '(?P<invalid_literal>{0})|(?P<bidi>{1})'.format(invalid_literal, bidi)
-            self._invalid_literal_or_bidi_re = re.compile(invalid_literal_or_bidi)
-            invalid_literal_or_default_ignorable = '(?P<invalid_literal>{0})|(?P<default_ignorable>{1})'.format(invalid_literal, ignorable)
-            self._invalid_literal_or_default_ignorable_re = re.compile(invalid_literal_or_default_ignorable)
-
+        self.not_valid_ascii_re = re.compile(grammar.RE_GRAMMAR['not_valid_ascii'])
+        self._not_valid_below_u0590_re = re.compile(grammar.RE_GRAMMAR['not_valid_below_u0590'])
+        not_valid_unicode = grammar.RE_GRAMMAR['not_valid_unicode']
+        self._not_valid_unicode_re = re.compile(not_valid_unicode)
+        bidi_rtl = grammar.RE_GRAMMAR['bidi_rtl']
+        self._bidi_rtl_re = re.compile(bidi_rtl)
+        self._bidi_rtl_or_not_valid_unicode_re = '(?P<bidi_rtl>{0})|(?P<not_valid>{1})'.format(bidi_rtl, not_valid_unicode)
         self._newline_re = re.compile(grammar.RE_GRAMMAR['newline'])
-
-        self._bidi_re = re.compile(bidi)
-
 
         # Dict of regexes for identifying closing delimiters for inline
         # escaped strings.  Needed regexes are automatically generated on the
         # fly.  Note that opening delimiters are handled by normal string
-        # methods, as are closing delimiters for block strings.  Because
-        # block string delimiters are enclosed within `|` and `/`, lookbehind
-        # and lookahead for escapes or other delimiter characters is unneeded.
+        # methods, as are closing delimiters for block strings.  Because block
+        # string end delimiters are bounded by `|` and `/`, and must be at the
+        # start of a line, lookbehind and lookahead for escapes or other
+        # delimiter characters is unneeded.  However, the inline regexes are
+        # used in processing block strings to check whether internal runs of
+        # delimiters are valid.
         escaped_string_singlequote_delim = ESCAPED_STRING_SINGLEQUOTE_DELIM
         escaped_string_doublequote_delim = ESCAPED_STRING_DOUBLEQUOTE_DELIM
         literal_string_delim = LITERAL_STRING_DELIM
@@ -267,7 +261,7 @@ class BespONDecoder(object):
                     # don't seem worthwhile.
                     n = len(delim)
                     pattern = r'''
-                               (?: \\. | [^{delim_char}\\]+ | {delim_char}{{{1,n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
+                               (?: \\. | [^{delim_char}\\]+ | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
                                ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
             elif c_0 == literal_string_delim or (c_0 == comment_delim and len(delim) >= 3):
@@ -282,34 +276,19 @@ class BespONDecoder(object):
             return (re.compile(pattern), group)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
-
-        # Regexes for working with default ignorables
-        #
-        # Default ignorables mixed with inline delimiters
-        singlequote = grammar.RE_GRAMMAR['escaped_string_singlequote_delim']
-        doublequote = grammar.RE_GRAMMAR['escaped_string_doublequote_delim']
-        literal = grammar.RE_GRAMMAR['literal_string_delim']
-        comment = grammar.RE_GRAMMAR['comment_delim']
-        default_ignorable = grammar.RE_GRAMMAR['default_ignorable']
-        inline_invalid_di_pattern = '^{di}+{delim}|{delim}{di}+(?:{delim}|$)'
-        self._invalid_ignorable_inline_singlequote_re = re.compile(inline_invalid_di_pattern.format(delim=singlequote, di=default_ignorable))
-        self._invalid_ignorable_inline_doublequote_re = re.compile(inline_invalid_di_pattern.format(delim=doublequote, di=default_ignorable))
-        self._invalid_ignorable_inline_literal_re = re.compile(inline_invalid_di_pattern.format(delim=literal, di=default_ignorable))
-        self._invalid_ignorable_inline_doc_comment_re = re.compile(inline_invalid_di_pattern.format(delim=comment, di=default_ignorable))
-        self._invalid_ignorable_line_comment_re = re.compile('{delim}{di}+{delim}'.format(delim=comment, di=default_ignorable))
-        # Default ignorables at the start of continuation lines in wrapped
-        # inline objects
-        self._invalid_continuation_line_start_re = re.compile('{uws}|{di}'.format(uws=grammar.RE_GRAMMAR['unicode_whitespace'], di=default_ignorable))
-        # Default ignorables in blocks
-        block_prefix = grammar.RE_GRAMMAR['block_prefix']
-        block_suffix = grammar.RE_GRAMMAR['block_suffix']
-        invalid_block_di_pattern = '{delim}{di}+{delim}|{prefix}{di}+{delim}|{delim}{di}+{suffix}'
-        self._invalid_ignorable_block_singlequote_re = re.compile(invalid_block_di_pattern.format(delim=singlequote, di=default_ignorable, prefix=block_prefix, suffix=block_suffix))
-        self._invalid_ignorable_block_doublequote_re = re.compile(invalid_block_di_pattern.format(delim=doublequote, di=default_ignorable, prefix=block_prefix, suffix=block_suffix))
-        self._invalid_ignorable_block_literal_re = re.compile(invalid_block_di_pattern.format(delim=literal, di=default_ignorable, prefix=block_prefix, suffix=block_suffix))
-        self._invalid_ignorable_block_doc_comment_re = re.compile(invalid_block_di_pattern.format(delim=comment, di=default_ignorable, prefix=block_prefix, suffix=block_suffix))
-
-
+        # Number and number-unit types
+        # Order in regex is important; need to try float before int for a
+        # given base, etc., otherwise an exponent could be missed.
+        # The regex could be optimized slightly by using
+        # `{unquoted_dec_number_unit_ascii}` when applicable.
+        number_or_number_unit_pattern = '''
+            (?P<number_unit_10>{unquoted_dec_number_unit_unicode}) |
+            (?P<float_16>{hex_float}) |
+            (?P<int_16>{hex_integer}) | (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
+            (?P<float_10>{dec_float}|{infinity}|{not_a_number}) |
+            (?P<int_10>{dec_integer})
+            '''.replace('\x20', '').replace('\n', '').format(**grammar.RE_GRAMMAR)
+        self._number_or_number_unit_re = re.compile(number_or_number_unit_pattern)
 
 
     @staticmethod
@@ -329,123 +308,80 @@ class BespONDecoder(object):
         '''
         s_list_inline = []
         for line in s_list[:-1]:
-            line_strip_nl = line[:-1]
-            # Don't need to use line_strip_nl[-1:]; inline strings can't have
-            # empty lines (the last line could be empty before the final
-            # delimiter, but it's handled separately, so that's not an issue)
-            if line_strip_nl[-1] in unicode_whitespace_set:
-                s_list_inline.append(line_strip_nl)
+            if line[-1:] in unicode_whitespace_set:
+                s_list_inline.append(line)
             else:
-                s_list_inline.append(line_strip_nl + '\x20')
+                s_list_inline.append(line + '\x20')
         s_list_inline.append(s_list[-1])
         return ''.join(s_list_inline)
 
 
-    def _check_invalid_literal_or_bidi_or_default_ignorable(self, normalized_string):
+    def _traceback_not_valid_literal(self, normalize_string, index):
         '''
-        Check the decoded, newline-normalized source for invalid code points
-        and code points that trigger additional checking later.
+        Locate an invalid literal code point using an re match object,
+        and raise an error.
         '''
-        # General regex form:
-        #    (?P<invalid_literal>{0})|(?P<bidi>{1})|(?P<default_ignorable>{2})
-        #
-        # A regex that catches everything is used at first.  If it finds
-        # something other than an invalid literal, then scanning picks up
-        # at the last location with a more focused regex.  This intentionally
-        # involves scanning any characters that trigger a match twice
-        # (using `<last_match>.start()`), so that any overlap between
-        # categories will be detected.
-        invalid_literal = False
-        invalid_literal_index = None
-        self._bidi = False
-        self._bidi_last_scalar_last_lineno = 0
-        self._bidi_last_scalar_last_line = ''
-        self._default_ignorable = False
+        state = self._state
+        newline_count = 0
+        newline_index = 0
+        for m in self._newline_re.finditer(normalize_string, 0, index):
+            newline_count += 1
+            newline_index = m.start()
+        state.last_lineno += lineno
+        state.last_column = index - newline_index
+        code_point = normalize_string[index]
+        code_point_esc = self._escape(code_point)
+        raise erring.InvalidLiteralError(self._state, code_point, code_point_esc)
 
-        # Pure ASCII may be specified as a requirement.  Even in this case,
-        # a single, leading BOM is allowed, but for simplicity the regex
-        # doesn't account for that, so a manual check is needed.
-        if self.only_ascii:
-            if normalized_string[0:1] == '\uFEFF':
-                m_inv = self.invalid_literal_re.search(normalized_string, 1)
-            else:
-                m_inv = self.invalid_literal_re.search(normalized_string)
-            if m_inv is not None:
-                invalid_literal_index = m_inv.start()
-                invalid_code_point = normalized_string[invalid_literal_index]
-                invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
-                invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
-                raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
-            return
 
-        # Even if pure ASCII isn't required, it is worth checking for, given
-        # the comparatively much larger amount of time required to run the
-        # full Unicode regexes.  This falls back to full Unicode if non-ASCII
-        # code points are found.
-        if normalized_string[0:1] == '\uFEFF':
-            m_ascii = self._non_ascii_or_invalid_ascii_re.search(normalized_string, 1)
+    def _check_bidi_rtl_or_not_valid_literal(self, normalized_string, bom=BOM):
+        '''
+        Check the decoded, newline-normalized source for right-to-left code
+        point and invalid literal code points.
+        '''
+        self._pure_ascii = True
+        self._only_below_u0590 = True
+        self._bidi_rtl = False
+        self._bidi_rtl_last_scalar_last_lineno = 0
+        self._bidi_rtl_last_scalar_last_line = ''
+
+        if normalized_string[:1] == bom:
+            bom_offset = 1
         else:
-            m_ascii = self._non_ascii_or_invalid_ascii_re.search(normalized_string)
-        if m_ascii is None:
-            return
-        elif m_ascii.lastgroup == 'invalid_literal':
-            invalid_literal_index = m_ascii.start()
-            invalid_code_point = normalized_string[invalid_literal_index]
-            invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
-            invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
-            raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
+            bom_offset = 0
 
-        # If the pure ASCII check fails, fall back to full Unicode.
-        if normalized_string[0:1] == '\uFEFF':
-            m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string, 1)
+        m_not_valid_ascii = self.not_valid_ascii_re.search(normalized_string, bom_offset)
+        if m_not_valid_ascii is None:
+            return
+        elif self.only_ascii:
+            self._traceback_not_valid_literal(normalized_string, m_not_valid_ascii.start())
         else:
-            m_all = self._invalid_literal_or_bidi_or_ignorable_re.search(normalized_string)
-        if m_all is not None:
-            if m_all.lastgroup == 'invalid_literal':
-                invalid_literal = True
-                invalid_literal_index = m_all.start()
-            elif m_all.lastgroup == 'bidi':
-                self._bidi = True
-                m_inv_ign = self._invalid_literal_or_default_ignorable_re.search(normalized_string, m_all.start())
-                if m_inv_ign is not None:
-                    if m_inv_ign.lastgroup == 'invalid_literal':
-                        invalid_literal = True
-                        invalid_literal_index = m_inv_ign.start()
-                    else:
-                        self._default_ignorable = True
-                        m_inv = self._invalid_literal_re.search(normalized_string, m_inv_ign.start())
-                        if m_inv:
-                            invalid_literal = True
-                            invalid_literal_index = m_inv_ign.m_inv()
-            elif m_all.lastgroup == 'default_ignorable':
-                self._default_ignorable = True
-                m_inv_bidi = self._invalid_literal_or_bidi_re.search(normalized_string, m_all.start())
-                if m_inv_bidi is not None:
-                    if m_inv_bidi.lastgroup == 'invalid_literal':
-                        invalid_literal = True
-                        invalid_literal_index = m_inv_bidi.start()
-                    else:
-                        self._bidi = True
-                        m_inv = self._invalid_literal_re.search(normalized_string, m_inv_bidi.start())
-                        if m_inv:
-                            invalid_literal = True
-                            invalid_literal_index = m_inv.start()
+            self._pure_ascii = False
+            m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(normalized_string, m_not_valid_ascii.start())
+            if m_not_valid_below_u0590 is None:
+                return
             else:
-                raise erring.BespONException('There is a bug in the regular expression that checks for invalid code points')
-        if invalid_literal:
-            invalid_code_point = normalized_string[invalid_literal_index]
-            if ord(invalid_code_point) <= 0xFFFF:
-                invalid_esc = '\\u{0:04x}'.format(ord(invalid_code_point))
-            else:
-                invalid_esc = '\\U{0:08x}'.format(ord(invalid_code_point))
-            invalid_lineno = len(self._newline_re.findall(normalized_string, 0, invalid_literal_index)) + 1
-            raise erring.BespONException('Invalid literal code point "{0}" on line {1}'.format(invalid_esc, invalid_lineno))
+                self._only_below_u0590 = False
+                m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(normalized_string, m_not_valid_below_u0590.start())
+                if m_bidi_rtl_or_not_valid_unicode is None:
+                    return
+                elif m_bidi_rtl_or_not_valid_unicode.lastgroup == 'not_valid':
+                    self._traceback_not_valid_literal(normalized_string, m_bidi_rtl_or_not_valid_unicode.start())
+                else:  # .lastgroup == 'bidi_rtl'
+                    self._bidi_rtl = True
+                    m_not_valid_unicode = self._not_valid_unicode_re.search(normalized_string, m_bidi_rtl_or_not_valid_unicode.start())
+                    if m_not_valid_unicode is None:
+                        return
+                    else:
+                        self._traceback_not_valid_literal(normalized_string, m_not_valid_unicode.start())
 
 
     def decode(self, string_or_bytes):
         '''
         Decode a Unicode string or byte string into Python objects.
         '''
+        state = State()
+        self._state = state
         # Decode if necessary
         if isinstance(string_or_bytes, str):
             raw_string = string_or_bytes
@@ -453,17 +389,16 @@ class BespONDecoder(object):
             try:
                 raw_string = string_or_bytes.decode('utf8')
             except Exception as e:
-                raise erring.BespONException('Cannot decode binary source:\n   {0}'.format(e))
+                raise erring.SourceDecodeError(state, e)
 
-        # Normalize newlines and check code points
-        normalized_string = raw_string.replace('\r\n', '\n')
+        self._check_bidi_rtl_or_not_valid_literal(raw_string)
+
+        line_iter = iter(raw_string.splitlines())
         del raw_string
-        self._check_invalid_literal_or_bidi_or_default_ignorable(normalized_string)
-
-        line_iter = iter(normalized_string.splitlines(True))
-        del normalized_string
 
         ast, data = self._parse_lines(line_iter)
+
+        self._state = None
 
         return data
 
@@ -473,30 +408,22 @@ class BespONDecoder(object):
         Process lines from source into abstract syntax tree (AST).  Then
         process the AST into standard Python objects.
         '''
-        state = State()
+        state = self._state
         ast = Ast(state)
 
         self._full_ast = full_ast
         self._ast = ast
-        self._state = state
         self._line_iter = line_iter
 
         # Start by extracting the first line and stripping any BOM
-        # #### deal with empty line?
-        line = next(line_iter)
-        if line[:1] == '\uFEFF':
+        line = next(line_iter, '')
+        if line[:1] == BOM:
             # Don't increment column, because that would throw off indentation
             # for subsequent lines
             line = line[1:]
         line = self._parse_line_start_last(line)
-        if line == '':
-            while line is not None and line == '':
-                line = self._parse_line_goto_next(line)
-        root = RootNode(state)
-        ast.root = root
-        ast._unresolved_nodes.append(root)
-        ast.source.check_append_root(root)
-        ast.pos = root
+        line = self._parse_line_continue_last_to_next_significant_token(line, at_line_start=True)
+        ast.set_root()
 
         parse_token = self._parse_token
         while line is not None:
@@ -507,19 +434,18 @@ class BespONDecoder(object):
         # significant memory.
         self._full_ast = None
         self._ast = None
-        self._state = None
         self._line_iter = None
 
         ast.finalize()
         if not ast.root:
-            raise erring.ParseError('There was no data to load', None)
+            raise erring.ParseError('There was no data to load', state)
 
         data = ast.root.final_val
 
         return (ast, data)
 
 
-    def _parse_line_goto_next(self, line, next=next, whitespace=WHITESPACE):
+    def _parse_line_goto_next(self, line, next=next, whitespace=INDENT):
         '''
         Go to next line.  Used when parsing completes on a line, and no
         additional parsing is needed for that line.
@@ -575,7 +501,7 @@ class BespONDecoder(object):
         return line
 
 
-    def _parse_line_start_last(self, line, whitespace=WHITESPACE):
+    def _parse_line_start_last(self, line, whitespace=INDENT):
         '''
         Reset everything after `_parse_line_get_next()`, so that it's
         equivalent to using `_parse_line_goto_next()`.  Useful when
@@ -607,14 +533,16 @@ class BespONDecoder(object):
 
 
     def _parse_line_continue_last(self, line, at_line_start=False,
-                                  whitespace=WHITESPACE,
-                                  whitespace_or_comment_set=WHITESPACE_OR_COMMENT_SET):
+                                  whitespace=INDENT,
+                                  whitespace_or_comment_or_empty_set=WHITESPACE_OR_COMMENT_OR_EMPTY_SET):
         '''
         Reset everything after `_parse_line_get_next()`, to continue on
         with the next line after having consumed part of it.
         '''
+        if line == '':
+            return self._parse_line_goto_next(line)
         state = self._state
-        if line[:1] not in whitespace_or_comment_set:
+        if line[:1] not in whitespace_or_comment_or_empty_set:
             state.first_column += 1
             state.last_column += 1
             return line
@@ -632,8 +560,8 @@ class BespONDecoder(object):
 
     def _parse_line_continue_last_to_next_significant_token(self, line, at_line_start=False,
                                                             comment_delim=COMMENT_DELIM,
-                                                            whitespace=WHITESPACE,
-                                                            whitespace_or_comment_set=WHITESPACE_OR_COMMENT_SET):
+                                                            whitespace=INDENT,
+                                                            whitespace_or_comment_or_empty_set=WHITESPACE_OR_COMMENT_OR_EMPTY_SET):
         '''
         Skip ahead to the next significant token (token other than whitespace
         and line comments).  Used in checking ahead after doc comments, tags,
@@ -641,7 +569,7 @@ class BespONDecoder(object):
         or should trigger an immediate error.
         '''
         state = self._state
-        if line[:1] not in whitespace_or_comment_set:
+        if line[:1] not in whitespace_or_comment_or_empty_set:
             state.first_column += 1
             state.last_column += 1
             return line
@@ -655,28 +583,26 @@ class BespONDecoder(object):
                     else:
                         line = self._parse_token_line_comment(line)
             return line
-        else:
-            state.first_lineno = state.last_lineno
-            state.indent = state.continuation_indent
-            state.at_line_start = at_line_start
-            column = state.last_column + 1 + len(line) - len(line_strip_ws)
-            state.first_column = column
-            state.last_column = column
-            if line_strip_ws[:1] == comment_delim and line_strip_ws[1:2] != comment_delim:
-                line = self._parse_token_line_comment(line_strip_ws)
-                if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
-                    while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
-                        if line == '':
-                            line = self._parse_line_goto_next(line)
-                        else:
-                            line = self._parse_token_line_comment(line)
-                return line
-            else:
-                return line_strip_ws
+        state.first_lineno = state.last_lineno
+        state.indent = state.continuation_indent
+        state.at_line_start = at_line_start
+        column = state.last_column + 1 + len(line) - len(line_strip_ws)
+        state.first_column = column
+        state.last_column = column
+        if line_strip_ws[:1] == comment_delim and line_strip_ws[1:2] != comment_delim:
+            line = self._parse_token_line_comment(line_strip_ws)
+            if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
+                    if line == '':
+                        line = self._parse_line_goto_next(line)
+                    else:
+                        line = self._parse_token_line_comment(line)
+            return line
+        return line_strip_ws
 
 
-    def _check_bidi(self):
-        if self._bidi_last_scalar_last_lineno == self._state.first_lineno and self._bidi_re.search(self._bidi_last_scalar_last_line):
+    def _check_bidi_rtl(self):
+        if self._bidi_rtl_last_scalar_last_lineno == self._state.first_lineno and self._bidi_rtl_re.search(self._bidi_rtl_last_scalar_last_line):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', self._state)
 
 
@@ -687,10 +613,10 @@ class BespONDecoder(object):
         Open a non-inline list, or start a keypath that has a list as its
         first element.
         '''
-        next_char = line[1:2]
-        if next_char == open_noninline_list:
+        next_code_point = line[1:2]
+        if next_code_point == open_noninline_list:
             raise erring.ParseError('Invalid double list opening "{0}"'.format(line[:2]), self._state)
-        elif next_char == path_separator:
+        if next_code_point == path_separator:
             return self._parse_token_unquoted_string_or_keypath(line)
         self._ast.open_noninline_list()
         return self._parse_line_continue_last(line, at_line_start=True)
@@ -745,7 +671,8 @@ class BespONDecoder(object):
         # Account for end tag suffix
         self._state.last_column += 1
         self._ast.end_tag()
-        return self._parse_line_continue_last(line[1:])
+        # Account for end tag suffix with `[2:]`
+        return self._parse_line_continue_last(line[2:])
 
 
     def _parse_token_inline_element_separator(self, line):
@@ -756,22 +683,19 @@ class BespONDecoder(object):
         return self._parse_line_continue_last(line[1:])
 
 
-    def _parse_delim_inline(self, name, delim, line, whitespace=WHITESPACE,
+    def _parse_delim_inline(self, name, delim, line, whitespace=INDENT,
                             unicode_whitespace_set=UNICODE_WHITESPACE_SET):
         '''
-        Find the closing delimiter for a quoted string or doc comment.
+        Find the closing delimiter for an inline quoted string or doc comment.
         '''
         state = self._state
         closing_delim_re, group = self._closing_delim_re_dict[delim]
-        found = False
         m = closing_delim_re.search(line)
         if m is not None:
-            found = True
-            content = line[:m.start()]
-            line = line[m.end():]
-            state.last_column += 2*len(delim) + len(content)
-        if found:
-            return ((content,), content, line)
+            content = line[:m.start(group)]
+            line = line[m.end(group):]
+            state.last_column += 2*len(delim) - 1 + len(content)
+            return ([content], content, line)
         content_lines = []
         content_lines.append(line)
         indent = state.indent
@@ -787,13 +711,6 @@ class BespONDecoder(object):
         while True:
             if line == '':
                 raise erring.ParseError('Unterminated {0}'.format(name), state)
-            elif self._default_ignorable:
-                if self._invalid_continuation_line_start_re.match(line):
-                    state.last_column += len(continuation_indent)
-                    if line[0] in whitespace:
-                        raise erring.IndentationError(state)
-                    else:
-                        raise erring.ParseError('A Unicode whitespace or default ignorable code point was found where a wrapped line was expected to start', state)
             elif line[0] in unicode_whitespace_set:
                 state.last_column += len(continuation_indent)
                 if line[0] in whitespace:
@@ -806,7 +723,7 @@ class BespONDecoder(object):
                     line_content = line[:m.start(group)]
                     line = line[m.end(group):]
                     content_lines.append(line_content)
-                    state.last_column += len(continuation_indent) + m.end(group)
+                    state.last_column += len(continuation_indent) + m.end(group) - 1
                     break
             content_lines.append(line)
             line = self._parse_line_get_next(line)
@@ -818,7 +735,6 @@ class BespONDecoder(object):
                 else:
                     raise erring.IndentationError(state)
             line = line[len(continuation_indent):]
-
         return (content_lines, self._unwrap_inline_string(content_lines), line)
 
 
@@ -826,123 +742,321 @@ class BespONDecoder(object):
         '''
         Parse a line comment.  This is used in `_parse_token_comment()` and
         `_parse_line_continue_last_to_next_significant_token()` to ensure
-        uniform handling.  In many cases, line comments could actually be
-        dealt with in those functions by simply calling
-        `_parse_line_goto_next()`.  However, when default ignorables are
-        present, additional processing is necessary.  No checking is done
-        for `#` followed by `#`, since this function is only ever called with
-        valid line comments.  This function receives the line with the
-        leading `#` still intact.
+        uniform handling.  No checking is done for `#` followed by `#`, since
+        this function is only ever called with valid line comments.  This
+        function receives the line with the leading `#` still intact.
         '''
-        state = self._state
-        state.line_comments = True
-        if self._default_ignorable:
-            m = self._invalid_ignorable_line_comment_re.search(line)
-            if m is not None:
-                state.last_column += len(line)
-                # Index:  +1 for `#` at start of match
-                index = m.start() + 1
-                # Column:  +1 for `#` at start of match, zero indexing is fine
-                column = state.first_column + m.start() + 1
-                code_point = self.escape_unicode(line[index:index+1])
-                erring.ParseError('Invalid pattern of comment characters "{0}" surrounding default ignorable code point "{1}" (column {2})'.format(comment_delim, code_point, column), state)
+        self._state.line_comments = True
         return self._parse_line_goto_next('')
 
 
     def _parse_token_comment_delim(self, line, comment_delim=COMMENT_DELIM,
                                    max_delim_length=MAX_DELIM_LENGTH,
                                    ScalarNode=ScalarNode,
-                                   invalid_next_token_set=DOC_COMMENT_INVALID_NEXT_TOKEN_SET):
+                                   invalid_next_token_set=DOC_COMMENT_INVALID_NEXT_TOKEN_SET,
+                                   block_prefix=BLOCK_PREFIX):
         '''
         Parse inline comments.
         '''
-        bidi = self._bidi
-        if bidi:
-            self._check_bidi()
-        state = self._state
-        line_delim_strip = line.lstrip(comment_delim)
-        len_delim = len(line) - len(line_delim_strip)
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
+        line_strip_delim = line.lstrip(comment_delim)
+        len_delim = len(line) - len(line_strip_delim)
         if len_delim == 1:
             return self._parse_token_line_comment(line)
-        elif len_delim == 2:
+        if len_delim == 2:
             raise erring.ParseError('Invalid comment start "{0}"; use "{1}" for a line comment, or "{3}<comment>{3}" for a doc comment'.format(comment_delim*2, comment_delim, comment_delim*3), state)
-        else:
-            if state.in_tag:
-                raise erring.ParseError('Doc comments are not allowed in tags', state)
-            if len_delim % 3 != 0 or len_delim > max_delim_length:
-                raise erring.ParseError('Doc comment delims must have lengths that are multiples of 3 and are no longer than {0} characters'.format(max_delim_length), state)
-            delim = line[:len_delim]
-            content_lines, content, line = self._parse_delim_inline('doc comment', delim, line_delim_strip)
-            node = ScalarNode(state, delim=delim, block=False)
-            if self._full_ast:
-                node.raw_val = content_lines
-            node.final_val = content
-            node.resolved = True
-            node.implicit_type = 'doc_comment'
-            state.next_doc_comment = node
-            if bidi:
-                self._bidi_last_scalar_last_line = content_lines[-1]
-                self._bidi_last_scalar_last_lineno = node.last_lineno
-            line = self._parse_line_continue_last_to_next_significant_token(line)
-            if not node.inline and node.at_line_start and node.last_lineno == state.first_lineno:
-                raise erring.ParseError('In non-inline mode, doc comments that start a line cannot be followed immediately by data', node)
-            if line is not None and line[0] in invalid_next_token_set:
-                raise erring.ParseError('Doc comment was never applied to an object', node, state)
-            return line
+        state = self._state
+        if state.in_tag:
+            raise erring.ParseError('Doc comments are not allowed in tags', state)
+        if len_delim % 3 != 0 or len_delim > max_delim_length:
+            raise erring.ParseError('Doc comment delims must have lengths that are multiples of 3 and are no longer than {0} characters'.format(max_delim_length), state)
+        delim = line[:len_delim]
+        content_lines, content, line = self._parse_delim_inline('doc comment', delim, line_strip_delim)
+        node = ScalarNode(state, delim=delim, block=False, implicit_type = 'doc_comment')
+        if self._full_ast:
+            node.raw_val = content_lines
+        node.final_val = content
+        node.resolved = True
+        state.next_doc_comment = node
+        if self._bidi_rtl:
+            self._bidi_rtl_last_scalar_last_line = content_lines[-1]
+            self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
+        line = self._parse_line_continue_last_to_next_significant_token(line)
+        if not node.inline and node.at_line_start and node.last_lineno == state.first_lineno:
+            raise erring.ParseError('In non-inline mode, doc comments that start a line cannot be followed immediately by data', node)
+        if line is not None and line[:1] in invalid_next_token_set and not (line[:1] == block_prefix and line[1:2] != comment_delim):
+            raise erring.ParseError('Doc comment was never applied to an object', node, state)
+        return line
 
 
     def _parse_token_literal_string_delim(self, line,
-                                          literal_string_delim=LITERAL_STRING_DELIM,
                                           max_delim_length=MAX_DELIM_LENGTH,
                                           ScalarNode=ScalarNode,
                                           assign_key_val=ASSIGN_KEY_VAL):
         '''
         Parse inline literal string.
         '''
-        bidi = self._bidi
-        if bidi:
-            self._check_bidi()
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
         state = self._state
-        line_delim_strip = line.lstrip(literal_string_delim)
-        len_delim = len(line) - len(line_delim_strip)
+        line_strip_delim = line.lstrip(line[0])
+        len_delim = len(line) - len(line_strip_delim)
         if len_delim > 3 and (len_delim % 3 != 0 or len_delim > max_delim_length):
             raise erring.ParseError('Literal string delims must have lengths of 1 or 2, or multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
         delim = line[:len_delim]
-        content_lines, content, line = self._parse_delim_inline('literal string', delim, line_delim_strip)
-        node = ScalarNode(state, delim=delim, block=False)
+        content_lines, content, line = self._parse_delim_inline('literal string', delim, line_strip_delim)
+        node = ScalarNode(state, delim=delim, block=False, implicit_type = 'literal_string')
         if self._full_ast:
             node.raw_val = content_lines
         node.final_val = content
         node.resolved = True
-        node.implicit_type = 'literal_string'
-        if bidi:
-            self._bidi_last_scalar_last_line = content_lines[-1]
-            self._bidi_last_scalar_last_lineno = node.last_lineno
+        if self._bidi_rtl:
+            self._bidi_rtl_last_scalar_last_line = content_lines[-1]
+            self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
         line = self._parse_line_continue_last_to_next_significant_token(line)
         if line is not None and line[:1] == assign_key_val:
-            if not state.inline and node.last_lineno != state.first_lineno:
+            if state.inline:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.IndentationError(state)
+            elif node.last_lineno != state.first_lineno:
                 raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
             self._ast.append_scalar_key(node)
-            line = self._parse_line_continue_last(line[1:])
-        else:
-            self._ast.append_scalar_val(node)
+            return self._parse_line_continue_last(line[1:])
+        self._ast.append_scalar_val(node)
         return line
-        # #### check for default ignorables by delimiters?
+
+
+    def _parse_token_escaped_string(self, line,
+                                    max_delim_length=MAX_DELIM_LENGTH,
+                                    ScalarNode=ScalarNode,
+                                    assign_key_val=ASSIGN_KEY_VAL):
+        '''
+        Parse inline escaped string (single or double quote).
+        '''
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
+        state = self._state
+        line_strip_delim = line.lstrip(line[0])
+        len_delim = len(line) - len(line_strip_delim)
+        if len_delim == 2:
+            delim = ''
+            content_lines = ['']
+            content = ''
+            line = line[2:]
+            state.last_column += 1
+        else:
+            if len_delim > 3 and (len_delim % 3 != 0 or len_delim > max_delim_length):
+                raise erring.ParseError('Escaped string delims must have lengths of 1 or 2, or multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
+            delim = line[:len_delim]
+            content_lines, content, line = self._parse_delim_inline('escaped string', delim, line_strip_delim)
+        node = ScalarNode(state, delim=delim, block=False, implicit_type = 'escaped_string')
+        if self._full_ast:
+            node.raw_val = content_lines
+        try:
+            content_esc = self.unescape_unicode(content)
+        except Exception as e:
+            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+        node.final_val = content_esc
+        node.resolved = True
+        if self._bidi_rtl:
+            self._bidi_rtl_last_scalar_last_line = content_lines[-1]
+            self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
+        line = self._parse_line_continue_last_to_next_significant_token(line)
+        if line is not None and line[:1] == assign_key_val:
+            if state.inline:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.IndentationError(state)
+            elif node.last_lineno != state.first_lineno:
+                raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
+            self._ast.append_scalar_key(node)
+            return self._parse_line_continue_last(line[1:])
+        self._ast.append_scalar_val(node)
+        return line
+
+
+    def _parse_token_block_prefix(self, line,
+                                  max_delim_length=MAX_DELIM_LENGTH,
+                                  ScalarNode=ScalarNode,
+                                  assign_key_val=ASSIGN_KEY_VAL,
+                                  whitespace=INDENT,
+                                  unicode_whitespace_set=UNICODE_WHITESPACE_SET,
+                                  block_prefix=BLOCK_PREFIX,
+                                  block_suffix=BLOCK_SUFFIX,
+                                  block_delim_set=BLOCK_DELIM_SET,
+                                  comment_delim=COMMENT_DELIM,
+                                  escaped_string_doublequote_delim=ESCAPED_STRING_DOUBLEQUOTE_DELIM,
+                                  escaped_string_singlequote_delim=ESCAPED_STRING_SINGLEQUOTE_DELIM,
+                                  literal_string_delim=LITERAL_STRING_DELIM,
+                                  newline=NEWLINE):
+        '''
+        Parse a block quoted string or doc comment.
+        '''
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
+        state = self._state
+        delim_code_point = line[1:2]
+        if delim_code_point not in block_delim_set:
+            raise erring.ParseError('Invalid block delimiter', state)
+        line_strip_delim = line[1:].lstrip(delim_code_point)
+        # -1 for `|`
+        len_delim = len(line) - len(line_strip_delim) - 1
+        if len_delim < 3 or len_delim % 3 != 0 or len_delim > max_delim_length:
+            raise erring.ParseError('Block delims must have lengths that are multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
+        if line_strip_delim.lstrip(whitespace) != '':
+            state.last_column += len_delim
+            raise erring.ParseError('An opening block delim must not be followed by anything; block content does not start until the next line', state)
+        delim = delim_code_point*len_delim
+        closing_delim_re, group = self._closing_delim_re_dict[delim]
+        end_block_delim = block_prefix + delim + block_suffix
+        content_lines = []
+        indent = state.indent
+        while True:
+            line = self._parse_line_get_next(line)
+            if line is None:
+                raise erring.ParseError('Unterminated block', state)
+            if not line.startswith(indent) and line.lstrip(whitespace) != '':
+                raise erring.IndentationError(state)
+            if delim in line:
+                m = closing_delim_re.search(line)
+                if m is not None:
+                    line_strip_ws = line.lstrip(whitespace)
+                    if not line_strip_ws.startswith(end_block_delim):
+                        raise erring.ParseError('Invalid delim sequence in body of block')
+                    continuation_indent = line[:len(line)-len(line_strip_ws)]
+                    len_continuation_indent = len(continuation_indent)
+                    state.continuation_indent = continuation_indent
+                    line = line_strip_ws[len(end_block_delim):]
+                    state.last_column += len_continuation_indent + len(end_block_delim) - 1
+                    if state.at_line_start and indent != continuation_indent:
+                        raise erring.ParseError('Inconsistent block delim indentation', state)
+                    if continuation_indent == '':
+                        content_lines_dedent = content_lines
+                    else:
+                        content_lines_dedent = []
+                        for lineno, c_line in enumerate(content_lines):
+                            if c_line.startswith(continuation_indent):
+                                content_lines_dedent.append(c_line[len_continuation_indent:])
+                            elif c_line.lstrip(whitespace) == '':
+                                content_lines.append('')
+                            else:
+                                raise erring.ParseError('Incorrect indentation relative to block delim indentation on line {0}'.format(state.first_lineno+lineno+1), state)
+                    break
+            content_lines.append(line)
+        # Note that there's no need to reset the bidi_rtl state, given the
+        # contents of the final delimiter.
+        # Modify last line by adding `\n`, then join lines with `\n`, then
+        # put last line back to original value, to avoid having to modify the
+        # final string by adding an `\n` at the end
+        content_lines_dedent[-1] = content_lines_dedent[-1] + newline
+        content = newline.join(content_lines_dedent)
+        content_lines_dedent[-1] = content_lines_dedent[-1][:-1]
+        if delim_code_point == literal_string_delim:
+            node = ScalarNode(state, delim=delim, block=True, implicit_type = 'literal_string')
+            if self._full_ast:
+                node.raw_val = content_lines_dedent
+            node.final_val = content
+            node.resolved = True
+            line = self._parse_line_continue_last_to_next_significant_token(line)
+            if line is not None and line[:1] == assign_key_val:
+                if not state.inline and node.last_lineno != state.first_lineno:
+                    raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
+                self._ast.append_scalar_key(node)
+                return self._parse_line_continue_last(line[1:])
+            self._ast.append_scalar_val(node)
+            return line
+        if delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_singlequote_delim:
+            node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
+            if self._full_ast:
+                node.raw_val = content_lines_dedent
+            try:
+                content_esc = self.unescape_unicode(content)
+            except Exception as e:
+                raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+            node.final_val = content_esc
+            node.resolved = True
+            line = self._parse_line_continue_last_to_next_significant_token(line)
+            if line is not None and line[:1] == assign_key_val:
+                if state.inline:
+                    if not state.indent.startswith(state.inline_indent):
+                        raise erring.IndentationError(state)
+                elif node.last_lineno != state.first_lineno:
+                    raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
+                self._ast.append_scalar_key(node)
+                return self._parse_line_continue_last(line[1:])
+            self._ast.append_scalar_val(node)
+            return line
+        node = ScalarNode(state, delim=delim, block=True, implicit_type = 'doc_comment')
+        if self._full_ast:
+            node.raw_val = content_lines_dedent
+        node.final_val = content
+        node.resolved = True
+        state.next_doc_comment = node
+        line = self._parse_line_continue_last_to_next_significant_token(line)
+        if not node.inline and node.at_line_start and node.last_lineno == state.first_lineno:
+            raise erring.ParseError('In non-inline mode, the end of a block doc comment cannot be followed immediately by data', node)
+        if line is not None and line[:1] in invalid_next_token_set and not (line[:1] == block_prefix and line[1:2] != comment_delim):
+            raise erring.ParseError('Doc comment was never applied to an object', node, state)
+        return line
+
+
+    def _parse_token_number_or_number_unit(self, line, int=int,
+                                           assign_key_val=ASSIGN_KEY_VAL):
+        '''
+        Parse a number (float, int, etc.) or a number-unit string.
+        '''
+        # No need to update bidi_rtl, since state cannot be modified by
+        # numbers or number-units
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
+        state = self._state
+        m = self._number_or_number_unit_re.match(line)
+        if m is None:
+            raise erring.ParseError('Invalid literal with number-style start')
+        group_name =  m.lastgroup
+        group_type, group_base = group_name.rsplit('_', 1)
+        raw_val = m.group(group_name)
+        state.last_column += m.end(group_name) - 1
+        line = line[m.end():]
+        if group_type == 'number_unit':
+            final_val = raw_val
+            node = ScalarNode(state, implicit_type='number_unit')
+        elif group_type == 'int':
+            cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
+            parser = self._type_data['int'].parser
+            if group_base == '10':
+                final_val = parser(cleaned_val)
+            else:
+                final_val = parser(cleaned_val, int(group_base))
+            node = ScalarNode(state, implicit_type='int', base=group_base)
+        elif group_type == 'float':
+            cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
+            parser = self._type_data['float'].parser
+            if group_base == '10':
+                final_val = parser(cleaned_val)
+            else:
+                final_val = parser.from_hex(cleaned_val)
+            node = ScalarNode(state, implicit_type='int', base=int(group_base))
+        else:
+            raise ValueError
+        if self._full_ast:
+            node.raw_val = raw_val
+        node.final_val = final_val
+        node.resolved = True
+        line = self._parse_line_continue_last_to_next_significant_token(line)
+        if line is not None and line[:1] == assign_key_val:
+            if state.inline:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.IndentationError(state)
+            elif node.last_lineno != state.first_lineno:
+                raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
+            self._ast.append_scalar_key(node)
+            return self._parse_line_continue_last(line[1:])
+        self._ast.append_scalar_val(node)
+        return line
 
 
     def _parse_token_unquoted_string_or_keypath(self, line):
-        raise NotImplementedError
-
-
-    def _parse_token_block_prefix(self, line):
-        raise NotImplementedError
-
-
-    def _parse_token_escaped_string_singlequote_delim(self, line):
-        raise NotImplementedError
-
-
-    def _parse_token_escaped_string_doublequote_delim(self, line):
         raise NotImplementedError
 
 
@@ -950,5 +1064,3 @@ class BespONDecoder(object):
         raise NotImplementedError
 
 
-    def _parse_token_number_or_number_unit(self, line):
-        raise NotImplementedError

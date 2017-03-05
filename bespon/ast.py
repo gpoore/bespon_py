@@ -60,6 +60,14 @@ class Ast(object):
         __nonzero__ = __bool__
 
 
+    def set_root(self):
+        root = astnodes.RootNode(self.state)
+        self.root = root
+        self._unresolved_nodes.append(root)
+        self.pos.check_append_root(root)
+        self.pos = root
+
+
     def append_doc_comment(self, obj):
         state = self.state
         state.next_doc_comment = obj

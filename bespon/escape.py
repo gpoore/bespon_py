@@ -30,8 +30,8 @@ if sys.maxunicode == 0xFFFF:
 # pylint:  enable=W0622
 
 
-ASCII_NEWLINE_SET = set(grammar.LIT_GRAMMAR['ascii_other_newline'])
-UNICODE_NEWLINE_SET = set(grammar.LIT_GRAMMAR['unicode_other_newline'])
+NEWLINE = grammar.LIT_GRAMMAR['newline']
+
 
 
 
@@ -90,31 +90,31 @@ class Escape(object):
         # Regexes for finding code points and bytes that must be escaped.
         # Code points other than invalid literals are put first, since they
         # will typically come up more frequently.
-        pattern_dict = {'ascii_invalid_literal': re_patterns.ASCII_INVALID_LITERAL,
-                        'unicode_invalid_literal': re_patterns.ASCII_INVALID_LITERAL if self.only_ascii else re_patterns.DEFAULT_INVALID_LITERAL,
+        pattern_dict = {'not_valid_literal_ascii': re_patterns.NOT_VALID_LITERAL_ASCII,
+                        'not_valid_literal_unicode': re_patterns.NOT_VALID_LITERAL_ASCII if self.only_ascii else re_patterns.NOT_VALID_LITERAL,
                         'backslash': grammar.RE_GRAMMAR['backslash'],
                         'singlequote': grammar.RE_GRAMMAR['escaped_string_singlequote_delim'],
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
-                        'newline': grammar.RE_GRAMMAR['newline']}
+                        'newline': NEWLINE}
 
-        invalid_literal_or_backslash_singlequote_newline_unicode_re_pattern = '{backslash}|{singlequote}|{newline}|{unicode_invalid_literal}'.format(**pattern_dict)
+        invalid_literal_or_backslash_singlequote_newline_unicode_re_pattern = '{backslash}|{singlequote}|{newline}|{not_valid_literal_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_newline_unicode_re_pattern)
-        invalid_literal_or_backslash_doublequote_newline_unicode_re_pattern = '{backslash}|{doublequote}|{newline}|{unicode_invalid_literal}'.format(**pattern_dict)
+        invalid_literal_or_backslash_doublequote_newline_unicode_re_pattern = '{backslash}|{doublequote}|{newline}|{not_valid_literal_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_newline_unicode_re_pattern)
 
-        invalid_literal_or_backslash_singlequote_unicode_re_pattern = '{backslash}|{singlequote}|{unicode_invalid_literal}'.format(**pattern_dict)
+        invalid_literal_or_backslash_singlequote_unicode_re_pattern = '{backslash}|{singlequote}|{not_valid_literal_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_unicode_re_pattern)
-        invalid_literal_or_backslash_doublequote_unicode_re_pattern = '{backslash}|{doublequote}|{unicode_invalid_literal}'.format(**pattern_dict)
+        invalid_literal_or_backslash_doublequote_unicode_re_pattern = '{backslash}|{doublequote}|{not_valid_literal_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_unicode_re_pattern)
 
-        invalid_literal_or_backslash_singlequote_newline_bytes_re_pattern = '{backslash}|{singlequote}|{newline}|{ascii_invalid_literal}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_singlequote_newline_bytes_re_pattern = '{backslash}|{singlequote}|{newline}|{not_valid_literal_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_singlequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_singlequote_newline_bytes_re_pattern)
-        invalid_literal_or_backslash_doublequote_newline_bytes_re_pattern = '{backslash}|{doublequote}|{newline}|{ascii_invalid_literal}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_doublequote_newline_bytes_re_pattern = '{backslash}|{doublequote}|{newline}|{not_valid_literal_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_newline_bytes_re_pattern)
 
-        invalid_literal_or_backslash_singlequote_bytes_re_pattern = '{backslash}|{singlequote}|{ascii_invalid_literal}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_singlequote_bytes_re_pattern = '{backslash}|{singlequote}|{not_valid_literal_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_singlequote_bytes_re = re.compile(invalid_literal_or_backslash_singlequote_bytes_re_pattern)
-        invalid_literal_or_backslash_doublequote_bytes_re_pattern = '{backslash}|{doublequote}|{ascii_invalid_literal}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_doublequote_bytes_re_pattern = '{backslash}|{doublequote}|{not_valid_literal_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_bytes_re_pattern)
 
 
@@ -229,13 +229,17 @@ class Unescape(object):
         self._unescape_bytes_dict.update(grammar.SHORT_BACKSLASH_UNESCAPES)
 
         # Regexes for finding escaped code points and bytes
-        self._unescape_unicode_re = re.compile(grammar.RE_GRAMMAR['unicode_escape'])
-        self._unescape_bytes_re = re.compile(grammar.RE_GRAMMAR['ascii_escape'].encode('ascii'))
+        unescape_unicode = grammar.RE_GRAMMAR['unicode_escape']
+        unescape_bytes = grammar.RE_GRAMMAR['bytes_escape']
+        newline = NEWLINE
+        self._unescape_unicode_re = re.compile(unescape_unicode)
+        self._unescape_unicode_or_replace_newline_re = re.compile('{0}|{1}'.format(newline, unescape_unicode))
+        self._unescape_bytes_re = re.compile(unescape_bytes.encode('ascii'))
+        self._unescape_bytes_or_replace_newline_re = re.compile('{0}|{1}'.format(newline, unescape_bytes).encode('ascii'))
 
 
     @staticmethod
-    def _unescape_unicode_char(s, int=int, chr=chr,
-                               unicode_newline_set=UNICODE_NEWLINE_SET):
+    def _unescape_unicode_char(s, int=int, chr=chr, newline=NEWLINE):
         '''
         Given a string in `\\xHH`, `\\u{H....H}`, `\\uHHHH`, or `\\UHHHHHHHH`
         form, return the Unicode code point corresponding to the hex value of
@@ -245,17 +249,16 @@ class Unescape(object):
 
         Arguments to this function are prefiltered by a regex into the
         allowed forms.  Before this function is invoked, all known short
-        (2-letter) escape sequences have already been filtered out.  Any
-        remaining short escapes `\\<char>` at this point are unrecognized.
-        Any newline substitutions have also been performed, so `<newline>`
-        may be any valid unicode newline.
+        (2-letter) escape sequences and any newline replacements have already
+        been filtered out.  Any remaining short escapes `\\<char>` at this
+        point are unrecognized.
         '''
         try:
             v = chr(int(s[2:].strip('{}'), 16))
         except ValueError:
             # Check for the pattern `\\<spaces><newline>`.
             # Given regex, no need to worry about multiple newlines.
-            if s[-1] in unicode_newline_set:
+            if s[-1] == newline:
                 v = ''
             else:
                 if 0x21 <= ord(s[-1]) <= 0x7E:
@@ -267,8 +270,7 @@ class Unescape(object):
 
 
     @staticmethod
-    def _unescape_byte(b, int=int, chr=chr,
-                       ascii_newline_set=ASCII_NEWLINE_SET):
+    def _unescape_byte(b, int=int, chr=chr, newline=NEWLINE.encode('latin1')):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
         to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return
@@ -277,14 +279,15 @@ class Unescape(object):
 
         Arguments to this function are prefiltered by a regex into the allowed
         hex escape forms.  Before this function is invoked, all known short
-        (2-letter) escape sequences have already been filtered out.  Any
-        remaining short escapes `\\<byte>` at this point are unrecognized.
+        (2-letter) escape sequences and any newline replacements have already
+        been filtered out.  Any remaining short escapes `\\<byte>` at this
+        point are unrecognized.
         '''
         try:
             v = chr(int(b[2:], 16)).encode('latin1')
         except ValueError:
             # Make sure we have the full pattern `\\<spaces><newline>`
-            if b[-1] in ascii_newline_set:
+            if b[-1] == newline:
                 v = b''
             else:
                 b_esc = b.decode('latin1')
@@ -294,19 +297,27 @@ class Unescape(object):
         return v
 
 
-    def unescape_unicode(self, s):
+    def unescape_unicode(self, s, newline=None, _default_newline=NEWLINE):
         '''
         Within a string, replace all backslash escapes with the
         corresponding code points.
         '''
         d = self._unescape_unicode_dict
-        return self._unescape_unicode_re.sub(lambda m: d[m.group(0)], s)
+        if newline is None or newline == _default_newline:
+            return self._unescape_unicode_re.sub(lambda m: d[m.group(0)], s)
+        else:
+            d[_default_newline] = newline
+            return self._unescape_unicode_or_replace_newline_re.sub(lambda m: d[m.group(0)], s)
 
 
-    def unescape_bytes(self, b):
+    def unescape_bytes(self, b, newline=None, _default_newline=NEWLINE.encode('latin1')):
         '''
         Within a binary string, replace all backslash escapes with the
         corresponding bytes.
         '''
         d = self._unescape_bytes_dict
-        return self._unescape_bytes_re.sub(lambda m: d[m.group(0)], b)
+        if newline is None or newline == _default_newline:
+            return self._unescape_bytes_re.sub(lambda m: d[m.group(0)], b)
+        else:
+            d[_default_newline] = newline
+            return self._unescape_bytes_or_replace_newline_re.sub(lambda m: d[m.group(0)], b)

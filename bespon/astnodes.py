@@ -247,13 +247,14 @@ class ScalarNode(object):
     basetype = 'scalar'
     __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
-                  'raw_val'])
+                  'raw_val', 'base'])
 
     def __init__(self, state, init_common=_init_common,
-                 delim=None, block=None, implicit_type=None):
+                 delim=None, block=None, implicit_type=None, base=None):
         self.delim = delim
         self.block = block
         self.implicit_type = implicit_type
+        self.base = base
         self.continuation_indent = state.continuation_indent
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
@@ -269,7 +270,7 @@ class ScalarNode(object):
         # When a ScalarNode object is used as a dict key, allow access to
         # the value through the original object, another ScalarNode object
         # with the save `.final_val`, or the literal scalar value.
-        return other == self.final_val or (type(other) is type(self) and other.final_val == self.final_val)
+        return other == self.final_val or other.final_val == self.final_val
 
 
 
