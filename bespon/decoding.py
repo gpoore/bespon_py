@@ -143,7 +143,6 @@ class BespONDecoder(object):
         # Process args
         if args:
             raise TypeError('Explicit keyword arguments are required')
-
         only_ascii = kwargs.pop('only_ascii', False)
         unquoted_strings = kwargs.pop('unquoted_strings', True)
         unquoted_unicode = kwargs.pop('unquoted_unicode', False)
@@ -182,8 +181,8 @@ class BespONDecoder(object):
         # Create dict of token-based parsing functions
         #
         # In general, having a valid starting code point for an unquoted
-        # string or keypath is a necessary but not sufficient condition for
-        # finding a valid string or keypath, due to the possibility of a
+        # string or key path is a necessary but not sufficient condition for
+        # finding a valid string or key path, due to the possibility of a
         # leading underscore.  It is simplest always to attempt a match and
         # then perform a check for success, rather than to try to
         # micro-optimize out the underscore case so that a check isn't usually
@@ -194,7 +193,7 @@ class BespONDecoder(object):
         # surrogate pairs under narrow Python builds.  The high surrogates
         # will simply invoke an attempt at a match, which will fail for
         # invalid code points.
-        parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_keypath)
+        parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_key_path)
         token_functions = {'comment_delim': self._parse_token_comment_delim,
                            'assign_key_val': self._parse_token_assign_key_val_invalid,
                            'open_noninline_list': self._parse_token_open_noninline_list,
@@ -247,7 +246,7 @@ class BespONDecoder(object):
             if c_0 == escaped_string_singlequote_delim or c_0 == escaped_string_doublequote_delim:
                 group = 1
                 if delim == escaped_string_singlequote_delim or delim == escaped_string_doublequote_delim:
-                    pattern = r'(?:\\.|[^{delim_char}\\]+)*({delim_char})'.format(delim_char=re.escape(c_0))
+                    pattern = r'^(?:\\.|[^{delim_char}\\])*({delim_char})'.format(delim_char=re.escape(c_0))
                 else:
                     # The pattern here is a bit complicated to deal with the
                     # possibility of escapes and of runs of the delimiter that
@@ -263,8 +262,8 @@ class BespONDecoder(object):
                     # don't seem worthwhile.
                     n = len(delim)
                     pattern = r'''
-                               (?: \\. | [^{delim_char}\\]+ | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
-                               ({delim_char}{{{n}}}(?!{delim_char}))
+                               ^(?: \\. | [^{delim_char}\\] | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
+                                ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
             elif c_0 == literal_string_delim or (c_0 == comment_delim and len(delim) >= 3):
                 group = 0
@@ -296,21 +295,31 @@ class BespONDecoder(object):
             '''.replace('\x20', '').replace('\n', '').format(**grammar.RE_GRAMMAR)
         self._number_or_number_unit_re = re.compile(number_or_number_unit_pattern)
 
-        # Unquoted strings and keypaths.  As with the number regex, it would
+        # Unquoted strings and key paths.  As with the number regex, it would
         # probably be possible to optimize to reduce backtracking.
-        unquoted_string_or_keypath_pattern = '''
+        unquoted_string_or_key_path_pattern = '''
             (?P<key_path>{key_path}) |
             (?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?
             '''.replace('\x20', '').replace('\n', '')
-        self._unquoted_string_or_keypath_ascii_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                         key_path=grammar.RE_GRAMMAR['key_path_ascii'],
-                                                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
-        self._unquoted_string_or_keypath_below_u0590_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                               key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
-                                                                                                               unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
-        self._unquoted_string_or_keypath_unicode_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                           key_path=grammar.RE_GRAMMAR['key_path_unicode'],
-                                                                                                           unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
+        unquoted_string_pattern = '(?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?'
+        self._unquoted_string_or_key_path_ascii_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                           key_path=grammar.RE_GRAMMAR['key_path_ascii'],
+                                                                                                           unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
+        self._unquoted_string_ascii_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                   key_path=grammar.RE_GRAMMAR['key_path_ascii'],
+                                                                                   unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
+        self._unquoted_string_or_key_path_below_u0590_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                                 key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
+                                                                                                                 unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
+        self._unquoted_string_below_u0590_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                         key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
+                                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
+        self._unquoted_string_or_key_path_unicode_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                             key_path=grammar.RE_GRAMMAR['key_path_unicode'],
+                                                                                                             unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
+        self._unquoted_string_unicode_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                     key_path=grammar.RE_GRAMMAR['key_path_unicode'],
+                                                                                     unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
 
 
     @staticmethod
@@ -366,7 +375,8 @@ class BespONDecoder(object):
         self._bidi_rtl = False
         self._bidi_rtl_last_scalar_last_lineno = 0
         self._bidi_rtl_last_scalar_last_line = ''
-        self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_ascii_re
+        self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_ascii_re
+        self._unquoted_string_re = self._unquoted_string_ascii_re
 
         if normalized_string[:1] == bom:
             bom_offset = 1
@@ -380,13 +390,15 @@ class BespONDecoder(object):
             self._traceback_not_valid_literal(normalized_string, m_not_valid_ascii.start())
         else:
             self._pure_ascii = False
-            self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_below_u0590_re
+            self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_below_u0590_re
+            self._unquoted_string_re = self._unquoted_string_below_u0590_re
             m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(normalized_string, m_not_valid_ascii.start())
             if m_not_valid_below_u0590 is None:
                 return
             else:
                 self._only_below_u0590 = False
-                self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_unicode_re
+                self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_unicode_re
+                self._unquoted_string_re = self._unquoted_string_unicode_re
                 m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(normalized_string, m_not_valid_below_u0590.start())
                 if m_bidi_rtl_or_not_valid_unicode is None:
                     return
@@ -503,8 +515,8 @@ class BespONDecoder(object):
             state.first_column = 1
             state.last_column = 1
             return line
-        line_strip_ws = line.lstrip(whitespace)
-        indent_len = len(line) - len(line_strip_ws)
+        line_lstrip_ws = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_lstrip_ws)
         indent = line[:indent_len]
         state.indent = indent
         state.continuation_indent = indent
@@ -512,7 +524,7 @@ class BespONDecoder(object):
         column = indent_len + 1
         state.first_column = column
         state.last_column = column
-        return line_strip_ws
+        return line_lstrip_ws
 
 
     def _parse_line_get_next(self, line, next=next):
@@ -545,8 +557,8 @@ class BespONDecoder(object):
             state.first_column = 1
             state.last_column = 1
             return line
-        line_strip_ws = line.lstrip(whitespace)
-        indent_len = len(line) - len(line_strip_ws)
+        line_lstrip_ws = line.lstrip(whitespace)
+        indent_len = len(line) - len(line_lstrip_ws)
         indent = line[:indent_len]
         state.indent = indent
         state.continuation_indent = indent
@@ -554,7 +566,7 @@ class BespONDecoder(object):
         column = indent_len + 1
         state.first_column = column
         state.last_column = column
-        return line_strip_ws
+        return line_lstrip_ws
 
 
     def _parse_line_continue_last(self, line, at_line_start=False,
@@ -571,16 +583,16 @@ class BespONDecoder(object):
             state.first_column += 1
             state.last_column += 1
             return line
-        line_strip_ws = line.lstrip(whitespace)
-        if line_strip_ws == '':
+        line_lstrip_ws = line.lstrip(whitespace)
+        if line_lstrip_ws == '':
             return self._parse_line_goto_next(line)
         state.first_lineno = state.last_lineno
         state.indent = state.continuation_indent
         state.at_line_start = at_line_start
-        column = state.last_column + 1 + len(line) - len(line_strip_ws)
+        column = state.last_column + 1 + len(line) - len(line_lstrip_ws)
         state.first_column = column
         state.last_column = column
-        return line_strip_ws
+        return line_lstrip_ws
 
 
     def _parse_line_continue_last_to_next_significant_token(self, line, at_line_start=False,
@@ -599,9 +611,9 @@ class BespONDecoder(object):
             state.first_column = column
             state.last_column = column
             return line
-        line_strip_ws = line.lstrip(whitespace)
-        if line_strip_ws == '':
-            line = self._parse_line_goto_next(line_strip_ws)
+        line_lstrip_ws = line.lstrip(whitespace)
+        if line_lstrip_ws == '':
+            line = self._parse_line_goto_next(line_lstrip_ws)
             if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                 while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                     if line == '':
@@ -612,11 +624,11 @@ class BespONDecoder(object):
         state.first_lineno = state.last_lineno
         state.indent = state.continuation_indent
         state.at_line_start = at_line_start
-        column = state.last_column + 1 + len(line) - len(line_strip_ws)
+        column = state.last_column + 1 + len(line) - len(line_lstrip_ws)
         state.first_column = column
         state.last_column = column
-        if line_strip_ws[:1] == comment_delim and line_strip_ws[1:2] != comment_delim:
-            line = self._parse_token_line_comment(line_strip_ws)
+        if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
+            line = self._parse_token_line_comment(line_lstrip_ws)
             if line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                 while line is not None and (line == '' or (line[:1] == comment_delim and line[1:2] != comment_delim)):
                     if line == '':
@@ -624,7 +636,7 @@ class BespONDecoder(object):
                     else:
                         line = self._parse_token_line_comment(line)
             return line
-        return line_strip_ws
+        return line_lstrip_ws
 
 
     def _check_bidi_rtl(self):
@@ -644,16 +656,16 @@ class BespONDecoder(object):
                                          open_noninline_list=OPEN_NONINLINE_LIST,
                                          path_separator=PATH_SEPARATOR):
         '''
-        Open a non-inline list, or start a keypath that has a list as its
+        Open a non-inline list, or start a key path that has a list as its
         first element.
         '''
         next_code_point = line[1:2]
         if next_code_point == open_noninline_list:
             raise erring.ParseError('Invalid double list opening "{0}"'.format(line[:2]), self._state)
         if next_code_point == path_separator:
-            return self._parse_token_unquoted_string_or_keypath(line)
+            return self._parse_token_unquoted_string_or_key_path(line)
         self._ast.open_noninline_list()
-        return self._parse_line_continue_last(line, at_line_start=True)
+        return self._parse_line_start_last(self._state.indent + '\x20' + line[1:])
 
 
     def _parse_token_start_inline_dict(self, line):
@@ -724,24 +736,25 @@ class BespONDecoder(object):
         '''
         state = self._state
         closing_delim_re, group = self._closing_delim_re_dict[delim]
-        m = closing_delim_re.search(line)
-        if m is not None:
-            content = line[:m.start(group)]
-            line = line[m.end(group):]
-            state.last_column += 2*len(delim) - 1 + len(content)
-            return ([content], content, line)
+        if delim in line:
+            m = closing_delim_re.search(line)
+            if m is not None:
+                content = line[:m.start(group)]
+                line = line[m.end(group):]
+                state.last_column += 2*len(delim) - 1 + len(content)
+                return ([content], content, line)
         content_lines = []
         content_lines.append(line)
         indent = state.indent
         line = self._parse_line_get_next(line)
         if line is None:
             raise erring.ParseError('Unterminated {0}'.format(name), state)
-        line_strip_ws = line.lstrip(whitespace)
-        continuation_indent = line[:len(line)-len(line_strip_ws)]
+        line_lstrip_ws = line.lstrip(whitespace)
+        continuation_indent = line[:len(line)-len(line_lstrip_ws)]
         state.continuation_indent = continuation_indent
         if not continuation_indent.startswith(indent):
             raise erring.IndentationError(state)
-        line = line_strip_ws
+        line = line_lstrip_ws
         while True:
             if line == '':
                 raise erring.ParseError('Unterminated {0}'.format(name), state)
@@ -836,8 +849,8 @@ class BespONDecoder(object):
         AST based on what the lookahead reveals.
         '''
         state = self._state
-        line_strip_ws = line.lstrip(whitespace)
-        if line_strip_ws == '':
+        line_lstrip_ws = line.lstrip(whitespace)
+        if line_lstrip_ws == '':
             if not state.inline:
                 self._ast.append_scalar_val(node)
                 return self._parse_line_goto_next(line)
@@ -853,15 +866,15 @@ class BespONDecoder(object):
                 return self._parse_line_continue_last(line[1:])
             self._ast.append_scalar_val(node)
             return line
-        if line_strip_ws[:1] == assign_key_val:
+        if line_lstrip_ws[:1] == assign_key_val:
             self._ast.append_scalar_key(node)
-            state.last_column += 1 + len(line) - len(line_strip_ws)
-            return self._parse_line_continue_last(line_strip_ws[1:])
-        if line_strip_ws[:1] not in scalar_valid_next_token_current_line_set:
+            state.last_column += 1 + len(line) - len(line_lstrip_ws)
+            return self._parse_line_continue_last(line_lstrip_ws[1:])
+        if line_lstrip_ws[:1] not in scalar_valid_next_token_current_line_set:
             raise erring.ParseError('Unexpected token after end of scalar object', state)
         self._ast.append_scalar_val(node)
-        state.last_column += len(line) - len(line_strip_ws)
-        return self._parse_line_continue_last(line_strip_ws)
+        state.last_column += len(line) - len(line_lstrip_ws)
+        return self._parse_line_continue_last(line_lstrip_ws)
 
 
     def _parse_token_literal_string_delim(self, line,
@@ -902,7 +915,7 @@ class BespONDecoder(object):
         line_strip_delim = line.lstrip(line[0])
         len_delim = len(line) - len(line_strip_delim)
         if len_delim == 2:
-            delim = ''
+            delim = line[0]
             content_lines = ['']
             content = ''
             line = line[2:]
@@ -915,10 +928,13 @@ class BespONDecoder(object):
         node = ScalarNode(state, delim=delim, block=False, implicit_type = 'escaped_string')
         if self._full_ast:
             node.raw_val = content_lines
-        try:
-            content_esc = self.unescape_unicode(content)
-        except Exception as e:
-            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+        if '\\' not in content:
+            content_esc = content
+        else:
+            try:
+                content_esc = self.unescape_unicode(content)
+            except Exception as e:
+                raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
         node.final_val = content_esc
         node.resolved = True
         if self._bidi_rtl:
@@ -971,13 +987,13 @@ class BespONDecoder(object):
             if delim in line:
                 m = closing_delim_re.search(line)
                 if m is not None:
-                    line_strip_ws = line.lstrip(whitespace)
-                    if not line_strip_ws.startswith(end_block_delim):
+                    line_lstrip_ws = line.lstrip(whitespace)
+                    if not line_lstrip_ws.startswith(end_block_delim):
                         raise erring.ParseError('Invalid delim sequence in body of block')
-                    continuation_indent = line[:len(line)-len(line_strip_ws)]
+                    continuation_indent = line[:len(line)-len(line_lstrip_ws)]
                     len_continuation_indent = len(continuation_indent)
                     state.continuation_indent = continuation_indent
-                    line = line_strip_ws[len(end_block_delim):]
+                    line = line_lstrip_ws[len(end_block_delim):]
                     state.last_column += len_continuation_indent + len(end_block_delim) - 1
                     if state.at_line_start and indent != continuation_indent:
                         raise erring.ParseError('Inconsistent block delim indentation', state)
@@ -1013,10 +1029,13 @@ class BespONDecoder(object):
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
             if self._full_ast:
                 node.raw_val = content_lines_dedent
-            try:
-                content_esc = self.unescape_unicode(content)
-            except Exception as e:
-                raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+            if '\\' not in content:
+                content_esc = content
+            else:
+                try:
+                    content_esc = self.unescape_unicode(content)
+                except Exception as e:
+                    raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
             node.final_val = content_esc
             node.resolved = True
             return self._scalar_node_lookahead_append(node, line)
@@ -1079,12 +1098,16 @@ class BespONDecoder(object):
         return self._scalar_node_lookahead_append(node, line)
 
 
-    def _parse_token_unquoted_string_or_keypath(self, line, ScalarNode=ScalarNode):
+    def _parse_token_unquoted_string_or_key_path(self, line,
+                                                whitespace=INDENT,
+                                                ScalarNode=ScalarNode):
         '''
         Parse an unquoted key, a key path, or an unquoted multi-word string.
         '''
+        if self._bidi_rtl:
+            self._check_bidi_rtl()
         state = self._state
-        m = self._unquoted_string_or_keypath_re.match(line)
+        m = self._unquoted_string_or_key_path_re.match(line)
         if m is None:
             raise erring.ParseError('Invalid unquoted key, key path, or unquoted string', state)
         if m.lastgroup == 'unquoted_string':
@@ -1103,11 +1126,57 @@ class BespONDecoder(object):
             if implicit_type == 'unquoted_key':
                 return self._scalar_node_lookahead_append(node, line)
             self._ast.append_scalar_val(node)
+            if self._bidi_rtl:
+                self._bidi_rtl_last_scalar_last_line = raw_val
+                self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line)
-        if m.lastgroup == 'keypath':
+        if m.lastgroup == 'key_path':
             raise NotImplementedError
-        raise NotImplementedError
+        content_lines = []
+        line_rstrip_ws = line.rstrip(whitespace)
+        state.last_column += len(line_rstrip_ws) - 1
+        node = ScalarNode(state, implicit_type='unquoted_string')
+        content_lines.append(line_rstrip_ws)
+        indent = state.indent
+        line = self._parse_line_get_next(line)
+        if line is not None:
+            line_lstrip_ws = line.lstrip(whitespace)
+            continuation_indent = line[:len(line)-len(line_lstrip_ws)]
+            if continuation_indent.startswith(indent) and (state.at_line_start or len(continuation_indent) > len(indent)):
+                state.continuation_indent = continuation_indent
+                while True:
+                    m = self._unquoted_string_re.match(line, len(continuation_indent))
+                    if m is None:
+                        line = self._parse_line_start_last(line)
+                        break
+                    if m.lastgroup == 'unquoted_string':
+                        content_lines.append(line[m.start():m.end()])
+                        column = m.end() - 1
+                        state.last_column = column
+                        node.last_lineno = state.last_lineno
+                        node.last_column = column
+                        node.continuation_indent = continuation_indent
+                        line = self._parse_line_continue_last(line[m.end():])
+                        break
+                    line_strip_ws = line.strip(whitespace)
+                    content_lines.append(line_strip_ws)
+                    line = self._parse_line_get_next(line)
+                    if line is None:
+                        line = self._parse_line_start_last(line)
+                        break
+                    if not line.startswith(continuation_indent):
+                        line = self._parse_line_start_last(line)
+                        break
+        if self._full_ast:
+            node.raw_val = content_lines
+        node.final_val = '\x20'.join(content_lines)
+        node.resolved = True
+        self._ast.append_scalar_val(node)
+        return line
 
+
+        #if line_lstrip_ws[:1] not in scalar_valid_next_token_current_line_set:
+        #    raise erring.ParseError('Unexpected token after end of scalar object', state)
 
     def _parse_token_alias_prefix(self, line):
         raise NotImplementedError
