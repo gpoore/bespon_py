@@ -105,6 +105,13 @@ _RAW_LIT_SPECIAL = [# Special code points
                     # key.
                     ('doc_comment_invalid_next_token', '{block_prefix}{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
                     ('tag_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
+                    # Potentially valid tokens following a scalar object.
+                    # Most of these are only valid in inline mode, but there
+                    # doesn't necessarily need to be a check for that, since
+                    # these tokens themselves check their context.  This
+                    # allows a scalar to lookahead and catch errors with a
+                    # better error message than would otherwise be possible.
+                    ('scalar_valid_next_token_current_line', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
                     # Numbers
                     ('number_or_number_unit_start', '0123456789+-')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
@@ -187,10 +194,8 @@ _RAW_RE_TYPE = [# None type
                 # Floats
                 ('dec_exponent', '[eE]{sign}?{dec_digits_underscores}'),
                 ('decimal_point', '\\.'),
-                ('dec_float', '''
-                              {opt_sign_indent}(?:{zero}|{nonzero_dec_digit}{dec_digit}*(?:_{dec_digit}+)*)
-                                  (?:{decimal_point}{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})
-                              '''.replace('\x20', '').replace('\n', '')),
+                ('dec_fraction_and_or_exponent', '(?:{decimal_point}{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})'),
+                ('dec_float', '{dec_integer}{dec_fraction_and_or_exponent}'),
                 ('hex_exponent', '[pP]{sign}?{dec_digits_underscores}'),
                 ('hex_float', '''
                               {opt_sign_indent}0x_?
@@ -213,9 +218,9 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_key_ascii', '_*{unquoted_start_ascii}{unquoted_continue_ascii}*'),
                 ('unquoted_key_below_u0590', '_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
                 ('unquoted_key_unicode', '_*{unquoted_start_unicode}{unquoted_continue_unicode}*'),
-                ('unquoted_string_ascii', '{unquoted_key_ascii}(?:{space}{unquoted_continue_ascii}+)+'),
-                ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}(?:{space}{unquoted_continue_below_u0590}+)+'),
-                ('unquoted_string_unicode', '{unquoted_key_unicode}(?:{space}{unquoted_continue_unicode}+)+'),
+                ('unquoted_string_ascii', '{unquoted_key_ascii}(?:{space}{unquoted_continue_ascii}+)*'),
+                ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}(?:{space}{unquoted_continue_below_u0590}+)*'),
+                ('unquoted_string_unicode', '{unquoted_key_unicode}(?:{space}{unquoted_continue_unicode}+)*'),
                 ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
                 ('unquoted_unit_ascii', '''
                                         (?: [A-NP-WY-Za-km-wy-z][A-Za-z]+ |

@@ -62,6 +62,7 @@ BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
                        ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM])
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 NUMBER_OR_NUMBER_UNIT_START = grammar.LIT_GRAMMAR['number_or_number_unit_start']
+SCALAR_VALID_NEXT_TOKEN_CURRENT_LINE_SET = set(grammar.LIT_GRAMMAR['scalar_valid_next_token_current_line'])
 
 
 
@@ -195,6 +196,7 @@ class BespONDecoder(object):
         # invalid code points.
         parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_keypath)
         token_functions = {'comment_delim': self._parse_token_comment_delim,
+                           'assign_key_val': self._parse_token_assign_key_val_invalid,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
                            'end_inline_dict': self._parse_token_end_inline_dict,
@@ -276,19 +278,39 @@ class BespONDecoder(object):
             return (re.compile(pattern), group)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
-        # Number and number-unit types
-        # Order in regex is important; need to try float before int for a
-        # given base, etc., otherwise an exponent could be missed.
-        # The regex could be optimized slightly by using
-        # `{unquoted_dec_number_unit_ascii}` when applicable.
+        # Number and number-unit types.  The order in the regex is important.
+        # Hex, octal, and binary must come first, so that the `0` in the
+        # `0<letter>` prefix doesn't trigger a premature match.  Number-units
+        # must come before floats, which must come before ints, so that the
+        # match doesn't end prematurely.  It would be possible to use
+        # `{unquoted_dec_number_unit_ascii}` to optimize slightly when
+        # applicable.  It would probably also be possible to avoid some
+        # backtracking with decimal number by splitting number-units and
+        # floats into a sequence of groups, with the first group being int.
         number_or_number_unit_pattern = '''
+            (?P<float_16>{hex_float}) | (?P<int_16>{hex_integer}) |
+            (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
             (?P<number_unit_10>{unquoted_dec_number_unit_unicode}) |
-            (?P<float_16>{hex_float}) |
-            (?P<int_16>{hex_integer}) | (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
             (?P<float_10>{dec_float}|{infinity}|{not_a_number}) |
             (?P<int_10>{dec_integer})
             '''.replace('\x20', '').replace('\n', '').format(**grammar.RE_GRAMMAR)
         self._number_or_number_unit_re = re.compile(number_or_number_unit_pattern)
+
+        # Unquoted strings and keypaths.  As with the number regex, it would
+        # probably be possible to optimize to reduce backtracking.
+        unquoted_string_or_keypath_pattern = '''
+            (?P<key_path>{key_path}) |
+            (?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?
+            '''.replace('\x20', '').replace('\n', '')
+        self._unquoted_string_or_keypath_ascii_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                         key_path=grammar.RE_GRAMMAR['key_path_ascii'],
+                                                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
+        self._unquoted_string_or_keypath_below_u0590_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                               key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
+                                                                                                               unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
+        self._unquoted_string_or_keypath_unicode_re = re.compile(unquoted_string_or_keypath_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                                                           key_path=grammar.RE_GRAMMAR['key_path_unicode'],
+                                                                                                           unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
 
 
     @staticmethod
@@ -334,7 +356,7 @@ class BespONDecoder(object):
         raise erring.InvalidLiteralError(self._state, code_point, code_point_esc)
 
 
-    def _check_bidi_rtl_or_not_valid_literal(self, normalized_string, bom=BOM):
+    def _check_code_point_ranges_and_not_valid_literal(self, normalized_string, bom=BOM):
         '''
         Check the decoded, newline-normalized source for right-to-left code
         point and invalid literal code points.
@@ -344,6 +366,7 @@ class BespONDecoder(object):
         self._bidi_rtl = False
         self._bidi_rtl_last_scalar_last_lineno = 0
         self._bidi_rtl_last_scalar_last_line = ''
+        self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_ascii_re
 
         if normalized_string[:1] == bom:
             bom_offset = 1
@@ -357,11 +380,13 @@ class BespONDecoder(object):
             self._traceback_not_valid_literal(normalized_string, m_not_valid_ascii.start())
         else:
             self._pure_ascii = False
+            self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_below_u0590_re
             m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(normalized_string, m_not_valid_ascii.start())
             if m_not_valid_below_u0590 is None:
                 return
             else:
                 self._only_below_u0590 = False
+                self._unquoted_string_or_keypath_re = self._unquoted_string_or_keypath_unicode_re
                 m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(normalized_string, m_not_valid_below_u0590.start())
                 if m_bidi_rtl_or_not_valid_unicode is None:
                     return
@@ -391,7 +416,7 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.SourceDecodeError(state, e)
 
-        self._check_bidi_rtl_or_not_valid_literal(raw_string)
+        self._check_code_point_ranges_and_not_valid_literal(raw_string)
 
         line_iter = iter(raw_string.splitlines())
         del raw_string
@@ -570,8 +595,9 @@ class BespONDecoder(object):
         '''
         state = self._state
         if line[:1] not in whitespace_or_comment_or_empty_set:
-            state.first_column += 1
-            state.last_column += 1
+            column = state.last_column + 1
+            state.first_column = column
+            state.last_column = column
             return line
         line_strip_ws = line.lstrip(whitespace)
         if line_strip_ws == '':
@@ -604,6 +630,14 @@ class BespONDecoder(object):
     def _check_bidi_rtl(self):
         if self._bidi_rtl_last_scalar_last_lineno == self._state.first_lineno and self._bidi_rtl_re.search(self._bidi_rtl_last_scalar_last_line):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', self._state)
+
+
+    def _parse_token_assign_key_val_invalid(self, line,
+                                            assign_key_val=ASSIGN_KEY_VAL):
+        '''
+        Raise an informative error for a misplaced "=".
+        '''
+        raise erring.ParseError('Misplaced "{0}"; in non-inline syntax, it must follow a key on the same line, while in inline syntax, it cannot be further than the start of the next line'.format(assign_key_val), self._state)
 
 
     def _parse_token_open_noninline_list(self, line,
@@ -790,10 +824,49 @@ class BespONDecoder(object):
         return line
 
 
+    def _scalar_node_lookahead_append(self, node, line,
+                                      whitespace=INDENT,
+                                      assign_key_val=ASSIGN_KEY_VAL,
+                                      scalar_valid_next_token_current_line_set=SCALAR_VALID_NEXT_TOKEN_CURRENT_LINE_SET):
+        '''
+        Look ahead after a scalar node for a following "=" that would cause
+        it to be treated as a key.  Also check for invalid following tokens
+        on the line where the scalar ends, to provide more informative error
+        messages than would be possible otherwise.  Append the node to the
+        AST based on what the lookahead reveals.
+        '''
+        state = self._state
+        line_strip_ws = line.lstrip(whitespace)
+        if line_strip_ws == '':
+            if not state.inline:
+                self._ast.append_scalar_val(node)
+                return self._parse_line_goto_next(line)
+            line = self._parse_line_goto_next(line)
+            if line is None:
+                self._ast.append_scalar_val(node)
+                return line
+            if line[:1] == assign_key_val:
+                if not state.indent.startswith(state.inline_indent):
+                    raise erring.IndentationError(state)
+                self._ast.append_scalar_key(node)
+                state.last_column += 1
+                return self._parse_line_continue_last(line[1:])
+            self._ast.append_scalar_val(node)
+            return line
+        if line_strip_ws[:1] == assign_key_val:
+            self._ast.append_scalar_key(node)
+            state.last_column += 1 + len(line) - len(line_strip_ws)
+            return self._parse_line_continue_last(line_strip_ws[1:])
+        if line_strip_ws[:1] not in scalar_valid_next_token_current_line_set:
+            raise erring.ParseError('Unexpected token after end of scalar object', state)
+        self._ast.append_scalar_val(node)
+        state.last_column += len(line) - len(line_strip_ws)
+        return self._parse_line_continue_last(line_strip_ws)
+
+
     def _parse_token_literal_string_delim(self, line,
                                           max_delim_length=MAX_DELIM_LENGTH,
-                                          ScalarNode=ScalarNode,
-                                          assign_key_val=ASSIGN_KEY_VAL):
+                                          ScalarNode=ScalarNode):
         '''
         Parse inline literal string.
         '''
@@ -814,23 +887,12 @@ class BespONDecoder(object):
         if self._bidi_rtl:
             self._bidi_rtl_last_scalar_last_line = content_lines[-1]
             self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        line = self._parse_line_continue_last_to_next_significant_token(line)
-        if line is not None and line[:1] == assign_key_val:
-            if state.inline:
-                if not state.indent.startswith(state.inline_indent):
-                    raise erring.IndentationError(state)
-            elif node.last_lineno != state.first_lineno:
-                raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
-            self._ast.append_scalar_key(node)
-            return self._parse_line_continue_last(line[1:])
-        self._ast.append_scalar_val(node)
-        return line
+        return self._scalar_node_lookahead_append(node, line)
 
 
     def _parse_token_escaped_string(self, line,
                                     max_delim_length=MAX_DELIM_LENGTH,
-                                    ScalarNode=ScalarNode,
-                                    assign_key_val=ASSIGN_KEY_VAL):
+                                    ScalarNode=ScalarNode):
         '''
         Parse inline escaped string (single or double quote).
         '''
@@ -862,23 +924,12 @@ class BespONDecoder(object):
         if self._bidi_rtl:
             self._bidi_rtl_last_scalar_last_line = content_lines[-1]
             self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        line = self._parse_line_continue_last_to_next_significant_token(line)
-        if line is not None and line[:1] == assign_key_val:
-            if state.inline:
-                if not state.indent.startswith(state.inline_indent):
-                    raise erring.IndentationError(state)
-            elif node.last_lineno != state.first_lineno:
-                raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
-            self._ast.append_scalar_key(node)
-            return self._parse_line_continue_last(line[1:])
-        self._ast.append_scalar_val(node)
-        return line
+        return self._scalar_node_lookahead_append(node, line)
 
 
     def _parse_token_block_prefix(self, line,
                                   max_delim_length=MAX_DELIM_LENGTH,
                                   ScalarNode=ScalarNode,
-                                  assign_key_val=ASSIGN_KEY_VAL,
                                   whitespace=INDENT,
                                   unicode_whitespace_set=UNICODE_WHITESPACE_SET,
                                   block_prefix=BLOCK_PREFIX,
@@ -957,14 +1008,7 @@ class BespONDecoder(object):
                 node.raw_val = content_lines_dedent
             node.final_val = content
             node.resolved = True
-            line = self._parse_line_continue_last_to_next_significant_token(line)
-            if line is not None and line[:1] == assign_key_val:
-                if not state.inline and node.last_lineno != state.first_lineno:
-                    raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
-                self._ast.append_scalar_key(node)
-                return self._parse_line_continue_last(line[1:])
-            self._ast.append_scalar_val(node)
-            return line
+            return self._scalar_node_lookahead_append(node, line)
         if delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_singlequote_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
             if self._full_ast:
@@ -975,17 +1019,7 @@ class BespONDecoder(object):
                 raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
             node.final_val = content_esc
             node.resolved = True
-            line = self._parse_line_continue_last_to_next_significant_token(line)
-            if line is not None and line[:1] == assign_key_val:
-                if state.inline:
-                    if not state.indent.startswith(state.inline_indent):
-                        raise erring.IndentationError(state)
-                elif node.last_lineno != state.first_lineno:
-                    raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
-                self._ast.append_scalar_key(node)
-                return self._parse_line_continue_last(line[1:])
-            self._ast.append_scalar_val(node)
-            return line
+            return self._scalar_node_lookahead_append(node, line)
         node = ScalarNode(state, delim=delim, block=True, implicit_type = 'doc_comment')
         if self._full_ast:
             node.raw_val = content_lines_dedent
@@ -1000,8 +1034,7 @@ class BespONDecoder(object):
         return line
 
 
-    def _parse_token_number_or_number_unit(self, line, int=int,
-                                           assign_key_val=ASSIGN_KEY_VAL):
+    def _parse_token_number_or_number_unit(self, line, int=int):
         '''
         Parse a number (float, int, etc.) or a number-unit string.
         '''
@@ -1035,7 +1068,7 @@ class BespONDecoder(object):
             if group_base == '10':
                 final_val = parser(cleaned_val)
             else:
-                final_val = parser.from_hex(cleaned_val)
+                final_val = parser.fromhex(cleaned_val)
             node = ScalarNode(state, implicit_type='int', base=int(group_base))
         else:
             raise ValueError
@@ -1043,20 +1076,36 @@ class BespONDecoder(object):
             node.raw_val = raw_val
         node.final_val = final_val
         node.resolved = True
-        line = self._parse_line_continue_last_to_next_significant_token(line)
-        if line is not None and line[:1] == assign_key_val:
-            if state.inline:
-                if not state.indent.startswith(state.inline_indent):
-                    raise erring.IndentationError(state)
-            elif node.last_lineno != state.first_lineno:
-                raise erring.ParseError('In non-inline mode, a key and the following "{0}" must be on the same line'.format(assign_key_val), state, node)
-            self._ast.append_scalar_key(node)
-            return self._parse_line_continue_last(line[1:])
-        self._ast.append_scalar_val(node)
-        return line
+        return self._scalar_node_lookahead_append(node, line)
 
 
-    def _parse_token_unquoted_string_or_keypath(self, line):
+    def _parse_token_unquoted_string_or_keypath(self, line, ScalarNode=ScalarNode):
+        '''
+        Parse an unquoted key, a key path, or an unquoted multi-word string.
+        '''
+        state = self._state
+        m = self._unquoted_string_or_keypath_re.match(line)
+        if m is None:
+            raise erring.ParseError('Invalid unquoted key, key path, or unquoted string', state)
+        if m.lastgroup == 'unquoted_string':
+            raw_val = m.group('unquoted_string')
+            if '\x20' in raw_val:
+                implicit_type = 'unquoted_string'
+            else:
+                implicit_type = 'unquoted_key'
+            state.last_column += len(raw_val) - 1
+            line = line[len(raw_val):]
+            node = ScalarNode(state, implicit_type=implicit_type)
+            if self._full_ast:
+                node.raw_val = raw_val
+            node.final_val = raw_val
+            node.resolved = True
+            if implicit_type == 'unquoted_key':
+                return self._scalar_node_lookahead_append(node, line)
+            self._ast.append_scalar_val(node)
+            return self._parse_line_continue_last(line)
+        if m.lastgroup == 'keypath':
+            raise NotImplementedError
         raise NotImplementedError
 
 
