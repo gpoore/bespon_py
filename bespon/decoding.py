@@ -26,7 +26,7 @@ from . import tooling
 from . import load_types
 from . import grammar
 from .ast import Ast
-from .astnodes import RootNode, ScalarNode
+from .astnodes import RootNode, ScalarNode, KeyPathNode
 
 if sys.version_info.major == 2:
     str = unicode
@@ -34,9 +34,9 @@ if sys.version_info.major == 2:
     chr = unichr
 
 # pylint:  disable=W0622
-if sys.maxunicode == 0xFFFF:
-    chr = coding.chr_surrogate
-    ord = coding.ord_surrogate
+#if sys.maxunicode == 0xFFFF:
+#    chr = coding.chr_surrogate
+##   ord = coding.ord_surrogate
 # pylint:  enable=W0622
 
 
@@ -736,13 +736,12 @@ class BespONDecoder(object):
         '''
         state = self._state
         closing_delim_re, group = self._closing_delim_re_dict[delim]
-        if delim in line:
-            m = closing_delim_re.search(line)
-            if m is not None:
-                content = line[:m.start(group)]
-                line = line[m.end(group):]
-                state.last_column += 2*len(delim) - 1 + len(content)
-                return ([content], content, line)
+        m = closing_delim_re.search(line)
+        if m is not None:
+            content = line[:m.start(group)]
+            line = line[m.end(group):]
+            state.last_column += 2*len(delim) - 1 + len(content)
+            return ([content], content, line)
         content_lines = []
         content_lines.append(line)
         indent = state.indent
@@ -1099,11 +1098,15 @@ class BespONDecoder(object):
 
 
     def _parse_token_unquoted_string_or_key_path(self, line,
-                                                whitespace=INDENT,
-                                                ScalarNode=ScalarNode):
+                                                 whitespace=INDENT,
+                                                 ScalarNode=ScalarNode,
+                                                 KeyPathNode=KeyPathNode):
         '''
         Parse an unquoted key, a key path, or an unquoted multi-word string.
         '''
+        # #### Parts of this may need to lookahead with
+        # #### `scalar_valid_next_token_current_line_set` to give better error
+        # #### messages
         if self._bidi_rtl:
             self._check_bidi_rtl()
         state = self._state
@@ -1123,18 +1126,26 @@ class BespONDecoder(object):
                 node.raw_val = raw_val
             node.final_val = raw_val
             node.resolved = True
-            if implicit_type == 'unquoted_key':
-                return self._scalar_node_lookahead_append(node, line)
-            self._ast.append_scalar_val(node)
             if self._bidi_rtl:
                 self._bidi_rtl_last_scalar_last_line = raw_val
                 self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
+            if implicit_type == 'unquoted_key':
+                return self._scalar_node_lookahead_append(node, line)
+            self._ast.append_scalar_val(node)
             return self._parse_line_continue_last(line)
         if m.lastgroup == 'key_path':
-            raise NotImplementedError
+            state.last_column += m.end() - 1
+            if state.in_tag:
+                raise erring.ParseError('Key paths are not allowed in tags', state)
+            node = KeyPathNode(state, m.group('key_path'))
+            node.resolved = True
+            self._ast.append_key_path(node)
+            return self._parse_line_continue_last(line[m.end()+2:])
         content_lines = []
         line_rstrip_ws = line.rstrip(whitespace)
         state.last_column += len(line_rstrip_ws) - 1
+        # Create the node here to capture current state, then update the
+        # node's state later if it wraps over multiple lines
         node = ScalarNode(state, implicit_type='unquoted_string')
         content_lines.append(line_rstrip_ws)
         indent = state.indent
@@ -1174,9 +1185,6 @@ class BespONDecoder(object):
         self._ast.append_scalar_val(node)
         return line
 
-
-        #if line_lstrip_ws[:1] not in scalar_valid_next_token_current_line_set:
-        #    raise erring.ParseError('Unexpected token after end of scalar object', state)
 
     def _parse_token_alias_prefix(self, line):
         raise NotImplementedError

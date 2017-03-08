@@ -19,7 +19,12 @@ from __future__ import (division, print_function, absolute_import,
 
 import sys
 import collections
+from . import grammar
 from . import erring
+
+
+OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
+PATH_SEPARATOR= grammar.LIT_GRAMMAR['path_separator']
 
 
 
@@ -270,25 +275,7 @@ class ScalarNode(object):
         # When a ScalarNode object is used as a dict key, allow access to
         # the value through the original object, another ScalarNode object
         # with the save `.final_val`, or the literal scalar value.
-        return other == self.final_val or other.final_val == self.final_val
-
-
-
-
-# Individual element in a keypath
-KeypathElement = collections.namedtuple('KeypathElement', ['type', 'val'])
-
-
-class Keypath(ScalarNode):
-    '''
-    Abstract keypath.
-
-    Used as dict keys or in sections for assigning in nested objects; in
-    tag for representing collection config; and (with a tag) to represent
-    alias, copy, and deepcopy.
-    '''
-    basetype = 'keypath'
-    __slots__ = ['keypath']
+        return other == self.final_val or (hasattr(other, 'final_val') and other.final_val == self.final_val)
 
 
 
@@ -442,6 +429,11 @@ class DictlikeNode(collections.OrderedDict):
             # keypath would resolve any existing tag.  An implicit collection
             # is always open.
             self.open = True
+            # #### Fix?
+            self.last_lineno = state_or_obj.last_lineno
+            self.last_column = state_or_obj.last_column
+            self.inline = state_or_obj.inline
+            self.indent = state_or_obj.indent
         else:
             init_common(self, state_or_obj)
             self.open = False
@@ -466,7 +458,7 @@ class DictlikeNode(collections.OrderedDict):
                 raise erring.ParseError('A key must be at the start of the line in non-inline mode', obj)
             if obj.external_indent != self.indent:
                 raise erring.IndentationError(obj)
-        if obj.basetype != 'scalar':
+        if obj.basetype != 'scalar' and obj.basetype != 'key_path_element':
             raise erring.ParseError('Dict-like objects only take scalar types as keys', obj)
         if obj in self:
             raise erring.ParseError('Duplicate keys are prohibited', obj)
@@ -501,10 +493,12 @@ class DictlikeNode(collections.OrderedDict):
         self.awaiting_val = False
         self.open = False
 
-    def check_append_collection(self, obj):
+    def check_append_collection(self, obj, in_key_path_after_element1=False):
         if not self.awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
-        if self.inline:
+        if in_key_path_after_element1:
+            pass
+        elif self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
         elif obj.external_at_line_start:
@@ -637,3 +631,71 @@ class TagNode(object):
         self.last_column = obj.last_column
         self.open = False
         self.awaiting_val = False
+
+
+
+
+class KeyPathElement(object):
+    '''
+    Individual scalar object (Unicode string) in a key path.
+    '''
+    basetype = 'key_path_element'
+    def __init__(self, final_val, key_path, state):
+        self.final_val = final_val
+        self.key_path = key_path
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_column = state.first_column
+        self.last_lineno = state.last_lineno
+        self.last_column = state.last_column
+        self.nesting_depth = state.nesting_depth
+        self.external_indent = self.indent
+        self.external_at_line_start = self.at_line_start
+        self.external_first_lineno = self.first_lineno
+        self.resolved = True
+        self.extra_dependents = None
+
+    def __hash__(self):
+        return hash(self.final_val)
+
+    def __eq__(self, other):
+        return other == self.final_val or (hasattr(other, 'final_val') and other.final_val == self.final_val)
+
+
+class KeyPathNode(list):
+    '''
+    Abstract key path.
+
+    Used as dict keys or in sections for assigning in nested objects.
+    '''
+    basetype = 'key_path'
+    __slots__ = ['indent', 'at_line_start', 'inline', 'inline_indent',
+                 'first_lineno', 'first_column', 'last_lineno', 'last_column',
+                 'nesting_depth',
+                 'external_indent', 'external_at_line_start', 'external_first_lineno',
+                 'resolved', 'extra_dependents', 'elements']
+
+    def __init__(self, state, key_path,
+                 open_noninline_list=OPEN_NONINLINE_LIST,
+                 path_separator=PATH_SEPARATOR,
+                 KeyPathElement=KeyPathElement):
+        list.__init__(self, (x if x == open_noninline_list else KeyPathElement(x, self, state) for x in key_path.split(path_separator)))
+        if state.next_tag is not None:
+            raise erring.ParseError('Tags cannot be applied to key paths', state, state.next_tag)
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_column = state.first_column
+        self.last_lineno = state.last_lineno
+        self.last_column = state.last_column
+        self.nesting_depth = state.nesting_depth
+        self.external_indent = self.indent
+        self.external_at_line_start = self.at_line_start
+        self.external_first_lineno = self.first_lineno
+        self.resolved = False
+        self.extra_dependents = None

@@ -16,6 +16,10 @@ from __future__ import (division, print_function, absolute_import,
 import sys
 from . import erring
 from . import astnodes
+from . import grammar
+
+
+OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
 
 
 
@@ -338,6 +342,41 @@ class Ast(object):
                 raise erring.ParseError('Misplaced "*"; cannot start a list element here', state)
             state.nesting_depth = pos.nesting_depth
             self.pos = pos
+
+
+    def append_key_path(self, kp_obj,
+                        DictlikeNode=astnodes.DictlikeNode,
+                        open_noninline_list=OPEN_NONINLINE_LIST):
+        '''
+        Create the AST node corresponding to the elements in a key path.
+        '''
+        state = self.state
+        kp_obj_0 = kp_obj[0]
+        if kp_obj_0 == open_noninline_list:
+            raise NotImplementedError
+        else:
+            if kp_obj_0 in self.pos:
+                pos = self.pos[kp_obj_0]
+            else:
+                self.append_scalar_key(kp_obj_0)
+                pos = self.pos
+        for kp_elem in kp_obj[1:]:
+            if kp_elem in pos:
+                pos = pos[kp_elem]
+            else:
+                dict_obj = DictlikeNode(kp_obj, keypath_traversable=True)
+                dict_obj.open = True
+                pos.check_append_collection(dict_obj, in_key_path_after_element1=True)
+                pos = dict_obj
+                pos.check_append_scalar_key(kp_elem)
+        self.pos = pos
+
+
+
+
+
+
+
 
 
     def finalize(self):
