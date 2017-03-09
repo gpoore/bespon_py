@@ -187,9 +187,15 @@ _RAW_RE_TYPE = [# None type
                 # Number types
                 # Integers
                 ('dec_integer', '{opt_sign_indent}(?:{zero}|{nonzero_dec_digit}{dec_digit}*(?:_{dec_digit}+)*)'),
-                ('hex_integer', '{opt_sign_indent}0x_?(?:{lower_hex_digits_underscores}|{upper_hex_digits_underscores})'),
-                ('oct_integer', '{opt_sign_indent}0o_?{oct_digits_underscores}'),
-                ('bin_integer', '{opt_sign_indent}0b_?{bin_digits_underscores}'),
+                ('hex_prefix', '{opt_sign_indent}0x_?'),
+                ('hex_integer_value', '(?:{lower_hex_digits_underscores}|{upper_hex_digits_underscores})'),
+                ('hex_integer', '{hex_prefix}{hex_integer_value}'),
+                ('oct_prefix', '{opt_sign_indent}0o_?'),
+                ('oct_integer_value', '{oct_digits_underscores}'),
+                ('oct_integer', '{oct_prefix}{oct_integer_value}'),
+                ('bin_prefix', '{opt_sign_indent}0b_?'),
+                ('bin_integer_value', '{bin_digits_underscores}'),
+                ('bin_integer', '{bin_prefix}{bin_integer_value}'),
                 ('integer', '{dec_integer}|{hex_integer}|{oct_integer}|{bin_integer}'),
                 # Floats
                 ('dec_exponent', '[eE]{sign}?{dec_digits_underscores}'),
@@ -197,16 +203,17 @@ _RAW_RE_TYPE = [# None type
                 ('dec_fraction_and_or_exponent', '(?:{decimal_point}{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})'),
                 ('dec_float', '{dec_integer}{dec_fraction_and_or_exponent}'),
                 ('hex_exponent', '[pP]{sign}?{dec_digits_underscores}'),
-                ('hex_float', '''
-                              {opt_sign_indent}0x_?
-                              (?:{lower_hex_digits_underscores}(?:{decimal_point}{lower_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent}) |
-                                 {upper_hex_digits_underscores}(?:{decimal_point}{upper_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent})
-                              )
-                              '''.replace('\x20', '').replace('\n', '')),
+                ('hex_float_value', '''
+                                    (?: {lower_hex_digits_underscores} (?:{decimal_point}{lower_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent}) |
+                                        {upper_hex_digits_underscores} (?:{decimal_point}{upper_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent})
+                                    )
+                                    '''.replace('\x20', '').replace('\n', '')),
+                ('hex_float', '{hex_prefix}{hex_float_value}'),
                 ('infinity', '{opt_sign_indent}inf'),
                 ('not_a_number', '{opt_sign_indent}nan'),
+                ('inf_or_nan', '{opt_sign_indent}(?:inf|nan)'),
                 ('float_invalid_word', '{opt_sign_indent}(?:[iI][nN][fF]|[nN][aA][nN])'),
-                ('float', '{dec_float}|{hex_float}|{infinity}|{not_a_number}'),
+                ('float', '{dec_float}|{hex_float}|{inf_or_nan}'),
 
                 # Unquoted strings
                 ('unquoted_start_ascii', '{xid_start_ascii}'),
@@ -218,9 +225,12 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_key_ascii', '_*{unquoted_start_ascii}{unquoted_continue_ascii}*'),
                 ('unquoted_key_below_u0590', '_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
                 ('unquoted_key_unicode', '_*{unquoted_start_unicode}{unquoted_continue_unicode}*'),
-                ('unquoted_string_ascii', '{unquoted_key_ascii}(?:{space}{unquoted_continue_ascii}+)*'),
-                ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}(?:{space}{unquoted_continue_below_u0590}+)*'),
-                ('unquoted_string_unicode', '{unquoted_key_unicode}(?:{space}{unquoted_continue_unicode}+)*'),
+                ('unquoted_string_continue_ascii', '(?:{space}{unquoted_continue_ascii}+)'),
+                ('unquoted_string_continue_below_u0590', '(?:{space}{unquoted_continue_below_u0590}+)'),
+                ('unquoted_string_continue_unicode', '(?:{space}{unquoted_continue_unicode}+)'),
+                ('unquoted_string_ascii', '{unquoted_key_ascii}{unquoted_string_continue_ascii}*'),
+                ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}{unquoted_string_continue_below_u0590}*'),
+                ('unquoted_string_unicode', '{unquoted_key_unicode}{unquoted_string_continue_unicode}*'),
                 ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
                 ('unquoted_unit_ascii', '''
                                         (?: [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
@@ -229,17 +239,22 @@ _RAW_RE_TYPE = [# None type
                                             %
                                         )
                                         '''.replace('\x20', '').replace('\n', '')),
+                ('unquoted_unit_below_u0590', '{si_mu_prefix}?{unquoted_unit_ascii}'),
+                ('unquoted_unit_unicode', '{unquoted_unit_below_u0590}'),
                 ('unquoted_dec_number_unit_ascii', '(?:{dec_integer}|{dec_float}){unquoted_unit_ascii}'),
-                ('unquoted_dec_number_unit_below_u0590', '(?:{dec_integer}|{dec_float}){si_mu_prefix}?{unquoted_unit_ascii}'),
+                ('unquoted_dec_number_unit_below_u0590', '(?:{dec_integer}|{dec_float}){unquoted_unit_below_u0590}'),
                 ('unquoted_dec_number_unit_unicode', '{unquoted_dec_number_unit_below_u0590}'),
 
                 # Key path
                 ('key_path_element_ascii', '(?:{unquoted_key_ascii}|{open_noninline_list})'),
                 ('key_path_element_below_u0590', '(?:{unquoted_key_below_u0590}|{open_noninline_list})'),
                 ('key_path_element_unicode', '(?:{unquoted_key_unicode}|{open_noninline_list})'),
-                ('key_path_ascii', '{key_path_element_ascii}(?:{path_separator}{key_path_element_ascii})+'),
-                ('key_path_below_u0590', '{key_path_element_below_u0590}(?:{path_separator}{key_path_element_below_u0590})+'),
-                ('key_path_unicode', '{key_path_element_unicode}(?:{path_separator}{key_path_element_unicode})+'),
+                ('key_path_continue_ascii', '(?:{path_separator}{key_path_element_ascii})'),
+                ('key_path_continue_below_u0590', '(?:{path_separator}{key_path_element_below_u0590})'),
+                ('key_path_continue_unicode', '(?:{path_separator}{key_path_element_unicode})'),
+                ('key_path_ascii', '{key_path_element_ascii}{key_path_continue_ascii}+'),
+                ('key_path_below_u0590', '{key_path_element_below_u0590}{key_path_continue_below_u0590}+'),
+                ('key_path_unicode', '{key_path_element_unicode}{key_path_continue_unicode}+'),
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_ascii})(?:{path_separator}{unquoted_key_ascii})+'),

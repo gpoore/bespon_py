@@ -143,18 +143,18 @@ class BespONDecoder(object):
         # Process args
         if args:
             raise TypeError('Explicit keyword arguments are required')
-        only_ascii = kwargs.pop('only_ascii', False)
+        literal_unicode = kwargs.pop('literal_unicode', True)
         unquoted_strings = kwargs.pop('unquoted_strings', True)
         unquoted_unicode = kwargs.pop('unquoted_unicode', False)
-        ints = kwargs.pop('ints', True)
-        if any(x not in (True, False) for x in (only_ascii, unquoted_strings, unquoted_unicode, ints)):
+        integers = kwargs.pop('integers', True)
+        if any(x not in (True, False) for x in (literal_unicode, unquoted_strings, unquoted_unicode, integers)):
             raise TypeError
-        if only_ascii and unquoted_unicode:
-            raise ValueError('Setting "only_ascii"=True is incompatible with "unquoted_unicode"=True')
-        self.only_ascii = only_ascii
+        if not literal_unicode and unquoted_unicode:
+            raise ValueError('Setting "literal_unicode"=False is incompatible with "unquoted_unicode"=True')
+        self.literal_unicode = literal_unicode
         self.unquoted_strings = unquoted_strings
         self.unquoted_unicode = unquoted_unicode
-        self.ints = ints
+        self.integers = integers
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)
@@ -194,8 +194,9 @@ class BespONDecoder(object):
         # will simply invoke an attempt at a match, which will fail for
         # invalid code points.
         parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_key_path)
-        token_functions = {'comment_delim': self._parse_token_comment_delim,
-                           'assign_key_val': self._parse_token_assign_key_val_invalid,
+        token_functions = {'whitespace': self._parse_token_whitespace,
+                           'comment_delim': self._parse_token_comment_delim,
+                           'assign_key_val': self._parse_token_assign_key_val,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
                            'end_inline_dict': self._parse_token_end_inline_dict,
@@ -210,8 +211,9 @@ class BespONDecoder(object):
                            'literal_string_delim': self._parse_token_literal_string_delim,
                            'alias_prefix': self._parse_token_alias_prefix}
         for token_name, func in token_functions.items():
-            token = grammar.LIT_GRAMMAR[token_name]
-            parse_token[token] = func
+            tokens = grammar.LIT_GRAMMAR[token_name]
+            for token in tokens:
+                parse_token[token] = func
         for c in NUMBER_OR_NUMBER_UNIT_START:
             parse_token[c] = self._parse_token_number_or_number_unit
         parse_token[''] = self._parse_line_goto_next
@@ -225,7 +227,7 @@ class BespONDecoder(object):
         self._not_valid_unicode_re = re.compile(not_valid_unicode)
         bidi_rtl = grammar.RE_GRAMMAR['bidi_rtl']
         self._bidi_rtl_re = re.compile(bidi_rtl)
-        self._bidi_rtl_or_not_valid_unicode_re = '(?P<bidi_rtl>{0})|(?P<not_valid>{1})'.format(bidi_rtl, not_valid_unicode)
+        self._bidi_rtl_or_not_valid_unicode_re = '(?P<not_valid>{0})|(?P<bidi_rtl>{1})|'.format(not_valid_unicode, bidi_rtl)
         self._newline_re = re.compile(grammar.RE_GRAMMAR['newline'])
 
         # Dict of regexes for identifying closing delimiters for inline
@@ -279,47 +281,54 @@ class BespONDecoder(object):
 
         # Number and number-unit types.  The order in the regex is important.
         # Hex, octal, and binary must come first, so that the `0` in the
-        # `0<letter>` prefix doesn't trigger a premature match.  Number-units
-        # must come before floats, which must come before ints, so that the
-        # match doesn't end prematurely.  It would be possible to use
-        # `{unquoted_dec_number_unit_ascii}` to optimize slightly when
-        # applicable.  It would probably also be possible to avoid some
-        # backtracking with decimal number by splitting number-units and
-        # floats into a sequence of groups, with the first group being int.
-        number_or_number_unit_pattern = '''
-            (?P<float_16>{hex_float}) | (?P<int_16>{hex_integer}) |
+        # `0<letter>` prefix doesn't trigger a premature match for integer
+        # zero.  Number-units must come before floats, which must come before
+        # ints, so that the match doesn't end prematurely.
+        num_pattern = r'''
+            {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
             (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
-            (?P<number_unit_10>{unquoted_dec_number_unit_unicode}) |
-            (?P<float_10>{dec_float}|{infinity}|{not_a_number}) |
-            (?P<int_10>{dec_integer})
-            '''.replace('\x20', '').replace('\n', '').format(**grammar.RE_GRAMMAR)
-        self._number_or_number_unit_re = re.compile(number_or_number_unit_pattern)
+            (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? (?P<number_unit_10>{unquoted_unit})? |
+            (?P<float_inf_or_nan_10>{inf_or_nan})
+            '''.replace('\x20', '').replace('\n', '')
+        self._number_or_number_unit_ascii_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_ascii']))
+        self._number_or_number_unit_below_0590_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590']))
+        self._number_or_number_unit_unicode_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_unicode']))
 
         # Unquoted strings and key paths.  As with the number regex, it would
         # probably be possible to optimize to reduce backtracking.
-        unquoted_string_or_key_path_pattern = '''
-            (?P<key_path>{key_path}) |
-            (?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?
+        uqs_or_kp_pattern = r'''
+            (?P<key>{unquoted_key}) (?: (?P<key_path>{unquoted_key_path_continue}+) |
+                                        (?P<string>{unquoted_string_continue}+)(?P<string_unfinished>{indent}*$)?
+                                    )? |
+            (?P<list_key_path>{open_noninline_list}{unquoted_key_path_continue}+)
             '''.replace('\x20', '').replace('\n', '')
-        unquoted_string_pattern = '(?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?'
-        self._unquoted_string_or_key_path_ascii_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                           key_path=grammar.RE_GRAMMAR['key_path_ascii'],
-                                                                                                           unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
-        self._unquoted_string_ascii_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                   key_path=grammar.RE_GRAMMAR['key_path_ascii'],
-                                                                                   unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
-        self._unquoted_string_or_key_path_below_u0590_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                                 key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
-                                                                                                                 unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
-        self._unquoted_string_below_u0590_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                         key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
-                                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
-        self._unquoted_string_or_key_path_unicode_re = re.compile(unquoted_string_or_key_path_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                                             key_path=grammar.RE_GRAMMAR['key_path_unicode'],
-                                                                                                             unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
-        self._unquoted_string_unicode_re = re.compile(unquoted_string_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                                     key_path=grammar.RE_GRAMMAR['key_path_unicode'],
-                                                                                     unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
+        uqs_pattern = r'(?P<string>{unquoted_string})(?P<string_unfinished>{indent}*$)?'
+
+        self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii'],
+                                                                                         unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii'],
+                                                                                         unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_ascii'],
+                                                                                         indent=grammar.RE_GRAMMAR['indent'],
+                                                                                         open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
+        self._unquoted_string_or_key_path_below_u0590_re = re.compile(uqs_or_kp_pattern.format(unquoted_key=grammar.RE_GRAMMAR['unquoted_key_below_u0590'],
+                                                                                               unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590'],
+                                                                                               unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_below_u0590'],
+                                                                                               indent=grammar.RE_GRAMMAR['indent'],
+                                                                                               open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
+        self._unquoted_string_or_key_path_unicode_re = re.compile(uqs_or_kp_pattern.format(unquoted_key=grammar.RE_GRAMMAR['unquoted_key_unicode'],
+                                                                                           unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode'],
+                                                                                           unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_unicode'],
+                                                                                           indent=grammar.RE_GRAMMAR['indent'],
+                                                                                           open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
+
+        self._unquoted_string_ascii_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                       key_path=grammar.RE_GRAMMAR['key_path_ascii'],
+                                                                       unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
+        self._unquoted_string_below_u0590_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                             key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
+                                                                             unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
+        self._unquoted_string_unicode_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
+                                                                         key_path=grammar.RE_GRAMMAR['key_path_unicode'],
+                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
 
 
     @staticmethod
@@ -377,6 +386,7 @@ class BespONDecoder(object):
         self._bidi_rtl_last_scalar_last_line = ''
         self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_ascii_re
         self._unquoted_string_re = self._unquoted_string_ascii_re
+        self._number_or_number_unit_re = self._number_or_number_unit_ascii_re
 
         if normalized_string[:1] == bom:
             bom_offset = 1
@@ -386,12 +396,13 @@ class BespONDecoder(object):
         m_not_valid_ascii = self.not_valid_ascii_re.search(normalized_string, bom_offset)
         if m_not_valid_ascii is None:
             return
-        elif self.only_ascii:
+        elif self.literal_unicode:
             self._traceback_not_valid_literal(normalized_string, m_not_valid_ascii.start())
         else:
             self._pure_ascii = False
             self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_below_u0590_re
             self._unquoted_string_re = self._unquoted_string_below_u0590_re
+            self._number_or_number_unit_re = self._number_or_number_unit_below_u0590_re
             m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(normalized_string, m_not_valid_ascii.start())
             if m_not_valid_below_u0590 is None:
                 return
@@ -399,6 +410,7 @@ class BespONDecoder(object):
                 self._only_below_u0590 = False
                 self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_unicode_re
                 self._unquoted_string_re = self._unquoted_string_unicode_re
+                self._number_or_number_unit_re = self._number_or_number_unit_unicode_re
                 m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(normalized_string, m_not_valid_below_u0590.start())
                 if m_bidi_rtl_or_not_valid_unicode is None:
                     return
@@ -644,7 +656,14 @@ class BespONDecoder(object):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', self._state)
 
 
-    def _parse_token_assign_key_val_invalid(self, line,
+    def _parse_token_whitespace(self, line, whitespace=INDENT):
+        '''
+        Parse whitespace.
+        '''
+        raise NotImplementedError
+
+
+    def _parse_token_assign_key_val(self, line,
                                             assign_key_val=ASSIGN_KEY_VAL):
         '''
         Raise an informative error for a misplaced "=".
@@ -1080,7 +1099,7 @@ class BespONDecoder(object):
             else:
                 final_val = parser(cleaned_val, int(group_base))
             node = ScalarNode(state, implicit_type='int', base=group_base)
-        elif group_type == 'float':
+        elif group_type == 'float' or group_type == 'float_inf_or_nan':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
             parser = self._type_data['float'].parser
             if group_base == '10':
@@ -1113,15 +1132,11 @@ class BespONDecoder(object):
         m = self._unquoted_string_or_key_path_re.match(line)
         if m is None:
             raise erring.ParseError('Invalid unquoted key, key path, or unquoted string', state)
-        if m.lastgroup == 'unquoted_string':
-            raw_val = m.group('unquoted_string')
-            if '\x20' in raw_val:
-                implicit_type = 'unquoted_string'
-            else:
-                implicit_type = 'unquoted_key'
+        if m.lastgroup == 'key':
+            raw_val = m.group('key')
             state.last_column += len(raw_val) - 1
             line = line[len(raw_val):]
-            node = ScalarNode(state, implicit_type=implicit_type)
+            node = ScalarNode(state, implicit_type='string')
             if self._full_ast:
                 node.raw_val = raw_val
             node.final_val = raw_val
@@ -1129,8 +1144,19 @@ class BespONDecoder(object):
             if self._bidi_rtl:
                 self._bidi_rtl_last_scalar_last_line = raw_val
                 self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
-            if implicit_type == 'unquoted_key':
-                return self._scalar_node_lookahead_append(node, line)
+            return self._scalar_node_lookahead_append(node, line)
+        elif m.lastgroup == 'string':
+            raw_val = m.group('string')
+            state.last_column += len(raw_val) - 1
+            line = line[len(raw_val):]
+            node = ScalarNode(state, implicit_type='string')
+            if self._full_ast:
+                node.raw_val = raw_val
+            node.final_val = raw_val
+            node.resolved = True
+            if self._bidi_rtl:
+                self._bidi_rtl_last_scalar_last_line = raw_val
+                self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
             self._ast.append_scalar_val(node)
             return self._parse_line_continue_last(line)
         if m.lastgroup == 'key_path':
