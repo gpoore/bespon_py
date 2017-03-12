@@ -68,9 +68,10 @@ SCALAR_VALID_NEXT_TOKEN_CURRENT_LINE_SET = set(grammar.LIT_GRAMMAR['scalar_valid
 
 class State(object):
     '''
-    Keep track of state.  This includes information about the source, the
-    current location within the source, the current parsing context,
-    a cached doc comment and tag for the next object that is parsed, etc.
+    Keep track of a data source and all associated state.  This includes
+    general information about the source, the current location within the
+    source, the current parsing context, cached values, and regular
+    expressions appropriate for analyzing the source.
     '''
     __slots__ = ['source', 'source_include_depth',
                  'source_initial_nesting_depth',
@@ -80,8 +81,16 @@ class State(object):
                  'nesting_depth',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'line_comments',
-                 'type_data', 'full_ast']
-    def __init__(self, source=None, source_include_depth=0,
+                 'next_scalar',
+                 'type_data', 'full_ast',
+                 'raw_source_string', 'line_iter',
+                 'pure_ascii', 'only_below_u0590',
+                 'bidi_rtl', 'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
+                 'newline_re',
+                 'unquoted_string_or_key_path_re', 'unquoted_string_re', 'number_or_number_unit_re',
+                 'escape_unicode', 'unescape_unicode', 'unescape_bytes']
+    def __init__(self, decoder, raw_source_string,
+                 source=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
                  indent=None, at_line_start=True,
                  inline=False, inline_indent=None,
@@ -132,6 +141,12 @@ class State(object):
         self.type_data = type_data or load_types.CORE_TYPES
         self.full_ast = full_ast
 
+        self.raw_source_string = raw_source_string
+        self.newline_re = decoder._newline_re
+        self.escape_unicode = decoder._escape_unicode
+        self.unescape_unicode = decoder._unescape_unicode
+        self.unescape_bytes = decoder._unescape_bytes
+
 
 
 
@@ -172,10 +187,10 @@ class BespONDecoder(object):
 
 
         # Create escape and unescape functions
-        self.escape_unicode = escape.basic_unicode_escape
-        self.unescape = escape.Unescape()
-        self.unescape_unicode = self.unescape.unescape_unicode
-        self.unescape_bytes = self.unescape.unescape_bytes
+        self._escape_unicode = escape.basic_unicode_escape
+        self._unescape = escape.Unescape()
+        self._unescape_unicode = self._unescape.unescape_unicode
+        self._unescape_bytes = self._unescape.unescape_bytes
 
 
         # Create dict of token-based parsing functions
@@ -194,8 +209,7 @@ class BespONDecoder(object):
         # will simply invoke an attempt at a match, which will fail for
         # invalid code points.
         parse_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_key_path)
-        token_functions = {'whitespace': self._parse_token_whitespace,
-                           'comment_delim': self._parse_token_comment_delim,
+        token_functions = {'comment_delim': self._parse_token_comment_delim,
                            'assign_key_val': self._parse_token_assign_key_val,
                            'open_noninline_list': self._parse_token_open_noninline_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
@@ -211,11 +225,12 @@ class BespONDecoder(object):
                            'literal_string_delim': self._parse_token_literal_string_delim,
                            'alias_prefix': self._parse_token_alias_prefix}
         for token_name, func in token_functions.items():
-            tokens = grammar.LIT_GRAMMAR[token_name]
-            for token in tokens:
-                parse_token[token] = func
+            token = grammar.LIT_GRAMMAR[token_name]
+            parse_token[token] = func
         for c in NUMBER_OR_NUMBER_UNIT_START:
             parse_token[c] = self._parse_token_number_or_number_unit
+        for c in INDENT:
+            parse_token[c] = self._parse_token_whitespace
         parse_token[''] = self._parse_line_goto_next
         self._parse_token = parse_token
 
@@ -227,7 +242,7 @@ class BespONDecoder(object):
         self._not_valid_unicode_re = re.compile(not_valid_unicode)
         bidi_rtl = grammar.RE_GRAMMAR['bidi_rtl']
         self._bidi_rtl_re = re.compile(bidi_rtl)
-        self._bidi_rtl_or_not_valid_unicode_re = '(?P<not_valid>{0})|(?P<bidi_rtl>{1})|'.format(not_valid_unicode, bidi_rtl)
+        self._bidi_rtl_or_not_valid_unicode_re = re.compile(r'(?P<not_valid>{0})|(?P<bidi_rtl>{1})|'.format(not_valid_unicode, bidi_rtl))
         self._newline_re = re.compile(grammar.RE_GRAMMAR['newline'])
 
         # Dict of regexes for identifying closing delimiters for inline
@@ -282,8 +297,7 @@ class BespONDecoder(object):
         # Number and number-unit types.  The order in the regex is important.
         # Hex, octal, and binary must come first, so that the `0` in the
         # `0<letter>` prefix doesn't trigger a premature match for integer
-        # zero.  Number-units must come before floats, which must come before
-        # ints, so that the match doesn't end prematurely.
+        # zero.
         num_pattern = r'''
             {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
             (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
@@ -291,18 +305,17 @@ class BespONDecoder(object):
             (?P<float_inf_or_nan_10>{inf_or_nan})
             '''.replace('\x20', '').replace('\n', '')
         self._number_or_number_unit_ascii_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_ascii']))
-        self._number_or_number_unit_below_0590_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590']))
+        self._number_or_number_unit_below_u0590_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590']))
         self._number_or_number_unit_unicode_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_unicode']))
 
-        # Unquoted strings and key paths.  As with the number regex, it would
-        # probably be possible to optimize to reduce backtracking.
+        # Unquoted strings and key paths.
         uqs_or_kp_pattern = r'''
             (?P<key>{unquoted_key}) (?: (?P<key_path>{unquoted_key_path_continue}+) |
-                                        (?P<string>{unquoted_string_continue}+)(?P<string_unfinished>{indent}*$)?
+                                        (?P<unquoted_string>{unquoted_string_continue}+)(?P<unquoted_string_unfinished>{indent}*$)?
                                     )? |
             (?P<list_key_path>{open_noninline_list}{unquoted_key_path_continue}+)
             '''.replace('\x20', '').replace('\n', '')
-        uqs_pattern = r'(?P<string>{unquoted_string})(?P<string_unfinished>{indent}*$)?'
+        uqs_pattern = r'(?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?'
 
         self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii'],
                                                                                          unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii'],
@@ -338,13 +351,15 @@ class BespONDecoder(object):
 
         Any line that ends with a newline preceded by Unicode whitespace has
         the newline stripped.  Otherwise, a trailing newline is replace by a
-        space.  The last line will not have a newline, and any trailing
-        whitespace it has will already have been dealt with during parsing, so
-        it is passed through unmodified.
+        space.  The last line will not have a newline due to the ending
+        delimiter or alternatively the regex pattern for undelimited strings.
 
         Note that in escaped strings, a single backslash before a newline is
         not treated as an escape in unwrapping.  Escaping newlines is only
-        allowed in block strings.
+        allowed in block strings.  A line that ends in a backslash followed
+        by a newline will not be accidentally converted into a valid escape
+        by the unwrapping process, because it would be converted into a
+        backslash followed by a space, which is not a valid escape.
         '''
         s_list_inline = []
         for line in s_list[:-1]:
@@ -356,103 +371,94 @@ class BespONDecoder(object):
         return ''.join(s_list_inline)
 
 
-    def _traceback_not_valid_literal(self, normalize_string, index):
+    @staticmethod
+    def _traceback_not_valid_literal(state, index):
         '''
         Locate an invalid literal code point using an re match object,
         and raise an error.
         '''
-        state = self._state
         newline_count = 0
         newline_index = 0
-        for m in self._newline_re.finditer(normalize_string, 0, index):
+        for m in state.newline_re.finditer(state.raw_source_string, 0, index):
             newline_count += 1
             newline_index = m.start()
-        state.last_lineno += lineno
+        state.last_lineno += newline_count
         state.last_column = index - newline_index
-        code_point = normalize_string[index]
-        code_point_esc = self._escape(code_point)
-        raise erring.InvalidLiteralError(self._state, code_point, code_point_esc)
+        code_point = state.raw_source_string[index]
+        code_point_esc = state.escape_unicode(code_point)
+        raise erring.InvalidLiteralError(state, code_point, code_point_esc)
 
 
-    def _check_code_point_ranges_and_not_valid_literal(self, normalized_string, bom=BOM):
+    def _check_code_point_ranges_and_not_valid_literal(self, state, bom=BOM):
         '''
-        Check the decoded, newline-normalized source for right-to-left code
-        point and invalid literal code points.
+        Check the decoded source for right-to-left code points and invalid
+        literal code points.  Set regexes for key paths, unquoted strings,
+        and number-unit strings based on the range of code points present.
         '''
-        self._pure_ascii = True
-        self._only_below_u0590 = True
-        self._bidi_rtl = False
-        self._bidi_rtl_last_scalar_last_lineno = 0
-        self._bidi_rtl_last_scalar_last_line = ''
-        self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_ascii_re
-        self._unquoted_string_re = self._unquoted_string_ascii_re
-        self._number_or_number_unit_re = self._number_or_number_unit_ascii_re
+        state.pure_ascii = True
+        state.only_below_u0590 = True
+        state.bidi_rtl = False
+        state.bidi_rtl_last_scalar_last_lineno = 0
+        state.bidi_rtl_last_scalar_last_line = ''
+        state.unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_ascii_re
+        state.unquoted_string_re = self._unquoted_string_ascii_re
+        state.number_or_number_unit_re = self._number_or_number_unit_ascii_re
 
-        if normalized_string[:1] == bom:
+        if state.raw_source_string[:1] == bom:
             bom_offset = 1
         else:
             bom_offset = 0
 
-        m_not_valid_ascii = self.not_valid_ascii_re.search(normalized_string, bom_offset)
+        m_not_valid_ascii = self.not_valid_ascii_re.search(state.raw_source_string, bom_offset)
         if m_not_valid_ascii is None:
             return
-        elif self.literal_unicode:
-            self._traceback_not_valid_literal(normalized_string, m_not_valid_ascii.start())
-        else:
-            self._pure_ascii = False
-            self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_below_u0590_re
-            self._unquoted_string_re = self._unquoted_string_below_u0590_re
-            self._number_or_number_unit_re = self._number_or_number_unit_below_u0590_re
-            m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(normalized_string, m_not_valid_ascii.start())
-            if m_not_valid_below_u0590 is None:
-                return
-            else:
-                self._only_below_u0590 = False
-                self._unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_unicode_re
-                self._unquoted_string_re = self._unquoted_string_unicode_re
-                self._number_or_number_unit_re = self._number_or_number_unit_unicode_re
-                m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(normalized_string, m_not_valid_below_u0590.start())
-                if m_bidi_rtl_or_not_valid_unicode is None:
-                    return
-                elif m_bidi_rtl_or_not_valid_unicode.lastgroup == 'not_valid':
-                    self._traceback_not_valid_literal(normalized_string, m_bidi_rtl_or_not_valid_unicode.start())
-                else:  # .lastgroup == 'bidi_rtl'
-                    self._bidi_rtl = True
-                    m_not_valid_unicode = self._not_valid_unicode_re.search(normalized_string, m_bidi_rtl_or_not_valid_unicode.start())
-                    if m_not_valid_unicode is None:
-                        return
-                    else:
-                        self._traceback_not_valid_literal(normalized_string, m_not_valid_unicode.start())
+        if not self.literal_unicode:
+            self._traceback_not_valid_literal(state, m_not_valid_ascii.start())
+        state.pure_ascii = False
+        state.unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_below_u0590_re
+        state.unquoted_string_re = self._unquoted_string_below_u0590_re
+        state.number_or_number_unit_re = self._number_or_number_unit_below_u0590_re
+        m_not_valid_below_u0590 = self._not_valid_below_u0590_re.search(state.raw_source_string, m_not_valid_ascii.start())
+        if m_not_valid_below_u0590 is None:
+            return
+        state.only_below_u0590 = False
+        state.unquoted_string_or_key_path_re = self._unquoted_string_or_key_path_unicode_re
+        state.unquoted_string_re = self._unquoted_string_unicode_re
+        state.number_or_number_unit_re = self._number_or_number_unit_unicode_re
+        m_bidi_rtl_or_not_valid_unicode = self._bidi_rtl_or_not_valid_unicode_re.search(state.raw_source_string, m_not_valid_below_u0590.start())
+        if m_bidi_rtl_or_not_valid_unicode is None:
+            return
+        if m_bidi_rtl_or_not_valid_unicode.lastgroup == 'not_valid':
+            self._traceback_not_valid_literal(state.raw_source_string, m_bidi_rtl_or_not_valid_unicode.start())
+        state.bidi_rtl = True
+        m_not_valid_unicode = self._not_valid_unicode_re.search(state.raw_source_string, m_bidi_rtl_or_not_valid_unicode.start())
+        if m_not_valid_unicode is None:
+            return
+        self._traceback_not_valid_literal(state.raw_source_string, m_not_valid_unicode.start())
 
 
     def decode(self, string_or_bytes):
         '''
         Decode a Unicode string or byte string into Python objects.
         '''
-        state = State()
-        self._state = state
-        # Decode if necessary
         if isinstance(string_or_bytes, str):
-            raw_string = string_or_bytes
+            raw_source_string = string_or_bytes
         else:
             try:
-                raw_string = string_or_bytes.decode('utf8')
+                raw_source_string = string_or_bytes.decode('utf8')
             except Exception as e:
-                raise erring.SourceDecodeError(state, e)
+                raise erring.SourceDecodeError(e)
 
-        self._check_code_point_ranges_and_not_valid_literal(raw_string)
+        state = State(self, raw_source_string)
+        self._check_code_point_ranges_and_not_valid_literal(state)
+        state.line_iter = iter(raw_source_string.splitlines())
 
-        line_iter = iter(raw_string.splitlines())
-        del raw_string
-
-        ast, data = self._parse_lines(line_iter)
-
-        self._state = None
+        ast, data = self._parse_lines(state)
 
         return data
 
 
-    def _parse_lines(self, line_iter, full_ast=False):
+    def _parse_lines(self, line_iter, full_ast=False, bom=BOM):
         '''
         Process lines from source into abstract syntax tree (AST).  Then
         process the AST into standard Python objects.
@@ -466,7 +472,7 @@ class BespONDecoder(object):
 
         # Start by extracting the first line and stripping any BOM
         line = next(line_iter, '')
-        if line[:1] == BOM:
+        if line[:1] == bom:
             # Don't increment column, because that would throw off indentation
             # for subsequent lines
             line = line[1:]
@@ -1136,7 +1142,7 @@ class BespONDecoder(object):
             raw_val = m.group('key')
             state.last_column += len(raw_val) - 1
             line = line[len(raw_val):]
-            node = ScalarNode(state, implicit_type='string')
+            node = ScalarNode(state, implicit_type='key')
             if self._full_ast:
                 node.raw_val = raw_val
             node.final_val = raw_val
@@ -1145,11 +1151,11 @@ class BespONDecoder(object):
                 self._bidi_rtl_last_scalar_last_line = raw_val
                 self._bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._scalar_node_lookahead_append(node, line)
-        elif m.lastgroup == 'string':
-            raw_val = m.group('string')
+        elif m.lastgroup == 'unquoted_string':
+            raw_val = m.group('unquoted_string')
             state.last_column += len(raw_val) - 1
             line = line[len(raw_val):]
-            node = ScalarNode(state, implicit_type='string')
+            node = ScalarNode(state, implicit_type='unquoted_string')
             if self._full_ast:
                 node.raw_val = raw_val
             node.final_val = raw_val
