@@ -145,7 +145,7 @@ class RootNode(list):
         self.last_lineno = obj.last_lineno
         self.last_column = obj.last_column
 
-    def check_append_collection(self, obj):
+    def check_append_collection(self, obj, in_key_path_after_element1=False):
         if len(self) == 1:
             raise erring.ParseError('Only a single scalar or collection object is allowed at root level', obj)
         #### May need to revise consistency checks once add full support for
@@ -458,7 +458,7 @@ class DictlikeNode(collections.OrderedDict):
                 raise erring.ParseError('A key must be at the start of the line in non-inline mode', obj)
             if obj.external_indent != self.indent:
                 raise erring.IndentationError(obj)
-        if obj.basetype != 'scalar' and obj.basetype != 'key_path_element':
+        if obj.basetype != 'scalar':
             raise erring.ParseError('Dict-like objects only take scalar types as keys', obj)
         if obj in self:
             raise erring.ParseError('Duplicate keys are prohibited', obj)
@@ -635,12 +635,11 @@ class TagNode(object):
 
 
 
-class KeyPathElement(object):
+class KeyPathElementNode(ScalarNode):
     '''
     Individual scalar object (Unicode string) in a key path.
     '''
-    basetype = 'key_path_element'
-    def __init__(self, final_val, key_path, state):
+    def __init__(self, state, final_val, key_path):
         self.final_val = final_val
         self.key_path = key_path
         self.indent = state.indent
@@ -652,17 +651,11 @@ class KeyPathElement(object):
         self.last_lineno = state.last_lineno
         self.last_column = state.last_column
         self.nesting_depth = state.nesting_depth
-        self.external_indent = self.indent
-        self.external_at_line_start = self.at_line_start
-        self.external_first_lineno = self.first_lineno
+        self.external_indent = key_path.indent
+        self.external_at_line_start = key_path.at_line_start
+        self.external_first_lineno = key_path.first_lineno
         self.resolved = True
         self.extra_dependents = None
-
-    def __hash__(self):
-        return hash(self.final_val)
-
-    def __eq__(self, other):
-        return other == self.final_val or (hasattr(other, 'final_val') and other.final_val == self.final_val)
 
 
 class KeyPathNode(list):
@@ -676,13 +669,12 @@ class KeyPathNode(list):
                  'first_lineno', 'first_column', 'last_lineno', 'last_column',
                  'nesting_depth',
                  'external_indent', 'external_at_line_start', 'external_first_lineno',
-                 'resolved', 'extra_dependents', 'elements']
+                 'resolved', 'extra_dependents', 'raw_elements']
 
     def __init__(self, state, key_path,
                  open_noninline_list=OPEN_NONINLINE_LIST,
-                 path_separator=PATH_SEPARATOR,
-                 KeyPathElement=KeyPathElement):
-        list.__init__(self, (x if x == open_noninline_list else KeyPathElement(x, self, state) for x in key_path.split(path_separator)))
+                 path_separator=PATH_SEPARATOR):
+        list.__init__(self)
         if state.next_tag is not None:
             raise erring.ParseError('Tags cannot be applied to key paths', state, state.next_tag)
         self.indent = state.indent
@@ -699,3 +691,4 @@ class KeyPathNode(list):
         self.external_first_lineno = self.first_lineno
         self.resolved = False
         self.extra_dependents = None
+        self.raw_elements = key_path.split(path_separator)

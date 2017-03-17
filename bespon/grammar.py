@@ -46,6 +46,12 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                     ('unicode_whitespace', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680' +
                                             '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
                                             '\u2028\u2029\u202f\u205f\u3000')),
+                    # Reserved words
+                    ('none_type', 'none'),
+                    ('bool_true', 'true'),
+                    ('bool_false', 'false'),
+                    ('infinity_word', 'inf'),
+                    ('not_a_number_word', 'nan'),
                     # Other
                     ('bom', '\uFEFF')]
 
@@ -72,46 +78,6 @@ _RAW_LIT_SPECIAL = [# Special code points
                     ('self_alias', '_'),
                     # Combinations
                     ('end_tag_with_suffix', '{end_tag}{end_tag_suffix}'),
-                    # Tokens that are invalid when encountered after certain
-                    # other tokens.  The logic here is a little subtle.  Doc
-                    # comments and tags are parsed and then stored until being
-                    # used, unlike other objects that are immediately added to
-                    # the AST.  Whenever a scalar or collection object is
-                    # added to the AST, any stored doc comment and tag are
-                    # applied to it.  Because doc comments and tags are
-                    # stored, there is a danger of a stored object never being
-                    # used.
-                    #
-                    # One way to deal with this would be to have a check at
-                    # the relevant tokens for an unused doc comment or tag.
-                    # Another option, which is implemented, is to look ahead
-                    # after doc comments and tags to check for a valid
-                    # following token.  During the lookahead, all following
-                    # whitespace and line comments (as opposed to doc
-                    # comments) are discarded.  The next token after this
-                    # procedure is then checked against a set of invalid
-                    # tokens.  The invalid tokens are those that would either
-                    # close an object (as opposed to opening it, so that the
-                    # stored doc comment or tag would be used), or start an
-                    # object that is invalid in the current context (a second
-                    # doc comment or tag).  Blocks are a special case
-                    # requiring additional lookahead, to determine their type.
-                    # Any other token will either start a valid object, or
-                    # will be a universally invalid token that triggers its
-                    # own error.  Note that there is an exception for dicts in
-                    # non-inline syntax, since two doc comment/tag pairs can
-                    # follow each other sequentially, with the first being
-                    # applied to the dict and the second applying to the first
-                    # key.
-                    ('doc_comment_invalid_next_token', '{block_prefix}{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
-                    ('tag_invalid_next_token', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
-                    # Potentially valid tokens following a scalar object.
-                    # Most of these are only valid in inline mode, but there
-                    # doesn't necessarily need to be a check for that, since
-                    # these tokens themselves check their context.  This
-                    # allows a scalar to lookahead and catch errors with a
-                    # better error message than would otherwise be possible.
-                    ('scalar_valid_next_token_current_line', '{comment_delim}{assign_key_val}{end_inline_dict}{end_inline_list}{end_tag}{inline_element_separator}'),
                     # Numbers
                     ('number_or_number_unit_start', '0123456789+-')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
@@ -158,15 +124,24 @@ _RAW_RE_GRAMMAR.extend(_RAW_RE_WS)
 for k, v in _RAW_LIT_SPECIAL:
     _RAW_RE_GRAMMAR.append((k, re.escape(LIT_GRAMMAR[k])))
 
+
+def _capitalization_permutations_pattern(*words):
+    permutations = []
+    for w in words:
+        perm = ''.join('[{0}{1}]'.format(c.upper(), c.lower()) for c in w)
+        permutations.append(perm)
+    return '|'.join(permutations)
+
+
 # Types
 _RAW_RE_TYPE = [# None type
-                ('none_type', 'none'),
-                ('none_type_invalid_word', '[nN][oO][nN][eE]'),
+                ('none_type', LIT_GRAMMAR['none_type']),
+                ('none_type_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['none_type'])),
 
                 # Boolean
-                ('bool_true', 'true'),
-                ('bool_false', 'false'),
-                ('bool_invalid_word', '[tT][rR][uU][eE]|[fF][aA][lL][sS][eE]'),
+                ('bool_true', LIT_GRAMMAR['bool_true']),
+                ('bool_false', LIT_GRAMMAR['bool_false']),
+                ('bool_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false'])),
 
                 # Basic numeric elements
                 ('sign', '[+-]'),
@@ -209,11 +184,16 @@ _RAW_RE_TYPE = [# None type
                                     )
                                     '''.replace('\x20', '').replace('\n', '')),
                 ('hex_float', '{hex_prefix}{hex_float_value}'),
-                ('infinity', '{opt_sign_indent}inf'),
-                ('not_a_number', '{opt_sign_indent}nan'),
-                ('inf_or_nan', '{opt_sign_indent}(?:inf|nan)'),
-                ('float_invalid_word', '{opt_sign_indent}(?:[iI][nN][fF]|[nN][aA][nN])'),
+                ('infinity_word', LIT_GRAMMAR['infinity_word']),
+                ('infinity', '{opt_sign_indent}{infinity_word}'),
+                ('not_a_number_word', LIT_GRAMMAR['not_a_number_word']),
+                ('not_a_number', '{opt_sign_indent}{not_a_number_word}'),
+                ('inf_or_nan', '{opt_sign_indent}(?:{infinity_word}|{not_a_number_word})'),
+                ('float_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['infinity_word'], LIT_GRAMMAR['not_a_number_word'])),
                 ('float', '{dec_float}|{hex_float}|{inf_or_nan}'),
+
+                # Reserved words
+                ('reserved_word', '{none_type_reserved_word}|{bool_reserved_word}|{float_reserved_word}')
 
                 # Unquoted strings
                 ('unquoted_start_ascii', '{xid_start_ascii}'),
@@ -222,9 +202,12 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_continue_ascii', '{xid_continue_ascii}'),
                 ('unquoted_continue_below_u0590', '{xid_continue_below_u0590}'),
                 ('unquoted_continue_unicode', '{xid_continue_less_fillers}'),
-                ('unquoted_key_ascii', '_*{unquoted_start_ascii}{unquoted_continue_ascii}*'),
-                ('unquoted_key_below_u0590', '_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
-                ('unquoted_key_unicode', '_*{unquoted_start_unicode}{unquoted_continue_unicode}*'),
+                ('unquoted_key_ascii', '(?:_*{unquoted_start_ascii}{unquoted_continue_ascii}*|{open_noninline_list})'),
+                ('unquoted_key_below_u0590', '(?:_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*|{open_noninline_list})'),
+                ('unquoted_key_unicode', '(?:_*{unquoted_start_unicode}{unquoted_continue_unicode}*|{open_noninline_list})'),
+                ('unquoted_key_or_list_ascii', '(?:{unquoted_key_ascii}|{open_noninline_list})'),
+                ('unquoted_key_or_list_below_u0590', '(?:{unquoted_key_below_u0590}|{open_noninline_list})'),
+                ('unquoted_key_or_list_unicode', '(?:{unquoted_key_unicode}|{open_noninline_list})'),
                 ('unquoted_string_continue_ascii', '(?:{space}{unquoted_continue_ascii}+)'),
                 ('unquoted_string_continue_below_u0590', '(?:{space}{unquoted_continue_below_u0590}+)'),
                 ('unquoted_string_continue_unicode', '(?:{space}{unquoted_continue_unicode}+)'),
@@ -246,15 +229,12 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_dec_number_unit_unicode', '{unquoted_dec_number_unit_below_u0590}'),
 
                 # Key path
-                ('key_path_element_ascii', '(?:{unquoted_key_ascii}|{open_noninline_list})'),
-                ('key_path_element_below_u0590', '(?:{unquoted_key_below_u0590}|{open_noninline_list})'),
-                ('key_path_element_unicode', '(?:{unquoted_key_unicode}|{open_noninline_list})'),
-                ('key_path_continue_ascii', '(?:{path_separator}{key_path_element_ascii})'),
-                ('key_path_continue_below_u0590', '(?:{path_separator}{key_path_element_below_u0590})'),
-                ('key_path_continue_unicode', '(?:{path_separator}{key_path_element_unicode})'),
-                ('key_path_ascii', '{key_path_element_ascii}{key_path_continue_ascii}+'),
-                ('key_path_below_u0590', '{key_path_element_below_u0590}{key_path_continue_below_u0590}+'),
-                ('key_path_unicode', '{key_path_element_unicode}{key_path_continue_unicode}+'),
+                ('key_path_continue_ascii', '(?:{path_separator}{unquoted_key_or_list_ascii})'),
+                ('key_path_continue_below_u0590', '(?:{path_separator}{unquoted_key_or_list_below_u0590})'),
+                ('key_path_continue_unicode', '(?:{path_separator}{unquoted_key_or_list_unicode})'),
+                ('key_path_ascii', '{unquoted_key_or_list_ascii}{key_path_continue_ascii}+'),
+                ('key_path_below_u0590', '{unquoted_key_or_list_below_u0590}{key_path_continue_below_u0590}+'),
+                ('key_path_unicode', '{unquoted_key_or_list_unicode}{key_path_continue_unicode}+'),
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_ascii})(?:{path_separator}{unquoted_key_ascii})+'),
