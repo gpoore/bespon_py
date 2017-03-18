@@ -17,14 +17,30 @@ Abstract syntax tree (AST) nodes.
 from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
-import sys
 import collections
+import itertools
 from . import grammar
 from . import erring
 
 
 OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
-PATH_SEPARATOR= grammar.LIT_GRAMMAR['path_separator']
+PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
+
+
+# Key path nodes need to process their raw content into individual scalars.
+# This involves checking scalar values for reserved words.  All permutations
+# of reserved words are generated and put in a set for this purpose.  This
+# avoids the overhead of using a regex.  The float reserved words are excluded
+# from valid values, to be consistent with numeric float values being
+# excluded from key paths.
+_reserved_words = [grammar.LIT_GRAMMAR[k] for k in ('none_type', 'bool_true', 'bool_false', 'infinity_word', 'not_a_number_word')]
+_reserved_word_patterns = set([''.join(perm) for word in _reserved_words for perm in itertools.product(*zip(word.lower(), word.upper()))])
+_key_path_reserved_word_vals = {grammar.LIT_GRAMMAR['none_type']: None,
+                                grammar.LIT_GRAMMAR['bool_true']: True,
+                                grammar.LIT_GRAMMAR['bool_false']: False}
+_reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
+                        grammar.LIT_GRAMMAR['bool_true']: 'bool',
+                        grammar.LIT_GRAMMAR['bool_false']: 'bool'}
 
 
 
@@ -33,11 +49,11 @@ _node_common_slots = ['indent', 'at_line_start',
                       'inline', 'inline_indent',
                       'first_lineno', 'first_column',
                       'last_lineno', 'last_column',
-                      'nesting_depth',
                       'resolved']
 
 _node_scalar_or_collection_slots = ['tag', 'parent', 'index',
                                     'final_val',
+                                    'nesting_depth',
                                     'extra_dependents',
                                     'external_indent',
                                     'external_at_line_start',
@@ -162,7 +178,7 @@ class RootNode(list):
 
 
 
-def _init_common(self, state_or_obj):
+def _init_common(self, state_or_obj, tagable=True):
     '''
     Shared initialization for all AST nodes below root level.
 
@@ -173,6 +189,8 @@ def _init_common(self, state_or_obj):
     try:
         tag = state_or_obj.next_tag
         state_or_obj.next_tag = None
+        if not tagable and tag is not None:
+            raise erring.ParseError('A tag was applied to an untagable object', state_or_obj, tag)
     except AttributeError:
         tag = None
     self.tag = tag
@@ -185,7 +203,6 @@ def _init_common(self, state_or_obj):
     self.first_column = state_or_obj.first_column
     self.last_lineno = state_or_obj.last_lineno
     self.last_column = state_or_obj.last_column
-    self.nesting_depth = state_or_obj.nesting_depth
 
     if tag is None:
         # If there is no tag, the external appearance of the object is
@@ -252,7 +269,8 @@ class ScalarNode(object):
     basetype = 'scalar'
     __slots__ = (_node_common_slots + _node_scalar_or_collection_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
-                  'raw_val', 'base'])
+                  'raw_val', 'base', 'key_path', 'section',
+                  'assign_key_val_lineno', 'assign_key_val_column'])
 
     def __init__(self, state, init_common=_init_common,
                  delim=None, block=None, implicit_type=None, base=None):
@@ -261,6 +279,8 @@ class ScalarNode(object):
         self.implicit_type = implicit_type
         self.base = base
         self.continuation_indent = state.continuation_indent
+        self.key_path = None
+        self.section = None
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
         init_common(self, state)
@@ -292,7 +312,7 @@ class ListlikeNode(list):
     def __init__(self, state, init_common=_init_common,
                  keypath_parent=None, keypath_traversable=False):
         list.__init__(self)
-
+        self.nesting_depth = state.nesting_depth
         self.keypath_parent = keypath_parent
         self.keypath_traversable = keypath_traversable
         self.unresolved_child_count = 0
@@ -417,6 +437,7 @@ class DictlikeNode(collections.OrderedDict):
     def __init__(self, state_or_obj, init_common=_init_common,
                  keypath_parent=None, keypath_traversable=False):
         collections.OrderedDict.__init__(self)
+        self.nesting_depth = state.nesting_depth
 
         self.keypath_parent = keypath_parent
         self.keypath_travesable = keypath_traversable
@@ -635,29 +656,6 @@ class TagNode(object):
 
 
 
-class KeyPathElementNode(ScalarNode):
-    '''
-    Individual scalar object (Unicode string) in a key path.
-    '''
-    def __init__(self, state, final_val, key_path):
-        self.final_val = final_val
-        self.key_path = key_path
-        self.indent = state.indent
-        self.at_line_start = state.at_line_start
-        self.inline = state.inline
-        self.inline_indent = state.inline_indent
-        self.first_lineno = state.first_lineno
-        self.first_column = state.first_column
-        self.last_lineno = state.last_lineno
-        self.last_column = state.last_column
-        self.nesting_depth = state.nesting_depth
-        self.external_indent = key_path.indent
-        self.external_at_line_start = key_path.at_line_start
-        self.external_first_lineno = key_path.first_lineno
-        self.resolved = True
-        self.extra_dependents = None
-
-
 class KeyPathNode(list):
     '''
     Abstract key path.
@@ -665,30 +663,48 @@ class KeyPathNode(list):
     Used as dict keys or in sections for assigning in nested objects.
     '''
     basetype = 'key_path'
-    __slots__ = ['indent', 'at_line_start', 'inline', 'inline_indent',
-                 'first_lineno', 'first_column', 'last_lineno', 'last_column',
-                 'nesting_depth',
-                 'external_indent', 'external_at_line_start', 'external_first_lineno',
-                 'resolved', 'extra_dependents', 'raw_elements']
+    __slots__ = _node_common_slots + ['external_indent', 'external_at_line_start',
+                                      'external_first_lineno', 'resolved',
+                                      'extra_dependents', 'raw_val',
+                                      'assign_key_val_lineno', 'assign_key_val_column']
 
-    def __init__(self, state, key_path,
+    def __init__(self, state, key_path_raw_val,
+                 init_common=_init_common,
                  open_noninline_list=OPEN_NONINLINE_LIST,
-                 path_separator=PATH_SEPARATOR):
+                 path_separator=PATH_SEPARATOR,
+                 reserved_word_patterns=_reserved_word_patterns,
+                 key_path_reserved_word_vals=_key_path_reserved_word_vals,
+                 reserved_word_types=_reserved_word_types,
+                 ScalarNode=ScalarNode):
         list.__init__(self)
-        if state.next_tag is not None:
-            raise erring.ParseError('Tags cannot be applied to key paths', state, state.next_tag)
-        self.indent = state.indent
-        self.at_line_start = state.at_line_start
-        self.inline = state.inline
-        self.inline_indent = state.inline_indent
-        self.first_lineno = state.first_lineno
-        self.first_column = state.first_column
-        self.last_lineno = state.last_lineno
-        self.last_column = state.last_column
-        self.nesting_depth = state.nesting_depth
-        self.external_indent = self.indent
-        self.external_at_line_start = self.at_line_start
-        self.external_first_lineno = self.first_lineno
-        self.resolved = False
-        self.extra_dependents = None
-        self.raw_elements = key_path.split(path_separator)
+        init_common(self, tagable=False)
+
+        first_column = state.first_column
+        last_column = state.last_column
+        for kp_elem_raw in key_path_raw_val.split(path_separator):
+            if kp_elem_raw == open_noninline_list:
+                self.append(kp_elem_raw)
+                last_column += 2
+                first_column = last_column
+            else:
+                last_column += len(kp_elem_raw) - 1
+                if kp_elem_raw in reserved_word_patterns:
+                    try:
+                        kp_elem_final = key_path_reserved_word_vals[kp_elem_raw]
+                    except KeyError:
+                        raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(kp_elem_raw.lower()), self)
+                    implicit_type = _reserved_word_types[kp_elem_raw]
+                else:
+                    kp_elem_final = kp_elem_raw
+                    implicit_type = 'key'
+                kp_elem_node = ScalarNode(state, implicit_type=implicit_type)
+                kp_elem_node.first_column = first_column
+                kp_elem_node.last_column = last_column
+                if state.full_ast:
+                    kp_elem_node.raw_val = kp_elem_raw
+                kp_elem_node.final_val = kp_elem_final
+                kp_elem_node.resolved = True
+                kp_elem_node.key_path = self
+                self.append(kp_elem_node)
+                last_column += 2
+                first_column = last_column

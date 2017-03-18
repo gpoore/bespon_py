@@ -638,8 +638,6 @@ class BespONDecoder(object):
         Open a non-inline list, or start a key path that has a list as its
         first element.
         '''
-        if line[1:2] == path_separator:
-            return self._parse_token_unquoted_string_or_key_path(line, state)
         # Any tag or doc comment is handled during opening the list.
         # No need to check for `**`, because that would attempt to open a list
         # twice, which would trigger an error.
@@ -1134,8 +1132,10 @@ class BespONDecoder(object):
     def _parse_token_unquoted_string_or_key_path(self, line, state,
                                                  section=False,
                                                  whitespace=INDENT,
+                                                 open_noninline_list=OPEN_NONINLINE_LIST,
                                                  ScalarNode=ScalarNode,
-                                                 KeyPathNode=KeyPathNode):
+                                                 KeyPathNode=KeyPathNode,
+                                                 KeyPathElementNode=KeyPathElementNode):
         '''
         Parse an unquoted key, a key path, or an unquoted multi-word string.
         '''
@@ -1188,9 +1188,9 @@ class BespONDecoder(object):
             raw_val = m.group('key_path')
             line = line[len(raw_val):]
             state.last_column += len(raw_val) - 1
-            if state.in_tag:
-                raise erring.ParseError('Key paths are not allowed in tags', state)
             node = KeyPathNode(state, raw_val)
+            if state.full_ast:
+                node.raw_val = raw_val
             node.resolved = True
             state.next_scalar = node
             state.next_cached = True
@@ -1214,8 +1214,6 @@ class BespONDecoder(object):
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-            # This isn't a valid key, so go ahead and treat as a val
-            state.ast.append_scalar_val()
             return self._parse_line_continue_last(line, state)
         if m.lastgroup == 'unquoted_string_unfinished':
             content_lines = []
@@ -1266,7 +1264,5 @@ class BespONDecoder(object):
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = content_lines[-1]
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-            # This isn't a valid key, so go ahead and treat as a val
-            state.ast.append_scalar_val()
             return line
         raise ValueError

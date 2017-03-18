@@ -25,6 +25,8 @@ START_TAG = grammar.LIT_GRAMMAR['start_tag']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 INLINE_ELEMENT_SEPARATOR = grammar.LIT_GRAMMAR['inline_element_separator']
 OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
+PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
+ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 
 
 
@@ -69,7 +71,36 @@ class Ast(object):
         self.pos = root
 
 
-    def append_scalar_key(self, DictlikeNode=astnodes.DictlikeNode):
+    def _noninline_climb(self, scalar_obj, pos):
+        '''
+        Starting at `pos`, climb to a higher level in that AST that is
+        potentially compatible with `scalar_obj`.  For use in non-inline mode.
+        '''
+        len_indent = len(scalar_obj.external_indent)
+        while len_indent < len(pos.indent):
+            if pos.basetype == 'dict':
+                if not pos:
+                    raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
+                if pos.awaiting_val:
+                    raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
+            elif pos.basetype == 'list':
+                # No need to check for an empty list, since an empty
+                # non-inline list would necessarily be open
+                if pos.open:
+                    raise erring.ParseError('A list-like object ended before an expected value was added', pos)
+            else:  # other invalid location
+                raise erring.IndentationError(scalar_obj)
+            parent = pos.parent
+            parent.last_lineno = pos.last_lineno
+            parent.last_column = pos.last_column
+            pos = parent
+        self.pos = pos
+        return pos
+
+
+
+    def append_scalar_key(self, assign_key_val=ASSIGN_KEY_VAL,
+                          DictlikeNode=astnodes.DictlikeNode):
         '''
         Append a scalar key.
 
@@ -77,57 +108,43 @@ class Ast(object):
         if the key's indentation does not match that of the current position,
         try to find an appropriate pre-existing dict or attempt to create one.
         '''
-        # No need to check for non-scalars or scalars that are not valid keys,
-        # such as unquoted strings.  Non-scalars can never invoke this.
-        # Scalars that can't be keys are treated as values immediately, rather
-        # than being cached until the next token.
+        # Checks could be avoided by treating any scalar that isn't a valid
+        # key as a value as soon as it is parsed, rather than caching it like
+        # a potentially valid key.  The current approach gives more
+        # informative error messages than would be possible with that
+        # approach.
         state = self.state
         scalar_obj = state.next_scalar
+        if state.first_lineno != scalar_obj.last_lineno:
+            if not (state.inline and state.first_lineno == scalar_obj.last_lineno + 1):
+                raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in non-inline mode, and no later than the following line in inline mode'.format(assign_key_val), state)
+            if state.last_line_comment_lineno == calar_obj.last_lineno:
+                raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
         state.next_scalar = None
         state.next_cache = False
+        scalar_obj.assign_key_val_lineno = state.first_lineno
+        scalar_obj.assign_key_val_column = state.first_column
         if scalar_obj.basetype == 'key_path':
             self._append_key_path(scalar_obj)
             return
+        if scalar_obj.basetype != 'scalar' or scalar_obj.implicit_type == 'unquoted_string':
+            raise erring.ParseError('Unquoted strings and alias types are not valid keys for dict-like objects', scalar_obj)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if scalar_obj.inline or (scalar_obj.external_indent == pos.indent and pos.basetype == 'dict'):
             pos.check_append_scalar_key(scalar_obj)
         elif len(scalar_obj.external_indent) >= len(pos.indent):
-            # Object will end up in a dict, so its `.nesting_depth` is incorrect
-            # and must be updated.  This won't be reflected in state, so
-            # update that directly.
-            scalar_obj.nesting_depth += 1
-            self.state.nesting_depth += 1
             dict_obj = DictlikeNode(scalar_obj)
             # No need to set `.open=True`; it is irrelevant in non-inline
-            # mode.  Append the collection automatically updates `self.pos`.
+            # mode.
             self.append_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
         else:
-            len_indent = len(scalar_obj.external_indent)
-            while len_indent < len(pos.indent):
-                if pos.basetype == 'dict':
-                    if not pos:
-                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
-                    if pos.awaiting_val:
-                        raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                elif pos.basetype == 'list':
-                    # No need to check for an empty list, since an empty
-                    # non-inline list would necessarily be open
-                    if pos.open:
-                        raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-                else:  # other invalid location
-                    raise erring.IndentationError(scalar_obj)
-                parent = pos.parent
-                parent.last_lineno = pos.last_lineno
-                parent.last_column = pos.last_column
-                pos = parent
-            # No need to check whether final pos is a dict; if a dict should
-            # exist at this level, it must have already been created before
-            # the lower level of the AST was reached.
+            pos = self._noninline_climb(scalar_obj, pos)
+            # No need to check whether final location is a dict; if a dict
+            # should exist at this level, it must have already been created
+            # before the lower level of the AST was reached.
             pos.check_append_scalar_key(scalar_obj)
-            self.state.nesting_depth = pos.nesting_depth
-            self.pos = pos
 
 
     def append_scalar_val(self):
@@ -142,6 +159,8 @@ class Ast(object):
         scalar_obj = state.next_scalar
         state.next_scalar = None
         state.next_cache = False
+        if scalar_obj.implicit_type == 'key_path':
+            raise erring.ParseError('Key paths are only allowed as dict keys, not as values', scalar_obj)
         if not scalar_obj.resolved:
             self._unresolved_nodes.append(scalar_obj)
         self.pos.check_append_scalar_val(scalar_obj)
@@ -155,10 +174,27 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In non-inline mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
+        self._unresolved_nodes.append(collection_obj)
+        self.pos.check_append_collection(collection_obj)
+        # Wait to check nesting depth until after appending, because nesting
+        # depth is inherited from parent, and parent is set during appending.
         if collection_obj.nesting_depth > self.max_nesting_depth:
             raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
-        self._unresolved_nodes.append(obj)
-        self.pos.check_append_collection(obj)
+        self.pos = collection_obj
+
+
+    def _append_key_path_collection(self, collection_obj):
+        '''
+        Append a collection created within a key path.
+        '''
+        # There is never a need to climb to a higher level in the AST.  In
+        # inline mode, that would be taken care of by closing delimiters.
+        # In non-inline mode, keys and list element openers `*` can trigger
+        # climbing the AST based on indentation.
+        self._unresolved_nodes.append(collection_obj)
+        self.pos.check_append_key_path_collection(collection_obj)
+        if collection_obj.nesting_depth > self.max_nesting_depth:
+            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
         self.pos = collection_obj
 
 
@@ -171,7 +207,6 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
-        state.nesting_depth += 1
         dict_obj = DictlikeNode(state)
         dict_obj.open = True
         self._append_collection(dict_obj)
@@ -195,7 +230,6 @@ class Ast(object):
         pos.last_column = state.last_column
         pos = pos.parent
         state.inline = pos.inline
-        state.nesting_depth -= 1
         self.pos = pos
 
 
@@ -207,7 +241,6 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
-        state.nesting_depth += 1
         list_obj = ListlikeNode(state)
         list_obj.open = True
         self.append_collection(list_obj)
@@ -229,7 +262,6 @@ class Ast(object):
         pos.last_column = state.last_column
         pos = pos.parent
         state.inline = pos.inline
-        state.nesting_depth -= 1
         self.pos = pos
 
 
@@ -248,7 +280,6 @@ class Ast(object):
         if not external_inline:
             state.inline = True
             state.inline_indent = state.indent
-        # Tags aren't collections, so don't increment `.nesting_depth`
         tag_node = TagNode(state, external_inline)
         self.pos = tag_node
 
@@ -269,7 +300,6 @@ class Ast(object):
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
         state.inline = pos.external_inline
         state.next_tag = pos
-        # Tags aren't collections, so don't decrement `.nesting_depth`
         self.pos = self._in_tag_cached_pos
         state.in_tag = False
 
@@ -310,29 +340,11 @@ class Ast(object):
             pos.last_lineno = state.last_lineno
             pos.last_column = state.last_column
         elif len(state.indent) >= len(pos.indent):
-            state.nesting_depth += 1
             list_obj = ListlikeNode(state)
             list_obj.open = True
             self.append_collection(list_obj)
         else:
-            len_indent = len(state.indent)
-            while len_indent < len(pos.indent):
-                if pos.basetype == 'dict':
-                    if not pos:
-                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
-                    if pos.awaiting_val:
-                        raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                elif pos.basetype == 'list':
-                    # No need to check for an empty list, since an empty
-                    # non-inline list would necessarily be open
-                    if pos.open:
-                        raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-                else:  # other invalid location
-                    raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_NONINLINE_LIST), state)
-                parent = pos.parent
-                parent.last_lineno = pos.last_lineno
-                parent.last_column = pos.last_column
-                pos = parent
+            pos = self._noninline_climb(scalar_obj, pos)
             if state.indent == pos.indent and pos.basetype == 'list':
                 # Don't need to check for a list that is already open.
                 # If the list were already open, would still be at the level
@@ -343,57 +355,51 @@ class Ast(object):
                 pos.last_column = state.last_column
             else:
                 raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_NONINLINE_LIST), state)
-            state.nesting_depth = pos.nesting_depth
-            self.pos = pos
 
 
     def _append_key_path(self, kp_obj,
+                         open_noninline_list=OPEN_NONINLINE_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
-                         KeyPathElementNode=astnodes.KeyPathElementNode,
-                         open_noninline_list=OPEN_NONINLINE_LIST):
+                         ListlikeNode=astnodes.ListlikeNode):
         '''
         Create the AST node corresponding to the elements in a key path.
         '''
         state = self.state
-        if state.inline:
-
-
-        raw_kp_0 = kp_obj.raw_elements[0]
-        init_pos = self.pos
-        if raw_kp_0 == open_noninline_list:
-            raise NotImplementedError
+        pos = self.pos
+        if kp_obj.inline or (kp_obj.external_indent == pos.indent and pos.basetype == 'dict'):
+            initial_pos = pos
+        elif len(kp_obj.external_indent) >= len(pos.indent):
+            dict_obj = DictlikeNode(kp_obj)
+            # No need to set `.open=True`; it is irrelevant in non-inline
+            # mode.  Append the collection automatically updates `self.pos`.
+            self.append_collection(dict_obj)
+            initial_pos = dict_obj
         else:
-            if raw_kp_0 in self.pos:
-                self.pos = self.pos[raw_kp_0]
-                state.at_line_start = False
-                state.nesting_depth += 1
-                state.first_column += len(raw_kp_0) + 1
+            pos = self._noninline_climb(kp_obj, pos)
+            initial_pos = pos
+        pos = initial_pos
+        for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
+            if pos.basetype == 'dict' and kp_elem in pos:
+                pos = pos[kp_elem]
+                if not pos.key_path_traversable:
+                    raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
-                kp_obj_0 = KeyPathElementNode(state, raw_kp_0, kp_obj)
-                self.append_scalar_key(kp_obj_0)
-                state.first_column += len(raw_kp_0) + 1
-        for raw_kp_n in kp_obj.raw_elements[1:]:
-            if raw_kp_n in self.pos:
-                self.pos = self.pos[raw_kp_n]
-                state.at_line_start = False
-                state.nesting_depth += 1
-                state.first_column += len(raw_kp_0) + 1
-            else:
-                dict_obj = DictlikeNode(kp_obj, keypath_traversable=True)
-                dict_obj.nesting_depth = state.nesting_depth
-                dict_obj.open = True
-                dict_obj.keypath_parent = init_pos
-                self.append_collection(dict_obj, in_key_path_after_element1=True)
-                self.pos = dict_obj
-                kp_obj_n = KeyPathElementNode(state, raw_kp_n, kp_obj)
-                self.pos.check_append_scalar_key(kp_obj_n)
-
-
-
-
-
-
-
+                pos.check_append_key_path_scalar_key(kp_elem)
+                if next_kp_elem == open_noninline_list:
+                    collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, key_path_traversable=True)
+                else:
+                    collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, key_path_traversable=True)
+                self._append_key_path_collection(collection_obj)
+                pos = collection_obj
+                if initial_pos.key_path_scope is None:
+                    initial_pos.key_path_scope = [collection_obj]
+                else:
+                    initial_pos.key_path_scope.append(collection_obj)
+        if kp_obj[-1] == open_noninline_list:
+            pos.open = True
+        else:
+            pos.check_append_key_path_scalar_key(kp_obj[-1])
+        self.pos = pos
 
 
     def finalize(self):
