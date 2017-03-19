@@ -43,8 +43,10 @@ MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
 BOM = grammar.LIT_GRAMMAR['bom']
 BLOCK_PREFIX = grammar.LIT_GRAMMAR['block_prefix']
 BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
+ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
-                       ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM])
+                       ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM,
+                       ASSIGN_KEY_VAL])
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 NUMBER_OR_NUMBER_UNIT_START = grammar.LIT_GRAMMAR['number_or_number_unit_start']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
@@ -59,11 +61,12 @@ class State(object):
     source, the current parsing context, cached values, and regular
     expressions appropriate for analyzing the source.
     '''
-    __slots__ = ['source', 'source_include_depth',
-                 'source_initial_nesting_depth',
+    __slots__ = ['source_name', 'source_include_depth',
+                 'source_initial_nesting_depth', 'source_inline',
+                 'embedded',
                  'indent', 'continuation_indent', 'at_line_start',
                  'inline', 'inline_indent',
-                 'first_lineno', 'first_column', 'last_lineno', 'last_column',
+                 'first_lineno', 'first_colno', 'last_lineno', 'last_colno',
                  'nesting_depth',
                  'next_cache',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
@@ -73,18 +76,22 @@ class State(object):
                  'type_data', 'bom_offset', 'full_ast',
                  'raw_source_string', 'source_lines', 'source_lines_iter', 'ast',
                  'pure_ascii', 'only_below_u0590',
-                 'bidi_rtl', 'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
+                 'bidi_rtl', 'bidi_rtl_re',
+                 'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
                  'newline_re',
                  'unquoted_string_or_key_path_re', 'unquoted_string_re', 'number_or_number_unit_re',
                  'escape_unicode', 'unescape_unicode', 'unescape_bytes']
     def __init__(self, decoder, raw_source_string,
-                 source=None, source_include_depth=0,
+                 source_name=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
-                 indent=None, at_line_start=True,
+                 embedded=False,
+                 indent='', at_line_start=True,
                  inline=False, inline_indent=None,
-                 first_lineno=1, first_column=1,
+                 first_lineno=1, first_colno=1,
                  type_data=None, full_ast=False):
-        if not all(x is None or isinstance(x, str) for x in (source, indent, inline_indent)):
+        if not all(x is None or isinstance(x, str) for x in (source_name, inline_indent)):
+            raise TypeError('Invalid keyword argument value')
+        if not all(isinstance(x, str) for x in (indent,)):
             raise TypeError('Invalid keyword argument value')
         if any(x is not None and x.lstrip('\x20\t') for x in (indent, inline_indent)):
             raise ValueError('Invalid characters in "indent" or "inline_indent"; only spaces and tabs are allowed')
@@ -93,19 +100,21 @@ class State(object):
                 raise ValueError('Invalid keyword argument value')
             else:
                 raise TypeError('Invalid keyword argument value')
-        if not all(isinstance(x, int) and x > 0 for x in (first_lineno, first_column)):
-            if all(isinstance(x, int) for x in (first_lineno, first_column)):
+        if not all(isinstance(x, int) and x > 0 for x in (first_lineno, first_colno)):
+            if all(isinstance(x, int) for x in (first_lineno, first_colno)):
                 raise ValueError('Invalid keyword argument value')
             else:
                 raise TypeError('Invalid keyword argument value')
-        if not all(x in (True, False) for x in (at_line_start, inline, full_ast)):
+        if not all(x in (True, False) for x in (at_line_start, inline, full_ast, embedded)):
             raise TypeError('Invalid keyword argument value')
         if type_data is not None and not (isinstance(type_data, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in type_data)):
             raise TypeError('Invalid keyword argument value')
 
-        self.source = source or '<data>'
+        self.source_name = source_name or '<data>'
         self.source_include_depth = source_include_depth
         self.source_initial_nesting_depth = source_initial_nesting_depth
+        self.source_inline = inline
+        self.embedded = embedded
 
         self.indent = indent
         self.continuation_indent = None
@@ -113,9 +122,9 @@ class State(object):
         self.inline = inline
         self.inline_indent = inline_indent
         self.first_lineno = first_lineno
-        self.first_column = first_column
+        self.first_colno = first_colno
         self.last_lineno = self.first_lineno
-        self.last_column = self.first_column
+        self.last_colno = self.first_colno
         self.nesting_depth = self.source_initial_nesting_depth
 
         self.next_cache = False
@@ -156,10 +165,10 @@ class State(object):
             newline_count += 1
             newline_index = m.start()
         if newline_count == 0:
-            self.last_column += index - self.bom_offset
+            self.last_colno += index - self.bom_offset
         else:
             self.last_lineno += newline_count
-            self.last_column = index - newline_index
+            self.last_colno = index - newline_index
         code_point = self.raw_source_string[index]
         code_point_esc = self.escape_unicode(code_point)
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
@@ -174,7 +183,7 @@ class State(object):
         self.pure_ascii = True
         self.only_below_u0590 = True
         self.bidi_rtl = False
-        self.bidi_rtl_re = decode._bidi_rtl_re
+        self.bidi_rtl_re = decoder._bidi_rtl_re
         self.bidi_rtl_last_scalar_last_lineno = 0
         self.bidi_rtl_last_scalar_last_line = ''
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_ascii_re
@@ -539,8 +548,8 @@ class BespONDecoder(object):
             state.indent = ''
             state.continuation_indent = ''
             state.at_line_start = True
-            state.first_column = 1
-            state.last_column = 1
+            state.first_colno = 1
+            state.last_colno = 1
             return line
         line_lstrip_ws = line.lstrip(whitespace)
         indent_len = len(line) - len(line_lstrip_ws)
@@ -548,9 +557,9 @@ class BespONDecoder(object):
         state.indent = indent
         state.continuation_indent = indent
         state.at_line_start = True
-        column = indent_len + 1
-        state.first_column = column
-        state.last_column = column
+        colno = indent_len + 1
+        state.first_colno = colno
+        state.last_colno = colno
         return line_lstrip_ws
 
 
@@ -560,7 +569,7 @@ class BespONDecoder(object):
         '''
         line = next(state.source_lines_iter, None)
         state.last_lineno += 1
-        state.last_column = 1
+        state.last_colno = 1
         return line
 
 
@@ -580,8 +589,8 @@ class BespONDecoder(object):
             state.indent = ''
             state.continuation_indent = ''
             state.at_line_start = True
-            state.first_column = 1
-            state.last_column = 1
+            state.first_colno = 1
+            state.last_colno = 1
             return line
         line_lstrip_ws = line.lstrip(whitespace)
         indent_len = len(line) - len(line_lstrip_ws)
@@ -589,9 +598,9 @@ class BespONDecoder(object):
         state.indent = indent
         state.continuation_indent = indent
         state.at_line_start = True
-        column = indent_len + 1
-        state.first_column = column
-        state.last_column = column
+        colno = indent_len + 1
+        state.first_colno = colno
+        state.last_colno = colno
         return line_lstrip_ws
 
 
@@ -603,8 +612,8 @@ class BespONDecoder(object):
         state.first_lineno = state.last_lineno
         state.continuation_indent = state.indent
         state.at_line_start = False
-        state.last_column += 1
-        state.first_column = state.last_column
+        state.last_colno += 1
+        state.first_colno = state.last_colno
         return line
 
 
@@ -613,9 +622,9 @@ class BespONDecoder(object):
         Parse whitespace.
         '''
         line_lstrip_ws = line.lstrip(whitespace)
-        column = state.last_column + len(line) - len(line_lstrip_ws)
-        state.first_column = column
-        state.last_column = column
+        colno = state.last_colno + len(line) - len(line_lstrip_ws)
+        state.first_colno = colno
+        state.last_colno = colno
         return line_lstrip_ws
 
 
@@ -626,9 +635,9 @@ class BespONDecoder(object):
         if state.next_scalar is None:
             raise erring.ParseError('Missing key cannot be assigned', state)
         state.ast.append_scalar_key()
-        column = state.last_column + 1
-        state.first_column = column
-        state.last_column = column
+        colno = state.last_colno + 1
+        state.first_colno = colno
+        state.last_colno = colno
         return line[1:]
 
 
@@ -665,7 +674,7 @@ class BespONDecoder(object):
         '''
         if state.next_scalar is not None:
             state.ast.append_scalar_val()
-        elif state.next_cached is not None:
+        elif state.next_cache:
             raise erring.ParseError('Cannot end a dict-like object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.end_inline_dict()
         return self._parse_line_continue_last(line[1:], state)
@@ -687,7 +696,7 @@ class BespONDecoder(object):
         '''
         if state.next_scalar is not None:
             state.ast.append_scalar_val()
-        elif state.next_cached is not None:
+        elif state.next_cache:
             raise erring.ParseError('Cannot end a list-like object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.end_inline_list()
         return self._parse_line_continue_last(line[1:], state)
@@ -716,10 +725,10 @@ class BespONDecoder(object):
             raise erring.ParseError('Invalid end tag delimiter', state)
         if state.next_scalar is not None:
             state.ast.append_scalar_val()
-        # No need to check `state.next_cached`, since doc comments and tags
+        # No need to check `state.next_cache`, since doc comments and tags
         # aren't possible inside tags.
         # Account for end tag suffix
-        state.last_column += 1
+        state.last_colno += 1
         state.ast.end_tag()
         # Account for end tag suffix with `[2:]`
         return self._parse_line_continue_last(line[2:], state)
@@ -731,7 +740,7 @@ class BespONDecoder(object):
         '''
         if state.next_scalar is not None:
             state.ast.append_scalar_val()
-        elif state.next_cached:
+        elif state.next_cache:
             raise erring.ParseError('Cannot open a collection object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.open_inline_collection()
         return self._parse_line_continue_last(line[1:], state)
@@ -748,7 +757,7 @@ class BespONDecoder(object):
         if m is not None:
             content = line[:m.start(group)]
             line = line[m.end(group):]
-            state.last_column += 2*len(delim) + len(content) - 1
+            state.last_colno += 2*len(delim) + len(content) - 1
             return ([content], content, line)
         if section:
             raise erring.ParseError('Unterminated {0} (section strings must start and end on the same line)'.format(name), state)
@@ -768,7 +777,7 @@ class BespONDecoder(object):
             if line == '':
                 raise erring.ParseError('Unterminated {0} (inline delimited strings cannot contain empty lines)'.format(name), state)
             if line[0] in unicode_whitespace_set:
-                state.last_column += len(continuation_indent)
+                state.last_colno += len(continuation_indent)
                 if line[0] in whitespace:
                     raise erring.IndentationError(state)
                 raise erring.ParseError('A Unicode whitespace code point "{0}" was found where a wrapped line was expected to start'.format(self._escape_unicode(line[0])), state)
@@ -778,7 +787,7 @@ class BespONDecoder(object):
                     line_content = line[:m.start(group)]
                     line = line[m.end(group):]
                     content_lines.append(line_content)
-                    state.last_column += len(continuation_indent) + m.end(group) - 1
+                    state.last_colno += len(continuation_indent) + m.end(group) - 1
                     break
             content_lines.append(line)
             line = self._parse_line_get_next(line, state)
@@ -827,7 +836,7 @@ class BespONDecoder(object):
             if state.inline or state.next_scalar.last_lineno == state.first_lineno:
                 raise erring.ParseError('Cannot start a doc comment when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
-        elif state.next_cached:
+        elif state.next_cache:
             raise erring.ParseError('Cannot start a doc comment when a prior object has not yet been resolved', state, unresolved_cache=True)
         delim = line[:len_delim]
         content_lines, content, line = self._parse_delim_inline('doc comment', delim, line_strip_delim, state)
@@ -835,9 +844,9 @@ class BespONDecoder(object):
         if state.full_ast:
             node.raw_val = content_lines
         node.final_val = content
-        node.resolved = True
+        node._resolved = True
         state.next_doc_comment = node
-        state.next_cached = True
+        state.next_cache = True
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
             state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
@@ -866,9 +875,9 @@ class BespONDecoder(object):
         if state.full_ast:
             node.raw_val = content_lines
         node.final_val = content
-        node.resolved = True
+        node._resolved = True
         state.next_scalar = node
-        state.next_cached = True
+        state.next_cache = True
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
             state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
@@ -894,7 +903,7 @@ class BespONDecoder(object):
             content_lines = ['']
             content = ''
             line = line[2:]
-            state.last_column += 1
+            state.last_colno += 1
         else:
             if len_delim > 3 and (len_delim % 3 != 0 or len_delim > max_delim_length):
                 raise erring.ParseError('Escaped string delims must have lengths of 1 or multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
@@ -911,9 +920,9 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
         node.final_val = content_esc
-        node.resolved = True
+        node._resolved = True
         state.next_scalar = node
-        state.next_cached = True
+        state.next_cache = True
         if state.bidi_rtl:
             self.bidi_rtl_last_scalar_last_line = content_lines[-1]
             self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
@@ -922,6 +931,8 @@ class BespONDecoder(object):
 
     def _parse_token_section(self, delim, line, state, whitespace=INDENT,
                              SectionNode=SectionNode,
+                             open_noninline_list=OPEN_NONINLINE_LIST,
+                             ScalarNode=ScalarNode,
                              comment_delim=COMMENT_DELIM):
         '''
         Parse a section.  This is invoked by `_parse_token_block_prefix()`.
@@ -934,23 +945,40 @@ class BespONDecoder(object):
         elif state.next_tag is not None:
             raise erring.ParseError('Cannot start a section when a prior tag has not yet been resolved (sections cannot be tagged)', state, unresolved_cache=True)
         node = SectionNode(state, delim)
-        line_lstrip_ws = line.lstrip(whitespace)
-        column = len(delim) + 1 + len(line) - len(line_lstrip_ws)
-        state.first_column = column
-        state.last_column = column
-        line = self._parse_scalar_token[line[:1]](line, state, section=True)
-        node.last_column = state.next_scalar.last_column
-        node.final_val = state.next_scalar
-        state.next_scalar = None
-        state.next_cached = False
-        node.resolved = True
+        line_lstrip_ws = line[len(delim)+1:].lstrip(whitespace)
+        colno = len(delim) + 1 + len(line) - len(line_lstrip_ws)
+        state.first_colno = colno
+        state.last_colno = colno
+        if line_lstrip_ws[:1] == open_noninline_list:
+            next_scalar = ScalarNode(state, implicit_type='key')
+            if self.full_ast:
+                next_scalar.raw_val = open_noninline_list
+            next_scalar.final_val = open_noninline_list
+            next_scalar._resolved = True
+        else:
+            line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
+            next_scalar = state.next_scalar
+            state.next_scalar = None
+            state.next_cache = False
+        node.last_colno = next_scalar.last_colno
+        if next_scalar.basetype == 'scalar':
+            node.scalar = next_scalar
+            next_scalar.section = node
+        elif next_scalar.basetype == 'key_path':
+            node.key_path = next_scalar
+            next_scalar.section = node
+            for kp_elem in next_scalar:
+                kp_elem.section = node
+        else:
+            raise erring.ParseError('Received unexpected section type', node)
+        node._resolved = True
         state.next_section = node
-        state.append_section()
+        state.ast.append_section()
         line_lstrip_ws = line.lstrip(whitespace)
         if line_lstrip_ws == '':
             return self._parse_line_goto_next('', state)
-        state.last_column += len(line) - len(line_lstrip_ws)
-        state.first_column = state.last_column
+        state.last_colno += len(line) - len(line_lstrip_ws)
+        state.first_colno = state.last_colno
         if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
             return self._parse_token_line_comment(line, state)
         raise erring.ParseError('Unexpected content at end of section declaration', state)
@@ -1014,7 +1042,7 @@ class BespONDecoder(object):
                     len_continuation_indent = len(continuation_indent)
                     state.continuation_indent = continuation_indent
                     line = line_lstrip_ws[len(end_block_delim):]
-                    state.last_column += len_continuation_indent + len(end_block_delim) - 1
+                    state.last_colno += len_continuation_indent + len(end_block_delim) - 1
                     if state.at_line_start and indent != continuation_indent:
                         raise erring.ParseError('Inconsistent block delim indentation', state)
                     if continuation_indent == '':
@@ -1044,9 +1072,9 @@ class BespONDecoder(object):
             if state.full_ast:
                 node.raw_val = content_lines_dedent
             node.final_val = content_lines_dedent
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
         elif delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_singlequote_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
             if state.full_ast:
@@ -1056,17 +1084,17 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
             node.final_val = content_esc
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
         elif delim_code_point == comment_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='doc_comment')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
             node.final_val = content_lines_dedent
-            node.resolved = True
+            node._resolved = True
             state.next_doc_comment = node
-            state.next_cached = True
+            state.next_cache = True
         else:
             raise ValueError
         return self._parse_line_continue_last(line, state)
@@ -1091,7 +1119,7 @@ class BespONDecoder(object):
         group_name =  m.lastgroup
         group_type, group_base = group_name.rsplit('_', 1)
         raw_val = m.group(group_name)
-        state.last_column += len(raw_val) - 1
+        state.last_colno += len(raw_val) - 1
         line = line[len(raw_val):]
         if group_type == 'number_unit':
             final_val = raw_val
@@ -1106,7 +1134,7 @@ class BespONDecoder(object):
                     final_val = parser(cleaned_val, int(group_base))
             except Exception as e:
                 raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
-            node = ScalarNode(state, implicit_type='int', base=group_base)
+            node = ScalarNode(state, implicit_type='int', num_base=group_base)
         elif group_type == 'float' or group_type == 'float_inf_or_nan':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
             parser = state.type_data['float'].parser
@@ -1117,15 +1145,15 @@ class BespONDecoder(object):
                     final_val = parser.fromhex(cleaned_val)
             except Exception as e:
                 raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
-            node = ScalarNode(state, implicit_type='float', base=int(group_base))
+            node = ScalarNode(state, implicit_type='float', num_base=int(group_base))
         else:
             raise ValueError
         if state.full_ast:
             node.raw_val = raw_val
         node.final_val = final_val
-        node.resolved = True
+        node._resolved = True
         state.next_scalar = node
-        state.next_cached = True
+        state.next_cache = True
         return self._parse_line_continue_last(line, state)
 
 
@@ -1134,8 +1162,7 @@ class BespONDecoder(object):
                                                  whitespace=INDENT,
                                                  open_noninline_list=OPEN_NONINLINE_LIST,
                                                  ScalarNode=ScalarNode,
-                                                 KeyPathNode=KeyPathNode,
-                                                 KeyPathElementNode=KeyPathElementNode):
+                                                 KeyPathNode=KeyPathNode):
         '''
         Parse an unquoted key, a key path, or an unquoted multi-word string.
         '''
@@ -1149,24 +1176,24 @@ class BespONDecoder(object):
         if m is None:
             raise erring.ParseError('Invalid unquoted key, key path, or unquoted string', state)
         if m.lastgroup == 'key':
-            raw_val = m.group('key')
+            raw_val = line[:m.end('key')]
             line = line[len(raw_val):]
-            state.last_column += len(raw_val) - 1
+            state.last_colno += len(raw_val) - 1
             node = ScalarNode(state, implicit_type='key')
             if state.full_ast:
                 node.raw_val = raw_val
             node.final_val = raw_val
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line, state)
         if m.lastgroup == 'reserved_word':
-            raw_val = m.group('reserved_word')
+            raw_val = line[:m.end('reserved_word')]
             line = line[len(raw_val):]
-            state.last_column += len(raw_val) - 1
+            state.last_colno += len(raw_val) - 1
             try:
                 word_type = self._reserved_word_types[raw_val]
             except KeyError:
@@ -1179,21 +1206,21 @@ class BespONDecoder(object):
             if state.full_ast:
                 node.raw_val = raw_val
             node.final_val = final_val
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
             # Reserved words don't contain rtl code points
             return self._parse_line_continue_last(line, state)
         if m.lastgroup == 'key_path':
-            raw_val = m.group('key_path')
+            raw_val = line[:m.end('key_path')]
             line = line[len(raw_val):]
-            state.last_column += len(raw_val) - 1
+            state.last_colno += len(raw_val) - 1
             node = KeyPathNode(state, raw_val)
             if state.full_ast:
                 node.raw_val = raw_val
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
@@ -1201,16 +1228,16 @@ class BespONDecoder(object):
         if section:
             raise erring.ParseError('Invalid unquoted key or key path in a section', state)
         if m.lastgroup == 'unquoted_string':
-            raw_val = m.group('unquoted_string')
+            raw_val = line[:m.end('unquoted_string')]
             line = line[len(raw_val):]
-            state.last_column += len(raw_val) - 1
+            state.last_colno += len(raw_val) - 1
             node = ScalarNode(state, implicit_type='unquoted_string')
             if state.full_ast:
                 node.raw_val = raw_val
             node.final_val = raw_val
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
@@ -1218,7 +1245,7 @@ class BespONDecoder(object):
         if m.lastgroup == 'unquoted_string_unfinished':
             content_lines = []
             line_rstrip_ws = line.rstrip(whitespace)
-            state.last_column += len(line_rstrip_ws) - 1
+            state.last_colno += len(line_rstrip_ws) - 1
             # Create the node here to capture current state, then update the
             # node's state later if it wraps over multiple lines
             node = ScalarNode(state, implicit_type='unquoted_string')
@@ -1236,18 +1263,17 @@ class BespONDecoder(object):
                             line = self._parse_line_start_last(line, state)
                             break
                         if m.lastgroup == 'unquoted_string':
-                            end_column = m.end()
-                            content_lines.append(line[m.start():end_column])
-                            state.last_column = end_column
+                            end_colno = m.end()
+                            content_lines.append(line[m.start():end_colno])
+                            state.last_colno = end_colno
                             node.last_lineno = state.last_lineno
-                            node.last_column = end_column
-                            line = self._parse_line_continue_last(line[end_column:], state)
+                            node.last_colno = end_colno
+                            line = self._parse_line_continue_last(line[end_colno:], state)
                             break
                         line_strip_ws = line.strip(whitespace)
                         content_lines.append(line_strip_ws)
                         node.last_lineno = state.last_lineno
-                        node.last_column = len(line)
-                        node.continuation_indent = continuation_indent
+                        node.last_colno = len(line)
                         line = self._parse_line_get_next(line, state)
                         if line is None:
                             line = self._parse_line_start_last(line, state)
@@ -1258,11 +1284,15 @@ class BespONDecoder(object):
             if state.full_ast:
                 node.raw_val = content_lines
             node.final_val = '\x20'.join(content_lines)
-            node.resolved = True
+            node._resolved = True
             state.next_scalar = node
-            state.next_cached = True
+            state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = content_lines[-1]
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return line
         raise ValueError
+
+
+    def _parse_token_alias_prefix(self, line, state):
+        raise NotImplementedError
