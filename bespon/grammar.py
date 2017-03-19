@@ -232,9 +232,9 @@ _RAW_RE_TYPE = [# None type
                 ('key_path_continue_ascii', '(?:{path_separator}{unquoted_key_or_list_ascii})'),
                 ('key_path_continue_below_u0590', '(?:{path_separator}{unquoted_key_or_list_below_u0590})'),
                 ('key_path_continue_unicode', '(?:{path_separator}{unquoted_key_or_list_unicode})'),
-                ('key_path_ascii', '{unquoted_key_or_list_ascii}{key_path_continue_ascii}+'),
-                ('key_path_below_u0590', '{unquoted_key_or_list_below_u0590}{key_path_continue_below_u0590}+'),
-                ('key_path_unicode', '{unquoted_key_or_list_unicode}{key_path_continue_unicode}+'),
+                ('key_path_ascii', '{unquoted_key_ascii}{key_path_continue_ascii}+'),
+                ('key_path_below_u0590', '{unquoted_key_below_u0590}{key_path_continue_below_u0590}+'),
+                ('key_path_unicode', '{unquoted_key_unicode}{key_path_continue_unicode}+'),
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_key_ascii})(?:{path_separator}{unquoted_key_ascii})+'),

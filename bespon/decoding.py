@@ -938,28 +938,18 @@ class BespONDecoder(object):
         Parse a section.  This is invoked by `_parse_token_block_prefix()`.
         At this point, `line` has already had the delimiter stripped.
         '''
-        if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.first_lineno:
-                raise erring.ParseError('Cannot start a section when a prior string has not yet been resolved', state, unresolved_cache=True)
-            state.ast.append_scalar_val()
-        elif state.next_tag is not None:
-            raise erring.ParseError('Cannot start a section when a prior tag has not yet been resolved (sections cannot be tagged)', state, unresolved_cache=True)
+        # No need to check for cached values.  `_parse_token_block_prefix()`
+        # takes care of scalars.  When the object is created, it is specified
+        # as not tagable, which takes care of any misplaced tags.  And doc
+        # comments are fine.
         node = SectionNode(state, delim)
-        line_lstrip_ws = line[len(delim)+1:].lstrip(whitespace)
-        colno = len(delim) + 1 + len(line) - len(line_lstrip_ws)
-        state.first_colno = colno
-        state.last_colno = colno
-        if line_lstrip_ws[:1] == open_noninline_list:
-            next_scalar = ScalarNode(state, implicit_type='key')
-            if self.full_ast:
-                next_scalar.raw_val = open_noninline_list
-            next_scalar.final_val = open_noninline_list
-            next_scalar._resolved = True
-        else:
-            line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
-            next_scalar = state.next_scalar
-            state.next_scalar = None
-            state.next_cache = False
+        line_lstrip_ws = line.lstrip(whitespace)
+        state.last_colno += len(delim) + len(line) - len(line_lstrip_ws)
+        state.first_colno = state.last_colno
+        line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
+        next_scalar = state.next_scalar
+        state.next_scalar = None
+        state.next_cache = False
         node.last_colno = next_scalar.last_colno
         if next_scalar.basetype == 'scalar':
             node.scalar = next_scalar
@@ -970,7 +960,7 @@ class BespONDecoder(object):
             for kp_elem in next_scalar:
                 kp_elem.section = node
         else:
-            raise erring.ParseError('Received unexpected section type', node)
+            raise erring.ParseError('Unexpected section type', node)
         node._resolved = True
         state.next_section = node
         state.ast.append_section()
@@ -1019,7 +1009,7 @@ class BespONDecoder(object):
         if len_delim < 3 or len_delim % 3 != 0 or len_delim > max_delim_length:
             raise erring.ParseError('Block delims must have lengths that are multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
         if delim_code_point == assign_key_val:
-            return self._parse_token_section(delim, line, state)
+            return self._parse_token_section(delim, line_strip_delim, state)
         if line_strip_delim.lstrip(whitespace) != '':
             raise erring.ParseError('An opening block delim must not be followed by anything; block content does not start until the next line', state)
         closing_delim_re, group = self._closing_delim_re_dict[delim]

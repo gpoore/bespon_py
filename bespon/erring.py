@@ -143,6 +143,6 @@ class IndentationError(ParseError):
     '''
     def __init__(self, state_or_obj):
         self.msg = 'Inconsistent relative indentation'
-        self.state_or_obj
+        self.state_or_obj = state_or_obj
     def __str__(self):
         return self.fmt_msg_with_traceback(self.msg, self.state_or_obj)

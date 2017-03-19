@@ -119,6 +119,7 @@ class RootNode(list):
         self.nesting_depth = source.source_initial_nesting_depth
         self._key_path_scope = None
         self.key_path_parent = None
+        self.section = None
         self._open = True
         self._resolved = False
 
@@ -331,16 +332,18 @@ class ListlikeNode(list):
     '''
     basetype = 'list'
     __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['internal_indent_first', 'internal_indent_subsequent'])
+                 ['section', 'internal_indent_first', 'internal_indent_subsequent'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False):
+                 key_path_parent=None, _key_path_traversable=False,
+                 section=None):
         list.__init__(self)
 
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
+        self.section = section
         if _key_path_traversable:
             # A collection created implicitly as part of a keypath lacks most
             # standard attributes, so they are never created. An implicit
@@ -364,26 +367,36 @@ class ListlikeNode(list):
 
 
     def _set_internal_indent(self, obj):
-        if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
-            raise erring.IndentationError(obj)
-        extra_indent = obj.external_indent[len(self.indent):]
-        if obj.external_first_lineno == self.last_lineno:
-            # The non-inline list opener `*` does not affect `at_line_start`
-            # and is treated as a space for the purpose of calculating the
-            # overall indent of objects following it on the same line.  If
-            # the `*` (which will be represented by a space in `self.indent`)
-            # is adjacent to tabs on both sides, then it is not counted
-            if self.indent[-1:] == '\t' and extra_indent[1:2] == '\t':
-                self.internal_indent_first = obj.external_indent
-                self.internal_indent_subsequent = self.indent + extra_indent[1:]
-            else:
-                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+        if self.section is not None:
+            # This will only ever be invoked when a list is the last element
+            # in a section keypath (or is the entire section).  Due to section
+            # parsing rules, `obj` is guaranteed to be on a later line.  Due
+            # to non-inline doc comment/tag/obj rules, consistency is already
+            # enforced in this context and no special checks are needed.
+            # `external_indent` may simply be used as-is.
+            self.internal_indent_first = obj.external_indent
+            self.internal_indent_subsequent = obj.external_indent
         else:
-            if self.indent[-1:] == '\t' and extra_indent[:1] == '\t':
-                self.internal_indent_first = self.indent + '\x20' + extra_indent
-                self.internal_indent_subsequent = obj.external_indent
+            if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
+                raise erring.IndentationError(obj)
+            extra_indent = obj.external_indent[len(self.indent):]
+            if obj.external_first_lineno == self.last_lineno:
+                # The non-inline list opener `*` does not affect `at_line_start`
+                # and is treated as a space for the purpose of calculating the
+                # overall indent of objects following it on the same line.  If
+                # the `*` (which will be represented by a space in `self.indent`)
+                # is adjacent to tabs on both sides, then it is not counted
+                if self.indent[-1:] == '\t' and extra_indent[1:2] == '\t':
+                    self.internal_indent_first = obj.external_indent
+                    self.internal_indent_subsequent = self.indent + extra_indent[1:]
+                else:
+                    self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
             else:
-                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+                if self.indent[-1:] == '\t' and extra_indent[:1] == '\t':
+                    self.internal_indent_first = self.indent + '\x20' + extra_indent
+                    self.internal_indent_subsequent = obj.external_indent
+                else:
+                    self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
 
 
     def check_append_scalar_key(self, obj):
@@ -391,15 +404,15 @@ class ListlikeNode(list):
 
 
     def check_append_key_path_scalar_key(self, obj):
-        raise erring.ParseError('Except for its last element, a key path cannot pass through a list-like object', obj)
+        raise erring.ParseError('Key path is incompatible with previously created list-like object', obj, self)
 
 
     def check_append_scalar_val(self, obj):
         if not self._open:
             if self.inline:
-                raise erring.ParseError('Cannot append to a closed list-like object; perhaps a "{0}" is missing'.format(INLINE_ELEMENT_SEPARATOR), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
-                raise erring.ParseError('Cannot append to a closed list-like object; perhaps a "{0}" is missing'.format(OPEN_NONINLINE_LIST), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_NONINLINE_LIST), obj)
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
@@ -445,9 +458,9 @@ class ListlikeNode(list):
     def check_append_collection(self, obj):
         if not self._open:
             if self.inline:
-                raise erring.ParseError('Cannot append to a closed list-like object; perhaps a "{0}" is missing'.format(INLINE_ELEMENT_SEPARATOR), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
-                raise erring.ParseError('Cannot append to a closed list-like object; perhaps a "{0}" is missing'.format(OPEN_NONINLINE_LIST), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_NONINLINE_LIST), obj)
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
@@ -484,6 +497,7 @@ class ListlikeNode(list):
         self._unresolved_dependency_count += 1
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
+        self._open = False
 
 
 
@@ -493,16 +507,19 @@ class DictlikeNode(collections.OrderedDict):
     Dict-like collection.
     '''
     basetype = 'dict'
-    __slots__ = (_node_common_slots + _node_collection_slots + ['_awaiting_val', '_next_key'])
+    __slots__ = (_node_common_slots + _node_collection_slots +
+                 ['section', '_awaiting_val', '_next_key'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False):
+                 key_path_parent=None, _key_path_traversable=False,
+                 section=None):
         collections.OrderedDict.__init__(self)
 
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
+        self.section = section
         if _key_path_traversable:
             # A collection created implicitly as part of a keypath lacks most
             # standard attributes, so they are never created.  An implicit
