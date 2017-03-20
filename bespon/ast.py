@@ -37,8 +37,9 @@ class Ast(object):
     conversion into standard Python objects.
     '''
     __slots__ = ['state', 'full_ast', 'max_nesting_depth',
-                 'source', 'root', 'pos',
-                 '_unresolved_nodes', '_in_tag_cached_pos']
+                 'source', 'root', 'pos', 'section_pos',
+                 '_unresolved_nodes', '_in_tag_cached_pos',
+                 '_first_section', '_last_section']
 
     def __init__(self, state, max_nesting_depth=100):
         self.state = state
@@ -51,8 +52,11 @@ class Ast(object):
         self.source = astnodes.SourceNode(state)
         self.root = self.source.root
         self.pos = self.root
+        self.section_pos = None
         self._unresolved_nodes = [self.root]
         self._in_tag_cached_pos = None
+        self._first_section = None
+        self._last_section = None
 
     def __bool__(self):
         if len(self.root) > 0:
@@ -73,7 +77,8 @@ class Ast(object):
             len_indent = len(state_or_scalar_obj.external_indent)
         except AttributeError:
             len_indent = len(state_or_scalar_obj.indent)
-        while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos.section is None:
+        section_pos = self.section_pos
+        while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos is not section_pos:
             if pos.basetype == 'dict':
                 if not pos:
                     raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
@@ -105,6 +110,7 @@ class Ast(object):
         Starting at `pos`, climb to the highest level in the AST below root,
         which is where sections may be created.
         '''
+        self.section_pos = None
         root = self.root
         while pos.parent is not root:
             if pos.basetype == 'dict':
@@ -190,7 +196,7 @@ class Ast(object):
         pos = self.pos
         if scalar_obj.inline:
             pos.check_append_scalar_key(scalar_obj)
-        elif pos.section is not None:
+        elif pos is self.section_pos:
             # If in a section, need to create a dict immediately
             # below it.  If section content is indented, there is no
             # danger of accidentally creating an extra dict due to
@@ -233,7 +239,10 @@ class Ast(object):
             raise erring.ParseError('Key paths are only allowed as dict keys, not as values', scalar_obj)
         if not scalar_obj._resolved:
             self._unresolved_nodes.append(scalar_obj)
-        self.pos.check_append_scalar_val(scalar_obj)
+        if self.section_pos is not self.pos:
+            self.pos.check_append_scalar_val(scalar_obj)
+        else:
+            self.pos.check_append_key_path_scalar_val(scalar_obj)
 
 
     def _append_collection(self, collection_obj):
@@ -245,7 +254,10 @@ class Ast(object):
         # In non-inline mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
         self._unresolved_nodes.append(collection_obj)
-        self.pos.check_append_collection(collection_obj)
+        if self.section_pos is not self.pos:
+            self.pos.check_append_collection(collection_obj)
+        else:
+            self.pos.check_append_key_path_collection(collection_obj)
         # Wait to check nesting depth until after appending, because nesting
         # depth is inherited from parent, and parent is set during appending.
         if collection_obj.nesting_depth > self.max_nesting_depth:
@@ -443,7 +455,7 @@ class Ast(object):
             raise erring.ParseError('Invalid location to begin a non-inline list element', state)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
-        if pos.section is not None:
+        if pos is self.section_pos:
             list_obj = ListlikeNode(state)
             list_obj._open = True
             self._append_key_path_collection(list_obj)
@@ -484,7 +496,7 @@ class Ast(object):
         pos = self.pos
         if kp_obj.inline:
             initial_pos = pos
-        elif pos.section is not None:
+        elif pos is self.section_pos:
             dict_obj = DictlikeNode(kp_obj)
             self._append_collection(dict_obj)
             initial_pos = dict_obj
@@ -507,6 +519,11 @@ class Ast(object):
         for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
             if pos.basetype == 'dict' and kp_elem in pos:
                 pos = pos[kp_elem]
+                key_obj = pos.index
+                if key_obj.key_path_occurances is None:
+                    key_obj.key_path_occurances = [kp_elem]
+                else:
+                    key_obj.key_path_occurances.append(kp_elem)
                 if not pos._key_path_traversable:
                     raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
@@ -528,12 +545,14 @@ class Ast(object):
         self.pos = pos
 
 
-    def append_section(self, open_noninline_list=OPEN_NONINLINE_LIST,
-                       ListlikeNode=astnodes.ListlikeNode,
-                       DictlikeNode=astnodes.DictlikeNode):
+    def start_section(self, section_obj,
+                      open_noninline_list=OPEN_NONINLINE_LIST,
+                      ListlikeNode=astnodes.ListlikeNode,
+                      DictlikeNode=astnodes.DictlikeNode):
+        '''
+        Start a section.
+        '''
         state = self.state
-        section_obj = state.next_section
-        state.next_section = None
         if state.inline:
             # This covers the case of being in a tag
             raise erring.ParseError('Sections are not allowed in inline mode', section_obj)
@@ -541,18 +560,30 @@ class Ast(object):
             raise erring.ParseError('Sections must begin at the start of a line, with no indentation', section_obj)
         pos = self.pos
         root = self.root
+        if self._first_section is None:
+            self._first_section = section_obj
+        elif self._first_section._end_delim != self._last_section._end_delim:
+            if self._first_section._end_delim:
+                raise erring.ParseError('Cannot start a section when a previous section is missing an end delimiter; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
+            else:
+                raise erring.ParseError('Cannot start a section when a previous section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
+        self._last_section = section_obj
         if pos is root:
             if section_obj.scalar is not None and section_obj.scalar.final_val == open_noninline_list:
-                obj = ListlikeNode(section_obj, section=section_obj)
+                obj = ListlikeNode(section_obj)
             else:
-                obj = DictlikeNode(section_obj, section=section_obj)
+                obj = DictlikeNode(section_obj)
             self._append_collection(obj)
             initial_pos = obj
         elif pos.parent is root:
             initial_pos = pos
+            if initial_pos.external_indent != '':
+                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
         else:
             pos = self._section_climb(pos)
             initial_pos = pos
+            if initial_pos.external_indent != '':
+                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
         pos = initial_pos
         if section_obj.key_path is not None:
             kp_obj = section_obj.key_path
@@ -561,14 +592,19 @@ class Ast(object):
                     raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
                 if kp_elem in pos:
                     pos = pos[kp_elem]
+                    key_obj = pos.index
+                    if key_obj.key_path_occurances is None:
+                        key_obj.key_path_occurances = [kp_elem]
+                    else:
+                        key_obj.key_path_occurances.append(kp_elem)
                     if not pos._key_path_traversable:
                         raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
                 else:
                     pos.check_append_key_path_scalar_key(kp_elem)
                     if next_kp_elem == open_noninline_list:
-                        collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True, section=section_obj)
+                        collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
                     else:
-                        collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True, section=section_obj)
+                        collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
                     self._append_key_path_collection(collection_obj)
                     pos = collection_obj
             if kp_obj[-1] == open_noninline_list:
@@ -580,14 +616,34 @@ class Ast(object):
             pos.check_append_key_path_scalar_key(section_obj.scalar)
         else:
             if pos.basetype != 'list':
-                raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
+                raise erring.ParseError('Key path is incompatible with previously created object', section_obj.scalar, pos)
             pos._open = True
+        self.section_pos = pos
+
+
+    def end_section(self, delim):
+        '''
+        End a section.  Section ending delimiters are optional, but if they
+        are used at all, they must be used for every section.
+        '''
+        if self._last_section is None:
+            raise erring.ParseError('There is no section to end', self.state)
+        if self._last_section.delim != delim:
+            raise erring.ParseError('Section start and end delims must have the same length', self.state, self._last_section)
+        self._last_section._end_delim = True
+        self._section_climb(self.pos)
 
 
     def finalize(self):
         '''
         Check AST for errors and return to root node.
         '''
+        if self._first_section is not None and self._first_section is not self._last_section:
+            if self._first_section._end_delim != self._last_section._end_delim:
+                if self._first_section._end_delim:
+                    raise erring.ParseError('The last section is missing an end delimiter; section end delimiters must be used for all sections, or not at all', self._last_section)
+                else:
+                    raise erring.ParseError('The last section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', self._last_section)
         # Temp variables must be used with care; otherwise, don't update self
         state = self.state
         pos = self.pos

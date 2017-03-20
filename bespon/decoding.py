@@ -72,7 +72,6 @@ class State(object):
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'last_line_comment_lineno',
                  'next_scalar',
-                 'next_section',
                  'type_data', 'bom_offset', 'full_ast',
                  'raw_source_string', 'source_lines', 'source_lines_iter', 'ast',
                  'pure_ascii', 'only_below_u0590',
@@ -135,7 +134,6 @@ class State(object):
         self.next_doc_comment = None
         self.last_line_comment_lineno = 0
         self.next_scalar = None
-        self.next_section = None
 
         self.type_data = type_data or load_types.CORE_TYPES
         self.full_ast = full_ast
@@ -855,7 +853,8 @@ class BespONDecoder(object):
 
     def _parse_token_literal_string_delim(self, line, state, section=False,
                                           max_delim_length=MAX_DELIM_LENGTH,
-                                          ScalarNode=ScalarNode):
+                                          ScalarNode=ScalarNode,
+                                          literal_string_delim=LITERAL_STRING_DELIM):
         '''
         Parse inline literal string.
         '''
@@ -871,6 +870,11 @@ class BespONDecoder(object):
             raise erring.ParseError('Literal string delims must have lengths of 1 or 2, or multiples of 3 that are no longer than {0} characters'.format(max_delim_length), state)
         delim = line[:len_delim]
         content_lines, content, line = self._parse_delim_inline('literal string', delim, line_strip_delim, state, section=section)
+        content_strip_space = content.strip('\x20')
+        if content_strip_space[:1] == literal_string_delim:
+            content = content[1:]
+        if content_strip_space[-1:] == literal_string_delim:
+            content = content[:-1]
         node = ScalarNode(state, delim=delim, block=False, implicit_type='literal_string')
         if state.full_ast:
             node.raw_val = content_lines
@@ -929,7 +933,9 @@ class BespONDecoder(object):
         return self._parse_line_continue_last(line, state)
 
 
-    def _parse_token_section(self, delim, line, state, whitespace=INDENT,
+    def _parse_token_section(self, delim, line, state,
+                             block_suffix=BLOCK_SUFFIX,
+                             whitespace=INDENT,
                              SectionNode=SectionNode,
                              open_noninline_list=OPEN_NONINLINE_LIST,
                              ScalarNode=ScalarNode,
@@ -943,6 +949,16 @@ class BespONDecoder(object):
         # as not tagable, which takes care of any misplaced tags.  And doc
         # comments are fine.
         node = SectionNode(state, delim)
+        if line[:1] == block_suffix:
+            state.ast.end_section(delim)
+            line_lstrip_ws = line[1:].lstrip(whitespace)
+            if line_lstrip_ws == '':
+                return self._parse_line_goto_next('', state)
+            state.last_colno += 1 + len(delim) + len(line) - len(line_lstrip_ws)
+            state.first_colno = state.last_colno
+            if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
+                return self._parse_token_line_comment(line_lstrip_ws, state)
+            raise erring.ParseError('Unexpected content after end of section', state)
         line_lstrip_ws = line.lstrip(whitespace)
         state.last_colno += len(delim) + len(line) - len(line_lstrip_ws)
         state.first_colno = state.last_colno
@@ -953,25 +969,20 @@ class BespONDecoder(object):
         node.last_colno = next_scalar.last_colno
         if next_scalar.basetype == 'scalar':
             node.scalar = next_scalar
-            next_scalar.section = node
         elif next_scalar.basetype == 'key_path':
             node.key_path = next_scalar
-            next_scalar.section = node
-            for kp_elem in next_scalar:
-                kp_elem.section = node
         else:
             raise erring.ParseError('Unexpected section type', node)
         node._resolved = True
-        state.next_section = node
-        state.ast.append_section()
+        state.ast.start_section(node)
         line_lstrip_ws = line.lstrip(whitespace)
         if line_lstrip_ws == '':
             return self._parse_line_goto_next('', state)
         state.last_colno += len(line) - len(line_lstrip_ws)
         state.first_colno = state.last_colno
         if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
-            return self._parse_token_line_comment(line, state)
-        raise erring.ParseError('Unexpected content at end of section declaration', state)
+            return self._parse_token_line_comment(line_lstrip_ws, state)
+        raise erring.ParseError('Unexpected content after start of section', state)
 
 
     def _parse_token_block_prefix(self, line, state,
@@ -1017,7 +1028,7 @@ class BespONDecoder(object):
         content_lines = []
         indent = state.indent
         while True:
-            line = self._parse_line_get_next(line)
+            line = self._parse_line_get_next(line, state)
             if line is None:
                 raise erring.ParseError('Unterminated block object', state)
             if not line.startswith(indent) and line.lstrip(whitespace) != '':
@@ -1054,14 +1065,14 @@ class BespONDecoder(object):
         # put last line back to original value, to avoid having to modify the
         # final string by adding an `\n` at the end
         content_lines_dedent_last_line = content_lines_dedent[-1]
-        content_lines_dedent[-1] = concontent_lines_dedent_last_linetent_lines_dedent_last + newline
+        content_lines_dedent[-1] = content_lines_dedent_last_line + newline
         content = newline.join(content_lines_dedent)
         content_lines_dedent[-1] = content_lines_dedent_last_line
         if delim_code_point == literal_string_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='literal_string')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
-            node.final_val = content_lines_dedent
+            node.final_val = content
             node._resolved = True
             state.next_scalar = node
             state.next_cache = True
@@ -1070,7 +1081,7 @@ class BespONDecoder(object):
             if state.full_ast:
                 node.raw_val = content_lines_dedent
             try:
-                content_esc = self.unescape_unicode(content_lines_dedent)
+                content_esc = self._unescape_unicode(content)
             except Exception as e:
                 raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
             node.final_val = content_esc
@@ -1081,7 +1092,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, delim=delim, block=True, implicit_type='doc_comment')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
-            node.final_val = content_lines_dedent
+            node.final_val = content
             node._resolved = True
             state.next_doc_comment = node
             state.next_cache = True
@@ -1108,7 +1119,7 @@ class BespONDecoder(object):
             raise erring.ParseError('Invalid literal with numeric start')
         group_name =  m.lastgroup
         group_type, group_base = group_name.rsplit('_', 1)
-        raw_val = m.group(group_name)
+        raw_val = line[:m.end(group_name)]
         state.last_colno += len(raw_val) - 1
         line = line[len(raw_val):]
         if group_type == 'number_unit':
@@ -1241,7 +1252,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, implicit_type='unquoted_string')
             content_lines.append(line_rstrip_ws)
             indent = state.indent
-            line = self._parse_line_get_next(line)
+            line = self._parse_line_get_next(line, state)
             if line is not None:
                 line_lstrip_ws = line.lstrip(whitespace)
                 continuation_indent = line[:len(line)-len(line_lstrip_ws)]

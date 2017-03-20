@@ -119,7 +119,6 @@ class RootNode(list):
         self.nesting_depth = source.source_initial_nesting_depth
         self._key_path_scope = None
         self.key_path_parent = None
-        self.section = None
         self._open = True
         self._resolved = False
 
@@ -295,7 +294,7 @@ class ScalarNode(object):
     basetype = 'scalar'
     __slots__ = (_node_common_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
-                  'raw_val', 'num_base', 'key_path', 'section',
+                  'raw_val', 'num_base', 'key_path_occurances',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
 
     def __init__(self, state, init_common=_init_common,
@@ -305,8 +304,7 @@ class ScalarNode(object):
         self.implicit_type = implicit_type
         self.num_base = num_base
         self.continuation_indent = state.continuation_indent
-        self.key_path = None
-        self.section = None
+        self.key_path_occurances = None
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
         init_common(self, state)
@@ -332,18 +330,16 @@ class ListlikeNode(list):
     '''
     basetype = 'list'
     __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['section', 'internal_indent_first', 'internal_indent_subsequent'])
+                 ['_section', 'internal_indent_first', 'internal_indent_subsequent'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False,
-                 section=None):
+                 key_path_parent=None, _key_path_traversable=False):
         list.__init__(self)
 
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
-        self.section = section
         if _key_path_traversable:
             # A collection created implicitly as part of a keypath lacks most
             # standard attributes, so they are never created. An implicit
@@ -367,36 +363,26 @@ class ListlikeNode(list):
 
 
     def _set_internal_indent(self, obj):
-        if self.section is not None:
-            # This will only ever be invoked when a list is the last element
-            # in a section keypath (or is the entire section).  Due to section
-            # parsing rules, `obj` is guaranteed to be on a later line.  Due
-            # to non-inline doc comment/tag/obj rules, consistency is already
-            # enforced in this context and no special checks are needed.
-            # `external_indent` may simply be used as-is.
-            self.internal_indent_first = obj.external_indent
-            self.internal_indent_subsequent = obj.external_indent
-        else:
-            if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
-                raise erring.IndentationError(obj)
-            extra_indent = obj.external_indent[len(self.indent):]
-            if obj.external_first_lineno == self.last_lineno:
-                # The non-inline list opener `*` does not affect `at_line_start`
-                # and is treated as a space for the purpose of calculating the
-                # overall indent of objects following it on the same line.  If
-                # the `*` (which will be represented by a space in `self.indent`)
-                # is adjacent to tabs on both sides, then it is not counted
-                if self.indent[-1:] == '\t' and extra_indent[1:2] == '\t':
-                    self.internal_indent_first = obj.external_indent
-                    self.internal_indent_subsequent = self.indent + extra_indent[1:]
-                else:
-                    self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+        if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
+            raise erring.IndentationError(obj)
+        extra_indent = obj.external_indent[len(self.indent):]
+        if obj.external_first_lineno == self.last_lineno:
+            # The non-inline list opener `*` does not affect `at_line_start`
+            # and is treated as a space for the purpose of calculating the
+            # overall indent of objects following it on the same line.  If
+            # the `*` (which will be represented by a space in `self.indent`)
+            # is adjacent to tabs on both sides, then it is not counted
+            if self.indent[-1:] == '\t' and extra_indent[1:2] == '\t':
+                self.internal_indent_first = obj.external_indent
+                self.internal_indent_subsequent = self.indent + extra_indent[1:]
             else:
-                if self.indent[-1:] == '\t' and extra_indent[:1] == '\t':
-                    self.internal_indent_first = self.indent + '\x20' + extra_indent
-                    self.internal_indent_subsequent = obj.external_indent
-                else:
-                    self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+        else:
+            if self.indent[-1:] == '\t' and extra_indent[:1] == '\t':
+                self.internal_indent_first = self.indent + '\x20' + extra_indent
+                self.internal_indent_subsequent = obj.external_indent
+            else:
+                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
 
 
     def check_append_scalar_key(self, obj):
@@ -508,18 +494,16 @@ class DictlikeNode(collections.OrderedDict):
     '''
     basetype = 'dict'
     __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['section', '_awaiting_val', '_next_key'])
+                 ['_awaiting_val', '_next_key'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False,
-                 section=None):
+                 key_path_parent=None, _key_path_traversable=False):
         collections.OrderedDict.__init__(self)
 
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
-        self.section = section
         if _key_path_traversable:
             # A collection created implicitly as part of a keypath lacks most
             # standard attributes, so they are never created.  An implicit
@@ -783,8 +767,7 @@ class KeyPathNode(list):
     __slots__ = _node_common_slots + ['external_indent', 'external_at_line_start',
                                       'external_first_lineno', 'resolved',
                                       'extra_dependents', 'raw_val',
-                                      'assign_key_val_lineno', 'assign_key_val_colno',
-                                      'section']
+                                      'assign_key_val_lineno', 'assign_key_val_colno']
 
     def __init__(self, state, key_path_raw_val,
                  init_common=_init_common,
@@ -796,8 +779,6 @@ class KeyPathNode(list):
                  ScalarNode=ScalarNode):
         list.__init__(self)
         init_common(self, state, tagable=False)
-
-        self.section = None
 
         first_colno = state.first_colno
         last_colno = first_colno
@@ -832,7 +813,6 @@ class KeyPathNode(list):
                     kp_elem_node.raw_val = kp_elem_raw
                 kp_elem_node.final_val = kp_elem_final
                 kp_elem_node._resolved = True
-                kp_elem_node.key_path = self
                 self.append(kp_elem_node)
                 last_colno += 2
                 first_colno = last_colno
@@ -845,9 +825,10 @@ class SectionNode(object):
     Section.
     '''
     basetype = 'section'
-    __slots__ = _node_common_slots + ['delim', 'key_path', 'scalar']
+    __slots__ = _node_common_slots + ['delim', 'key_path', 'scalar', '_end_delim']
     def __init__(self, state, delim, init_common=_init_common):
         init_common(self, state)
         self.delim = delim
         self.key_path = None
         self.scalar = None
+        self._end_delim = False
