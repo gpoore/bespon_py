@@ -99,18 +99,25 @@ LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GR
 # Assemble regex grammar
 _RAW_RE_GRAMMAR = [('backslash', '\\\\')]
 
+def _group_if_needed(pattern):
+    if '|' in pattern:
+        return '(?:{0})'.format(pattern)
+    return pattern
+
 # Regex patterns
-_RE_PATTERNS = [('xid_start_ascii', re_patterns.XID_START_ASCII),
-                ('xid_start_below_u0590', re_patterns.XID_START_BELOW_U0590),
-                ('xid_start_less_fillers', re_patterns.XID_START_LESS_FILLERS),
-                ('xid_continue_ascii', re_patterns.XID_CONTINUE_ASCII),
-                ('xid_continue_below_u0590', re_patterns.XID_CONTINUE_BELOW_U0590),
-                ('xid_continue_less_fillers', re_patterns.XID_CONTINUE_LESS_FILLERS),
-                ('not_valid_ascii', re_patterns.NOT_VALID_LITERAL_ASCII),
-                ('not_valid_below_u0590', re_patterns.NOT_VALID_LITERAL_BELOW_U0590),
-                ('not_valid_unicode', re_patterns.NOT_VALID_LITERAL),
-                ('bidi_rtl', re_patterns.BIDI_R_AL),
-                ('private_use', re_patterns.PRIVATE_USE)]
+_RE_PATTERNS = [('ascii_alpha', '[A-Za-z]'),
+                ('ascii_alphanum', '[A-Za-z0-9]'),
+                ('xid_start_ascii', _group_if_needed(re_patterns.XID_START_ASCII)),
+                ('xid_start_below_u0590', _group_if_needed(re_patterns.XID_START_BELOW_U0590)),
+                ('xid_start_less_fillers', _group_if_needed(re_patterns.XID_START_LESS_FILLERS)),
+                ('xid_continue_ascii', _group_if_needed(re_patterns.XID_CONTINUE_ASCII)),
+                ('xid_continue_below_u0590', _group_if_needed(re_patterns.XID_CONTINUE_BELOW_U0590)),
+                ('xid_continue_less_fillers', _group_if_needed(re_patterns.XID_CONTINUE_LESS_FILLERS)),
+                ('not_valid_ascii', _group_if_needed(re_patterns.NOT_VALID_LITERAL_ASCII)),
+                ('not_valid_below_u0590', _group_if_needed(re_patterns.NOT_VALID_LITERAL_BELOW_U0590)),
+                ('not_valid_unicode', _group_if_needed(re_patterns.NOT_VALID_LITERAL)),
+                ('bidi_rtl', _group_if_needed(re_patterns.BIDI_R_AL)),
+                ('private_use', _group_if_needed(re_patterns.PRIVATE_USE))]
 _RAW_RE_GRAMMAR.extend(_RE_PATTERNS)
 
 # Whitespace
@@ -141,7 +148,7 @@ _RAW_RE_TYPE = [# None type
                 # Boolean
                 ('bool_true', LIT_GRAMMAR['bool_true']),
                 ('bool_false', LIT_GRAMMAR['bool_false']),
-                ('bool_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false'])),
+                ('bool_reserved_word', '(?:{0})'.format(_capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false']))),
 
                 # Basic numeric elements
                 ('sign', '[+-]'),
@@ -171,7 +178,8 @@ _RAW_RE_TYPE = [# None type
                 ('bin_prefix', '{opt_sign_indent}0b_?'),
                 ('bin_integer_value', '{bin_digits_underscores}'),
                 ('bin_integer', '{bin_prefix}{bin_integer_value}'),
-                ('integer', '{dec_integer}|{hex_integer}|{oct_integer}|{bin_integer}'),
+                # Any integer -- order is important due to base prefixes
+                ('integer', '(?:{hex_integer}|{oct_integer}|{bin_integer}|{dec_integer})'),
                 # Floats
                 ('dec_exponent', '[eE]{sign}?{dec_digits_underscores}'),
                 ('decimal_point', '\\.'),
@@ -190,10 +198,13 @@ _RAW_RE_TYPE = [# None type
                 ('not_a_number', '{opt_sign_indent}{not_a_number_word}'),
                 ('inf_or_nan', '{opt_sign_indent}(?:{infinity_word}|{not_a_number_word})'),
                 ('float_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['infinity_word'], LIT_GRAMMAR['not_a_number_word'])),
-                ('float', '{dec_float}|{hex_float}|{inf_or_nan}'),
+                # Any float -- order is important due to base prefixes
+                ('float', '(?:{hex_float}|{inf_or_nan}|{dec_float})'),
+                # General number -- order is important due to exponent parts
+                ('number', '(?:{float}|{integer})'),
 
                 # Reserved words
-                ('reserved_word', '{none_type_reserved_word}|{bool_reserved_word}|{float_reserved_word}'),
+                ('reserved_word', '(?:{none_type_reserved_word}|{bool_reserved_word}|{float_reserved_word})'),
 
                 # Unquoted strings
                 ('unquoted_start_ascii', '{xid_start_ascii}'),
@@ -215,10 +226,19 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}{unquoted_string_continue_below_u0590}*'),
                 ('unquoted_string_unicode', '{unquoted_key_unicode}{unquoted_string_continue_unicode}*'),
                 ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
+                # The first letter in an unquoted number-unit cannot be any
+                # of [bBoOxX] because of their roles in base prefixes, unless
+                # the next letter cannot be confused with a digit.  Similarly,
+                # [eEpP] require special treatment due to their use in
+                # exponents, [i] is reserved for a future complex number
+                # extension, and [I] is confusable with `1`
+                ('unquoted_unit_letter_less_prefix_dec_confusables', '[AC-DF-HJ-NQ-WY-Zac-df-hj-km-nq-wy-z]'),
+                ('unquoted_unit_letter_less_dec_confusables', '[A-NP-Za-km-z]'),
+                ('unquoted_unit_letter_less_hex_confusables', '[G-NP-Zg-km-z]'),
                 ('unquoted_unit_ascii', '''
-                                        (?: [A-NP-WY-Za-km-wy-z][A-Za-z]+ |
-                                            [Xx][G-Zg-z][A-Za-z]* |
-                                            [AC-DF-HJ-NP-WY-Zac-df-hj-km-np-rw-z] |
+                                        (?: {unquoted_unit_letter_less_prefix_dec_confusables}{ascii_alpha}* |
+                                            [bBoO]{unquoted_unit_letter_less_dec_confusables}{ascii_alpha}*
+                                            [Xx]{unquoted_unit_letter_less_hex_confusables}{ascii_alpha}* |
                                             %
                                         )
                                         '''.replace('\x20', '').replace('\n', '')),

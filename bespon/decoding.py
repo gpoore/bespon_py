@@ -78,7 +78,7 @@ class State(object):
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
                  'newline_re',
-                 'unquoted_string_or_key_path_re', 'unquoted_string_re', 'number_or_number_unit_re',
+                 'unquoted_string_or_key_path_re', 'number_or_number_unit_re',
                  'escape_unicode', 'unescape_unicode', 'unescape_bytes']
     def __init__(self, decoder, raw_source_string,
                  source_name=None, source_include_depth=0,
@@ -185,7 +185,6 @@ class State(object):
         self.bidi_rtl_last_scalar_last_lineno = 0
         self.bidi_rtl_last_scalar_last_line = ''
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_ascii_re
-        self.unquoted_string_re = decoder._unquoted_string_ascii_re
         self.number_or_number_unit_re = decoder._number_or_number_unit_ascii_re
 
         if raw_source_string[:1] == bom:
@@ -201,14 +200,12 @@ class State(object):
             self._traceback_not_valid_literal(raw_source_string, m_not_valid_ascii.start())
         self.pure_ascii = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
-        self.unquoted_string_re = decoder._unquoted_string_below_u0590_re
         self.number_or_number_unit_re = decoder._number_or_number_unit_below_u0590_re
         m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(raw_source_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
         self.only_below_u0590 = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
-        self.unquoted_string_re = decoder._unquoted_string_unicode_re
         self.number_or_number_unit_re = decoder._number_or_number_unit_unicode_re
         m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(raw_source_string, m_not_valid_below_u0590.start())
         if m_bidi_rtl_or_not_valid_unicode is None:
@@ -393,44 +390,28 @@ class BespONDecoder(object):
         # Unquoted strings and key paths.
         # `{unquoted_key_or_list}` will match `*`, but that won't allow `*`
         # to be used as a normal dict key, since the list parsing function is
-        # called when `*` not followed by a `.` is encountered.  The only
-        # exception is in a section, when `*` is actually a valid key.
+        # called for `*` everywhere except for sections.  In sections, `*`
+        # is valid by itself, or at the end of a key path.
         uqs_or_kp_pattern = r'''
-            (?P<reserved_word>{reserved_word}) |
-            (?P<key>{unquoted_key_or_list}) (?: (?P<key_path>{unquoted_key_path_continue}+) |
-                                                (?P<unquoted_string>{unquoted_string_continue}+)(?P<unquoted_string_unfinished>{indent}*$)?
-                                            )?
+            (?P<reserved_word>{reserved_word}(?!\x20?{unquoted_continue})) |
+            (?P<key>{unquoted_key_or_list}) (?: (?P<key_path>{unquoted_key_path_continue}+) | (?P<unquoted_string>{unquoted_string_continue}+) )?
             '''.replace('\x20', '').replace('\n', '')
-        uqs_pattern = r'(?P<unquoted_string>{unquoted_string})(?P<unquoted_string_unfinished>{indent}*$)?'
 
         self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
+                                                                                         unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_ascii'],
                                                                                          unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_ascii'],
                                                                                          unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii'],
-                                                                                         unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_ascii'],
-                                                                                         indent=grammar.RE_GRAMMAR['indent'],
-                                                                                         open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
+                                                                                         unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_ascii']))
         self._unquoted_string_or_key_path_below_u0590_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
+                                                                                               unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_below_u0590'],
                                                                                                unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_below_u0590'],
                                                                                                unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590'],
-                                                                                               unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_below_u0590'],
-                                                                                               indent=grammar.RE_GRAMMAR['indent'],
-                                                                                               open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
+                                                                                               unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_below_u0590']))
         self._unquoted_string_or_key_path_unicode_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
+                                                                                           unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_unicode'],
                                                                                            unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_unicode'],
                                                                                            unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode'],
-                                                                                           unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_unicode'],
-                                                                                           indent=grammar.RE_GRAMMAR['indent'],
-                                                                                           open_noninline_list=grammar.RE_GRAMMAR['open_noninline_list']))
-
-        self._unquoted_string_ascii_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                       key_path=grammar.RE_GRAMMAR['key_path_ascii'],
-                                                                       unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
-        self._unquoted_string_below_u0590_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                             key_path=grammar.RE_GRAMMAR['key_path_below_u0590'],
-                                                                             unquoted_string=grammar.RE_GRAMMAR['unquoted_string_below_u0590']))
-        self._unquoted_string_unicode_re = re.compile(uqs_pattern.format(indent=grammar.RE_GRAMMAR['indent'],
-                                                                         key_path=grammar.RE_GRAMMAR['key_path_unicode'],
-                                                                         unquoted_string=grammar.RE_GRAMMAR['unquoted_string_unicode']))
+                                                                                           unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_unicode']))
 
         # Dict for looking up types of valid reserved words
         self._reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
@@ -1243,55 +1224,6 @@ class BespONDecoder(object):
                 self.bidi_rtl_last_scalar_last_line = raw_val
                 self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line, state)
-        if m.lastgroup == 'unquoted_string_unfinished':
-            content_lines = []
-            line_rstrip_ws = line.rstrip(whitespace)
-            state.last_colno += len(line_rstrip_ws) - 1
-            # Create the node here to capture current state, then update the
-            # node's state later if it wraps over multiple lines
-            node = ScalarNode(state, implicit_type='unquoted_string')
-            content_lines.append(line_rstrip_ws)
-            indent = state.indent
-            line = self._parse_line_get_next(line, state)
-            if line is not None:
-                line_lstrip_ws = line.lstrip(whitespace)
-                continuation_indent = line[:len(line)-len(line_lstrip_ws)]
-                if continuation_indent.startswith(indent) and (state.at_line_start or len(continuation_indent) > len(indent)):
-                    state.continuation_indent = continuation_indent
-                    while True:
-                        m = state.unquoted_string_re.match(line, len(continuation_indent))
-                        if m is None:
-                            line = self._parse_line_start_last(line, state)
-                            break
-                        if m.lastgroup == 'unquoted_string':
-                            end_colno = m.end()
-                            content_lines.append(line[m.start():end_colno])
-                            state.last_colno = end_colno
-                            node.last_lineno = state.last_lineno
-                            node.last_colno = end_colno
-                            line = self._parse_line_continue_last(line[end_colno:], state)
-                            break
-                        line_strip_ws = line.strip(whitespace)
-                        content_lines.append(line_strip_ws)
-                        node.last_lineno = state.last_lineno
-                        node.last_colno = len(line)
-                        line = self._parse_line_get_next(line, state)
-                        if line is None:
-                            line = self._parse_line_start_last(line, state)
-                            break
-                        if not line.startswith(continuation_indent):
-                            line = self._parse_line_start_last(line, state)
-                            break
-            if state.full_ast:
-                node.raw_val = content_lines
-            node.final_val = '\x20'.join(content_lines)
-            node._resolved = True
-            state.next_scalar = node
-            state.next_cache = True
-            if state.bidi_rtl:
-                self.bidi_rtl_last_scalar_last_line = content_lines[-1]
-                self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-            return line
         raise ValueError
 
 
