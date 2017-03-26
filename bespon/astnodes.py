@@ -354,6 +354,9 @@ class ListlikeNode(list):
             self.last_lineno = state_or_scalar_obj.last_lineno
             self.last_colno = state_or_scalar_obj.last_colno
             self._open = True
+            if not self.inline:
+                self.internal_indent_first = None
+                self.internal_indent_subsequent = None
         else:
             init_common(self, state_or_scalar_obj)
             self._open = False
@@ -363,6 +366,10 @@ class ListlikeNode(list):
 
 
     def _set_internal_indent(self, obj):
+        if self._key_path_traversable:
+            self.internal_indent_first = obj.external_indent
+            self.internal_indent_subsequent = obj.external_indent
+            return
         if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
             raise erring.IndentationError(obj)
         extra_indent = obj.external_indent[len(self.indent):]

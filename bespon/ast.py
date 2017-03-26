@@ -340,7 +340,7 @@ class Ast(object):
             state.inline_indent = state.indent
         list_obj = ListlikeNode(state)
         list_obj._open = True
-        self.append_collection(list_obj)
+        self._append_collection(list_obj)
 
 
     def end_inline_list(self):

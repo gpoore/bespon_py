@@ -228,16 +228,20 @@ _RAW_RE_TYPE = [# None type
                 ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
                 # The first letter in an unquoted number-unit cannot be any
                 # of [bBoOxX] because of their roles in base prefixes, unless
-                # the next letter cannot be confused with a digit.  Similarly,
-                # [eEpP] require special treatment due to their use in
-                # exponents, [i] is reserved for a future complex number
-                # extension, and [I] is confusable with `1`
-                ('unquoted_unit_letter_less_prefix_dec_confusables', '[AC-DF-HJ-NQ-WY-Zac-df-hj-km-nq-wy-z]'),
+                # the next letter cannot be confused with a digit (and since
+                # [O] can be confused with zero, it can never be used).
+                # Similarly, [eEpP] require special treatment due to their
+                # use in exponents, [i] is reserved for a future complex
+                # number extension, and [l] is confusable with `1`.  [jk] are
+                # not allowed as the first letter to prevent confusion with
+                # Python-style complex numbers and also to leave open the
+                # possibility of a quaternion type.
+                ('unquoted_unit_letter_less_prefix_dec_confusables', '[AC-DF-HJ-NQ-WY-Zac-df-hm-nq-wy-z]'),
                 ('unquoted_unit_letter_less_dec_confusables', '[A-NP-Za-km-z]'),
                 ('unquoted_unit_letter_less_hex_confusables', '[G-NP-Zg-km-z]'),
                 ('unquoted_unit_ascii', '''
                                         (?: {unquoted_unit_letter_less_prefix_dec_confusables}{ascii_alpha}* |
-                                            [bBoO]{unquoted_unit_letter_less_dec_confusables}{ascii_alpha}*
+                                            [bBo]{unquoted_unit_letter_less_dec_confusables}{ascii_alpha}*
                                             [Xx]{unquoted_unit_letter_less_hex_confusables}{ascii_alpha}* |
                                             %
                                         )

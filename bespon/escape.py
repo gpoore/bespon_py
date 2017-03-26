@@ -27,6 +27,8 @@ from . import grammar
 if sys.maxunicode == 0xFFFF:
     chr = coding.chr_surrogate
     ord = coding.ord_surrogate
+elif sys.version_info.major == 2:
+    chr = unichr
 # pylint:  enable=W0622
 
 

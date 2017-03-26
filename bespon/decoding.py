@@ -28,6 +28,9 @@ from . import grammar
 from .ast import Ast
 from .astnodes import ScalarNode, KeyPathNode, SectionNode
 
+if sys.version_info.major == 2:
+    str = unicode
+
 
 INDENT = grammar.LIT_GRAMMAR['indent']
 WHITESPACE_SET = set(grammar.LIT_GRAMMAR['whitespace'])
@@ -383,9 +386,9 @@ class BespONDecoder(object):
             (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? (?P<number_unit_10>{unquoted_unit})? |
             (?P<float_inf_or_nan_10>{inf_or_nan})
             '''.replace('\x20', '').replace('\n', '')
-        self._number_or_number_unit_ascii_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_ascii']))
-        self._number_or_number_unit_below_u0590_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590']))
-        self._number_or_number_unit_unicode_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR, unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_unicode']))
+        self._number_or_number_unit_ascii_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_ascii'], **grammar.RE_GRAMMAR))
+        self._number_or_number_unit_below_u0590_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590'], **grammar.RE_GRAMMAR))
+        self._number_or_number_unit_unicode_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_unicode'], **grammar.RE_GRAMMAR))
 
         # Unquoted strings and key paths.
         # `{unquoted_key_or_list}` will match `*`, but that won't allow `*`
@@ -1057,7 +1060,7 @@ class BespONDecoder(object):
             node._resolved = True
             state.next_scalar = node
             state.next_cache = True
-        elif delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_singlequote_delim:
+        elif delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_doublequote_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
