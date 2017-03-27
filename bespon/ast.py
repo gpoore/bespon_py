@@ -525,7 +525,7 @@ class Ast(object):
                 else:
                     key_obj.key_path_occurances.append(kp_elem)
                 if not pos._key_path_traversable:
-                    raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
+                    raise erring.ParseError('Key path encountered an object that already exists, or a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
                 pos.check_append_key_path_scalar_key(kp_elem)
                 if next_kp_elem == open_noninline_list:

@@ -637,6 +637,8 @@ class BespONDecoder(object):
                 raise erring.ParseError('Encountered a tag when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         state.ast.open_noninline_list()
+        if line[1:2] == '\t' and (state.indent == '' or state.indent[-1:] == '\t'):
+            return self._parse_line_start_last(state.indent + line[1:], state)
         return self._parse_line_start_last(state.indent + '\x20' + line[1:], state)
 
 
@@ -1028,8 +1030,11 @@ class BespONDecoder(object):
                     state.continuation_indent = continuation_indent
                     line = line_lstrip_ws[len(end_block_delim):]
                     state.last_colno += len_continuation_indent + len(end_block_delim) - 1
-                    if state.at_line_start and indent != continuation_indent:
-                        raise erring.ParseError('Inconsistent block delim indentation', state)
+                    if state.at_line_start:
+                        if indent != continuation_indent:
+                            raise erring.ParseError('Inconsistent block delim indentation', state)
+                    elif not continuation_indent.startswith(indent):
+                        raise erring.ParseError('Inconsistent block delim indentation relative to starting line', state)
                     if continuation_indent == '':
                         content_lines_dedent = content_lines
                     else:

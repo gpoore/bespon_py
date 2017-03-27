@@ -330,7 +330,7 @@ class ListlikeNode(list):
     '''
     basetype = 'list'
     __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['_section', 'internal_indent_first', 'internal_indent_subsequent'])
+                 ['_section', 'internal_indent'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
                  key_path_parent=None, _key_path_traversable=False):
@@ -355,41 +355,21 @@ class ListlikeNode(list):
             self.last_colno = state_or_scalar_obj.last_colno
             self._open = True
             if not self.inline:
-                self.internal_indent_first = None
-                self.internal_indent_subsequent = None
+                self.internal_indent = None
         else:
             init_common(self, state_or_scalar_obj)
             self._open = False
             if not self.inline:
-                self.internal_indent_first = None
-                self.internal_indent_subsequent = None
+                self.internal_indent = None
 
 
     def _set_internal_indent(self, obj):
         if self._key_path_traversable:
-            self.internal_indent_first = obj.external_indent
-            self.internal_indent_subsequent = obj.external_indent
+            self.internal_indent = obj.external_indent
             return
         if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
             raise erring.IndentationError(obj)
-        extra_indent = obj.external_indent[len(self.indent):]
-        if obj.external_first_lineno == self.last_lineno:
-            # The non-inline list opener `*` does not affect `at_line_start`
-            # and is treated as a space for the purpose of calculating the
-            # overall indent of objects following it on the same line.  If
-            # the `*` (which will be represented by a space in `self.indent`)
-            # is adjacent to tabs on both sides, then it is not counted
-            if self.indent[-1:] == '\t' and extra_indent[1:2] == '\t':
-                self.internal_indent_first = obj.external_indent
-                self.internal_indent_subsequent = self.indent + extra_indent[1:]
-            else:
-                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
-        else:
-            if self.indent[-1:] == '\t' and extra_indent[:1] == '\t':
-                self.internal_indent_first = self.indent + '\x20' + extra_indent
-                self.internal_indent_subsequent = obj.external_indent
-            else:
-                self.internal_indent_first = self.internal_indent_subsequent = obj.external_indent
+        self.internal_indent = obj.external_indent
 
 
     def check_append_scalar_key(self, obj):
@@ -409,18 +389,10 @@ class ListlikeNode(list):
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
-        elif obj.external_first_lineno == self.last_lineno:
-            if obj.external_indent != self.internal_indent_first:
-                if self.internal_indent_first is None:
-                    self._set_internal_indent(obj)
-                    if obj.external_indent != self.internal_indent_first:
-                        raise erring.IndentationError(obj)
-                else:
-                    raise erring.IndentationError(obj)
-        elif obj.external_indent != self.internal_indent_subsequent:
-            if self.internal_indent_subsequent is None:
+        elif obj.external_indent != self.internal_indent:
+            if self.internal_indent is None:
                 self._set_internal_indent(obj)
-                if obj.external_indent != self.internal_indent_subsequent:
+                if obj.external_indent != self.internal_indent:
                     raise erring.IndentationError(obj)
             else:
                 raise erring.IndentationError(obj)
@@ -457,18 +429,10 @@ class ListlikeNode(list):
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
-        elif obj.external_first_lineno == self.last_lineno:
-            if obj.external_indent != self.internal_indent_first:
-                if self.internal_indent_first is None:
-                    self._set_internal_indent(obj)
-                    if obj.external_indent != self.internal_indent_first:
-                        raise erring.IndentationError(obj)
-                else:
-                    raise erring.IndentationError(obj)
-        elif obj.external_indent != self.internal_indent_subsequent:
-            if self.internal_indent_subsequent is None:
+        elif obj.external_indent != self.internal_indent:
+            if self.internal_indent is None:
                 self._set_internal_indent(obj)
-                if obj.external_indent != self.internal_indent_subsequent:
+                if obj.external_indent != self.internal_indent:
                     raise erring.IndentationError(obj)
             else:
                 raise erring.IndentationError(obj)
