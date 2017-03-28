@@ -920,8 +920,8 @@ class BespONDecoder(object):
         state.next_scalar_is_keyable = True
         state.next_cache = True
         if state.bidi_rtl:
-            self.bidi_rtl_last_scalar_last_line = content_lines[-1]
-            self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+            state.bidi_rtl_last_scalar_last_line = content_lines[-1]
+            state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
         return self._parse_line_continue_last(line, state)
 
 
@@ -1188,8 +1188,8 @@ class BespONDecoder(object):
             state.next_scalar_is_keyable = True
             state.next_cache = True
             if state.bidi_rtl:
-                self.bidi_rtl_last_scalar_last_line = raw_val
-                self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+                state.bidi_rtl_last_scalar_last_line = raw_val
+                state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line, state)
         if m.lastgroup == 'reserved_word':
             raw_val = line[:m.end('reserved_word')]
@@ -1228,8 +1228,8 @@ class BespONDecoder(object):
             state.next_scalar_is_keyable = True
             state.next_cache = True
             if state.bidi_rtl:
-                self.bidi_rtl_last_scalar_last_line = raw_val
-                self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+                state.bidi_rtl_last_scalar_last_line = raw_val
+                state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line, state)
         if section:
             raise erring.ParseError('Invalid unquoted key or key path in a section', state)
@@ -1246,8 +1246,8 @@ class BespONDecoder(object):
             state.next_scalar_is_keyable = False
             state.next_cache = True
             if state.bidi_rtl:
-                self.bidi_rtl_last_scalar_last_line = raw_val
-                self.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+                state.bidi_rtl_last_scalar_last_line = raw_val
+                state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
             return self._parse_line_continue_last(line, state)
         raise ValueError
 
