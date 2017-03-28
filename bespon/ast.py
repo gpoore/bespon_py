@@ -190,7 +190,7 @@ class Ast(object):
         if scalar_obj.basetype == 'key_path':
             self._append_key_path(scalar_obj)
             return
-        if scalar_obj.basetype != 'scalar' or scalar_obj.implicit_type == 'unquoted_string':
+        if scalar_obj.basetype != 'scalar' or not state.next_scalar_is_keyable:
             raise erring.ParseError('Unquoted strings and alias types are not valid keys for dict-like objects', scalar_obj)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
@@ -500,7 +500,7 @@ class Ast(object):
             dict_obj = DictlikeNode(kp_obj)
             self._append_collection(dict_obj)
             initial_pos = dict_obj
-        elif kp_obj.external_indent == pos.indent and pos.basetype == 'dict':
+        elif kp_obj.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb(pos)
             initial_pos = pos
@@ -539,6 +539,8 @@ class Ast(object):
                 else:
                     initial_pos._key_path_scope.append(collection_obj)
         if kp_obj[-1] == open_noninline_list:
+            if pos.basetype != 'list':
+                raise erring.ParseError('Key path cannot open list; incompatible with pre-existing object', kp_obj, pos)
             pos._open = True
         else:
             pos.check_append_key_path_scalar_key(kp_obj[-1])

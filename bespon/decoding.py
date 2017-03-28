@@ -49,7 +49,7 @@ BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
                        ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM,
-                       ASSIGN_KEY_VAL])
+                       ASSIGN_KEY_VAL, COMMENT_DELIM])
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 NUMBER_OR_NUMBER_UNIT_START = grammar.LIT_GRAMMAR['number_or_number_unit_start']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
@@ -74,7 +74,7 @@ class State(object):
                  'next_cache',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'last_line_comment_lineno',
-                 'next_scalar',
+                 'next_scalar', 'next_scalar_is_keyable',
                  'type_data', 'bom_offset', 'full_ast',
                  'raw_source_string', 'source_lines', 'source_lines_iter', 'ast',
                  'pure_ascii', 'only_below_u0590',
@@ -137,6 +137,7 @@ class State(object):
         self.next_doc_comment = None
         self.last_line_comment_lineno = 0
         self.next_scalar = None
+        self.next_scalar_is_keyable = False
 
         self.type_data = type_data or load_types.CORE_TYPES
         self.full_ast = full_ast
@@ -396,22 +397,25 @@ class BespONDecoder(object):
         # called for `*` everywhere except for sections.  In sections, `*`
         # is valid by itself, or at the end of a key path.
         uqs_or_kp_pattern = r'''
-            (?P<reserved_word>{reserved_word}(?!\x20?{unquoted_continue})) |
+            (?P<reserved_word>{reserved_word}(?!\x20?{unquoted_continue}|{path_separator})) |
             (?P<key>{unquoted_key_or_list}) (?: (?P<key_path>{unquoted_key_path_continue}+) | (?P<unquoted_string>{unquoted_string_continue}+) )?
             '''.replace('\x20', '').replace('\n', '')
 
         self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                          unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_ascii'],
+                                                                                         path_separator=grammar.RE_GRAMMAR['path_separator'],
                                                                                          unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_ascii'],
                                                                                          unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii'],
                                                                                          unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_ascii']))
         self._unquoted_string_or_key_path_below_u0590_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                                unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_below_u0590'],
+                                                                                               path_separator=grammar.RE_GRAMMAR['path_separator'],
                                                                                                unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_below_u0590'],
                                                                                                unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590'],
                                                                                                unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_below_u0590']))
         self._unquoted_string_or_key_path_unicode_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                            unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_unicode'],
+                                                                                           path_separator=grammar.RE_GRAMMAR['path_separator'],
                                                                                            unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_unicode'],
                                                                                            unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode'],
                                                                                            unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_unicode']))
@@ -867,6 +871,7 @@ class BespONDecoder(object):
         node.final_val = content
         node._resolved = True
         state.next_scalar = node
+        state.next_scalar_is_keyable = True
         state.next_cache = True
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
@@ -912,6 +917,7 @@ class BespONDecoder(object):
         node.final_val = content_esc
         node._resolved = True
         state.next_scalar = node
+        state.next_scalar_is_keyable = True
         state.next_cache = True
         if state.bidi_rtl:
             self.bidi_rtl_last_scalar_last_line = content_lines[-1]
@@ -954,6 +960,8 @@ class BespONDecoder(object):
         state.next_cache = False
         node.last_colno = next_scalar.last_colno
         if next_scalar.basetype == 'scalar':
+            if not state.next_scalar_is_keyable:
+                raise erring.ParseError('Invalid scalar type for a key', node)
             node.scalar = next_scalar
         elif next_scalar.basetype == 'key_path':
             node.key_path = next_scalar
@@ -1030,11 +1038,8 @@ class BespONDecoder(object):
                     state.continuation_indent = continuation_indent
                     line = line_lstrip_ws[len(end_block_delim):]
                     state.last_colno += len_continuation_indent + len(end_block_delim) - 1
-                    if state.at_line_start:
-                        if indent != continuation_indent:
-                            raise erring.ParseError('Inconsistent block delim indentation', state)
-                    elif not continuation_indent.startswith(indent):
-                        raise erring.ParseError('Inconsistent block delim indentation relative to starting line', state)
+                    if state.at_line_start and indent != continuation_indent:
+                        raise erring.ParseError('Inconsistent block delim indentation', state)
                     if continuation_indent == '':
                         content_lines_dedent = content_lines
                     else:
@@ -1043,7 +1048,7 @@ class BespONDecoder(object):
                             if c_line.startswith(continuation_indent):
                                 content_lines_dedent.append(c_line[len_continuation_indent:])
                             elif c_line.lstrip(whitespace) == '':
-                                content_lines.append('')
+                                content_lines_dedent.append('')
                             else:
                                 raise erring.ParseError('Incorrect indentation relative to block delim indentation on line {0}'.format(state.first_lineno+lineno+1), state)
                     break
@@ -1064,6 +1069,7 @@ class BespONDecoder(object):
             node.final_val = content
             node._resolved = True
             state.next_scalar = node
+            state.next_scalar_is_keyable = True
             state.next_cache = True
         elif delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_doublequote_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
@@ -1076,6 +1082,7 @@ class BespONDecoder(object):
             node.final_val = content_esc
             node._resolved = True
             state.next_scalar = node
+            state.next_scalar_is_keyable = True
             state.next_cache = True
         elif delim_code_point == comment_delim:
             node = ScalarNode(state, delim=delim, block=True, implicit_type='doc_comment')
@@ -1114,6 +1121,7 @@ class BespONDecoder(object):
         if group_type == 'number_unit':
             final_val = raw_val
             node = ScalarNode(state, implicit_type='number_unit')
+            state.next_scalar_is_keyable = True
         elif group_type == 'int':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
             parser = state.type_data['int'].parser
@@ -1125,6 +1133,7 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
             node = ScalarNode(state, implicit_type='int', num_base=group_base)
+            state.next_scalar_is_keyable = True
         elif group_type == 'float' or group_type == 'float_inf_or_nan':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
             parser = state.type_data['float'].parser
@@ -1136,6 +1145,7 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
             node = ScalarNode(state, implicit_type='float', num_base=int(group_base))
+            state.next_scalar_is_keyable = False
         else:
             raise ValueError
         if state.full_ast:
@@ -1175,6 +1185,7 @@ class BespONDecoder(object):
             node.final_val = raw_val
             node._resolved = True
             state.next_scalar = node
+            state.next_scalar_is_keyable = True
             state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
@@ -1198,6 +1209,10 @@ class BespONDecoder(object):
             node.final_val = final_val
             node._resolved = True
             state.next_scalar = node
+            if word_type != 'float':
+                state.next_scalar_is_keyable = True
+            else:
+                state.next_scalar_is_keyable = False
             state.next_cache = True
             # Reserved words don't contain rtl code points
             return self._parse_line_continue_last(line, state)
@@ -1210,6 +1225,7 @@ class BespONDecoder(object):
                 node.raw_val = raw_val
             node._resolved = True
             state.next_scalar = node
+            state.next_scalar_is_keyable = True
             state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val
@@ -1227,6 +1243,7 @@ class BespONDecoder(object):
             node.final_val = raw_val
             node._resolved = True
             state.next_scalar = node
+            state.next_scalar_is_keyable = False
             state.next_cache = True
             if state.bidi_rtl:
                 self.bidi_rtl_last_scalar_last_line = raw_val

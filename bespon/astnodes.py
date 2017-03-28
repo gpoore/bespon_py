@@ -190,6 +190,7 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
         state_or_scalar_obj.next_doc_comment = None
         tag_obj = state_or_scalar_obj.next_tag
         state_or_scalar_obj.next_tag = None
+        state_or_scalar_obj.next_cache = False
         if not tagable and tag_obj is not None:
             raise erring.ParseError('A tag was applied to an untagable object', state_or_scalar_obj, tag_obj)
     except AttributeError:
