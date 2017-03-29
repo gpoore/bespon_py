@@ -92,51 +92,51 @@ class Escape(object):
         # Regexes for finding code points and bytes that must be escaped.
         # Code points other than invalid literals are put first, since they
         # will typically come up more frequently.
-        pattern_dict = {'not_valid_ascii': grammar.RE_GRAMMAR['not_valid_ascii'],
-                        'not_valid_unicode': grammar.RE_GRAMMAR['not_valid_ascii'] if self.only_ascii else grammar.RE_GRAMMAR['not_valid_unicode'],
+        pattern_dict = {'always_escaped_ascii': grammar.RE_GRAMMAR['always_escaped_ascii'],
+                        'always_escaped_unicode': grammar.RE_GRAMMAR['always_escaped_ascii'] if self.only_ascii else grammar.RE_GRAMMAR['always_escaped_unicode'],
                         'backslash': grammar.RE_GRAMMAR['backslash'],
                         'singlequote': grammar.RE_GRAMMAR['escaped_string_singlequote_delim'],
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
                         'newline': NEWLINE}
 
-        invalid_literal_or_backslash_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}|{newline}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_newline_unicode_pattern)
-        invalid_literal_or_backslash_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}|{newline}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_newline_unicode_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern)
 
-        invalid_literal_or_backslash_singlequote_unicode_pattern = '{backslash}|{singlequote}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_singlequote_unicode_pattern = '{backslash}|{singlequote}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_unicode_pattern)
-        invalid_literal_or_backslash_doublequote_unicode_pattern = '{backslash}|{doublequote}|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_doublequote_unicode_pattern = '{backslash}|{doublequote}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_unicode_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_singlequote_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_unicode_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{not_valid_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_doublequote_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_unicode_pattern)
 
-        invalid_literal_or_backslash_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}|{newline}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_singlequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_singlequote_newline_bytes_pattern)
-        invalid_literal_or_backslash_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}|{newline}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_newline_bytes_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_singlequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_doublequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern)
 
-        invalid_literal_or_backslash_singlequote_bytes_pattern = '{backslash}|{singlequote}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_singlequote_bytes_pattern = '{backslash}|{singlequote}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_singlequote_bytes_re = re.compile(invalid_literal_or_backslash_singlequote_bytes_pattern)
-        invalid_literal_or_backslash_doublequote_bytes_pattern = '{backslash}|{doublequote}|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_doublequote_bytes_pattern = '{backslash}|{doublequote}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_bytes_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_singlequote_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_singlequote_bytes_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_bytes_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{not_valid_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_doublequote_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_doublequote_bytes_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_bytes_pattern)
 
 

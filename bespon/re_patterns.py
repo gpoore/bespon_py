@@ -511,3 +511,42 @@ else:
          \\\U000AFFFE-\\\U000AFFFF\\\U000BFFFE-\\\U000BFFFF\\\U000CFFFE-\\\U000CFFFF\\\U000DFFFE-\\\U000DFFFF\\\U000EFFFE-\\\U000EFFFF
          \\\U000FFFFE-\\\U000FFFFF\\\U0010FFFE-\\\U0010FFFF]
         '''.replace('\x20', '').replace('\n', '').replace('{INVALID_CR}', INVALID_CR)
+
+
+# Code points that must always be escaped in encoding.  This is identical to
+# the invalid literal case, except that literal `\r` must be preserved.  In
+# the decoding case, literal `\r` is allowed if part of `\r\n`, which is
+# normalized to `\n`.
+#
+# unicode_cc_less_t_lf = set([cp for cp, data in unicodetools.ucd.unicodedata.items() if data['General_Category'] == 'Cc']) - set([ord(c) for c in ('\t', '\n')])
+# non_unicode_cc_newlines = set([ord(c) for c in ('\u2028', '\u2029')])
+# bidi_control = set([cp for cp, data in unicodetools.ucd.proplist.items() if 'Bidi_Control' in data])
+# bom = set([ord('\uFEFF')])
+# noncharacters = set([cp for cp, data in unicodetools.ucd.proplist.items() if 'Noncharacter_Code_Point' in data])
+# surrogates = set([cp for cp, data in unicodetools.ucd.blocks.items() if 'Surrogate' in data['Block']])
+# always_escaped_less_surrogates = unicode_cc_less_t_lf | non_unicode_cc_newlines | bidi_control | bom | noncharacters
+# always_escaped = always_escaped_less_surrogates | surrogates
+# always_not_escaped_ascii = set([cp for cp in range(128) if cp not in always_escaped])
+# always_not_escaped_below_u0590 = set([cp for cp in range(0x0590) if cp not in always_escaped])
+ALWAYS_ESCAPED_ASCII = '[^\\\u0009-\\\u000A\\\u0020-\\\u007E]'
+ALWAYS_ESCAPED_BELOW_U0590 = '[^\\\u0009-\\\u000A\\\u0020-\\\u007E\\\u00A0-\\\u058F]'
+if sys.maxunicode == 0xFFFF:
+    ALWAYS_ESCAPED = '''
+        {UNPAIRED_SURROGATE}
+        |
+        [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u061C\\\u200E-\\\u200F\\\u2028-\\\u202E\\\u2066-\\\u2069\\\uFDD0-\\\uFDEF\\\uFEFF
+         \\\uFFFE-\\\uFFFF]
+        |
+         \\\uD83F[\\\uDFFE-\\\uDFFF]|\\\uD87F[\\\uDFFE-\\\uDFFF]|\\\uD8BF[\\\uDFFE-\\\uDFFF]|\\\uD8FF[\\\uDFFE-\\\uDFFF]|\\\uD93F[\\\uDFFE-\\\uDFFF]|
+         \\\uD97F[\\\uDFFE-\\\uDFFF]|\\\uD9BF[\\\uDFFE-\\\uDFFF]|\\\uD9FF[\\\uDFFE-\\\uDFFF]|\\\uDA3F[\\\uDFFE-\\\uDFFF]|\\\uDA7F[\\\uDFFE-\\\uDFFF]|
+         \\\uDABF[\\\uDFFE-\\\uDFFF]|\\\uDAFF[\\\uDFFE-\\\uDFFF]|\\\uDB3F[\\\uDFFE-\\\uDFFF]|\\\uDB7F[\\\uDFFE-\\\uDFFF]|\\\uDBBF[\\\uDFFE-\\\uDFFF]|
+         \\\uDBFF[\\\uDFFE-\\\uDFFF]
+        '''.replace('\x20', '').replace('\n', '').replace('{UNPAIRED_SURROGATE}', UNPAIRED_SURROGATE)
+else:
+    ALWAYS_ESCAPED = '''
+        [\\\u0000-\\\u0008\\\u000B-\\\u001F\\\u007F-\\\u009F\\\u061C\\\u200E-\\\u200F\\\u2028-\\\u202E\\\u2066-\\\u2069\\\uD800-\\\uDFFF\\\uFDD0-\\\uFDEF
+         \\\uFEFF\\\uFFFE-\\\uFFFF\\\U0001FFFE-\\\U0001FFFF\\\U0002FFFE-\\\U0002FFFF\\\U0003FFFE-\\\U0003FFFF\\\U0004FFFE-\\\U0004FFFF
+         \\\U0005FFFE-\\\U0005FFFF\\\U0006FFFE-\\\U0006FFFF\\\U0007FFFE-\\\U0007FFFF\\\U0008FFFE-\\\U0008FFFF\\\U0009FFFE-\\\U0009FFFF
+         \\\U000AFFFE-\\\U000AFFFF\\\U000BFFFE-\\\U000BFFFF\\\U000CFFFE-\\\U000CFFFF\\\U000DFFFE-\\\U000DFFFF\\\U000EFFFE-\\\U000EFFFF
+         \\\U000FFFFE-\\\U000FFFFF\\\U0010FFFE-\\\U0010FFFF]
+        '''.replace('\x20', '').replace('\n', '')

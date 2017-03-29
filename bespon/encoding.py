@@ -32,7 +32,7 @@ class BespONEncoder(object):
         self._escape = escape.Escape()
         self._escape_unicode = self._escape.escape_unicode
 
-        unquoted_string_pattern = r'(?!{reserved_word}$)(?:{unquoted_key}|{number_unit})$'
+        unquoted_string_pattern = r'(?!{reserved_word}$)(?:{unquoted_key}|{number_unit})\Z'
         self._unquoted_str_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                           unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii'],
                                                                           number_unit=grammar.RE_GRAMMAR['unquoted_dec_number_unit_ascii']))
@@ -50,30 +50,38 @@ class BespONEncoder(object):
                               type([]): self._encode_list,
                               type({}): self._encode_dict}
 
-        self._collection_types = set([type([]), type({})])
+        self._dict_types = set([type({})])
+        self._list_types = set([type([])])
+        self._collection_types = self._dict_types | self._list_types
 
 
     def _encode_none(self, obj, indent, key=False, val=False):
+        self._last_scalar_bidi_rtl = False
         return 'none'
 
 
     def _encode_bool(self, obj, indent, key=False, val=False):
+        self._last_scalar_bidi_rtl = False
         return 'true' if obj else 'false'
 
 
     def _encode_int(self, obj, indent, key=False, val=False):
+        self._last_scalar_bidi_rtl = False
         return str(obj)
 
 
     def _encode_float(self, obj, indent, key=False, val=False):
         if key:
             raise TypeError('Floats are not supported as dict keys')
+        self._last_scalar_bidi_rtl = False
         return str(obj)
 
 
     def _encode_str(self, obj, indent, key=False, val=False):
         if self._bidi_rtl_re.search(obj):
             self._last_scalar_bidi_rtl = True
+        else:
+            self._last_scalar_bidi_rtl = False
         if self._unquoted_str_re.match(obj):
             return obj
         if not self._line_terminator_re.search(obj):
@@ -82,7 +90,7 @@ class BespONEncoder(object):
             return '"""{0}"""'.format(self._escape_unicode(obj, delim='"', multidelim=True))
         obj_encoded = self._escape_unicode(obj, delim='"', multidelim=True)
         obj_encoded_lines = obj_encoded.splitlines(True)
-        if obj_encoded_lines[-1] != '\n':
+        if obj_encoded_lines[-1][-1:] != '\n':
             obj_encoded_lines[-1] += '\\\n'
         if val:
             continuation_indent = indent + self._indent_per_level
@@ -90,65 +98,60 @@ class BespONEncoder(object):
         return '|"""\n{0}{1}|"""/'.format(''.join([indent + line for line in obj_encoded_lines]), indent)
 
 
-    def _encode_list(self, lst, indent, key=False, val=False):
+    def _encode_list(self, obj, indent, key=False, val=False):
         if key:
             raise TypeError('Lists are not supported as dict keys')
-        if not lst:
+        if not obj:
             yield '[]\n'
-        first = True
-        for elem in lst:
-            if type(elem) == type(lst):
-                if not elem:
-                    if first:
-                        first = False
-                        yield '* []'
-                    else:
-                        yield indent + '* []'
-                else:
-                    yield indent + '*\n' + indent + '  '
-                    for x in self._encode_funcs[type(elem)](elem, indent + '  '):
-                        yield x
-                    yield '\n'
+        for elem in obj:
+            type_elem = type(elem)
+            if type_elem in self._list_types and elem:
+                yield indent + '*\n'
+                for x in self._encode_funcs[type_elem](elem, indent + '  '):
+                    yield x
             else:
-                if first:
-                    first = False
-                    yield '* '
+                yield '\n' + indent + '* '
+                if type_elem not in self._collection_types:
+                    yield self._encode_funcs[type_elem](elem, indent + '  ')
+                    yield '\n'
                 else:
-                    yield indent + '* '
-                if type(elem) not in self._collection_types:
-                    yield self._encode_funcs[type(elem)](elem, indent + '  ')
-                else:
-                    for x in self._encode_funcs[type(elem)](elem, indent + '  '):
+                    for x in self._encode_funcs[type_elem](elem, indent + '  '):
                         yield x
-                yield '\n'
 
-    def _encode_dict(self, dct, indent, key=False, val=False):
+    def _encode_dict(self, obj, indent, key=False, val=False):
         if key:
             raise TypeError('Dicts are not supported as dict keys')
-        if not dct:
+        if not obj:
             yield '{}\n'
         else:
             first = True
-            for k, v in dct.items():
-                self._last_scalar_bidi_rtl = False
+            for k, v in obj.items():
                 if first:
-                    first = False
                     yield self._encode_funcs[type(k)](k, indent, key=True)
+                    first = False
                 else:
                     yield indent + self._encode_funcs[type(k)](k, indent, key=True)
                 yield ' ='
-                if type(v) not in self._collection_types:
+                type_v = type(v)
+                if type_v not in self._collection_types:
                     if self._last_scalar_bidi_rtl:
                         yield '\n' + indent + self._indent_per_level
-                        yield self._encode_funcs[type(v)](v, indent + self._indent_per_level, val=True)
                     else:
                         yield ' '
-                        yield self._encode_funcs[type(v)](v, indent + self._indent_per_level, val=True)
-                else:
+                    yield self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True)
+                    yield '\n'
+                elif not v:
+                    yield ' '
+                    yield self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True)
+                elif type_v in self._dict_types:
                     yield '\n' + indent + self._indent_per_level
-                    for x in self._encode_funcs[type(v)](v, indent + self._indent_per_level, val=True):
+                    for x in self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True):
                         yield x
-                yield '\n'
+                elif type_v in self._list_types:
+                    for x in self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True):
+                        yield x
+                else:
+                    raise TypeError('Unsupported object of type {0}'.format(type_v))
 
 
     def iterencode(self, obj):

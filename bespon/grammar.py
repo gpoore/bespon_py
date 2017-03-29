@@ -118,6 +118,9 @@ _RE_PATTERNS = [('ascii_alpha', '[A-Za-z]'),
                 ('not_valid_ascii', _group_if_needed(re_patterns.NOT_VALID_LITERAL_ASCII)),
                 ('not_valid_below_u0590', _group_if_needed(re_patterns.NOT_VALID_LITERAL_BELOW_U0590)),
                 ('not_valid_unicode', _group_if_needed(re_patterns.NOT_VALID_LITERAL)),
+                ('always_escaped_ascii', _group_if_needed(re_patterns.ALWAYS_ESCAPED_ASCII)),
+                ('always_escaped_below_u0590', _group_if_needed(re_patterns.ALWAYS_ESCAPED_BELOW_U0590)),
+                ('always_escaped_unicode', _group_if_needed(re_patterns.ALWAYS_ESCAPED)),
                 ('bidi_rtl', _group_if_needed(re_patterns.BIDI_R_AL)),
                 ('private_use', _group_if_needed(re_patterns.PRIVATE_USE))]
 _RAW_RE_GRAMMAR.extend(_RE_PATTERNS)
