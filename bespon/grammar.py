@@ -97,7 +97,9 @@ LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GR
 
 
 # Assemble regex grammar
-_RAW_RE_GRAMMAR = [('backslash', '\\\\')]
+_RAW_RE_GRAMMAR = [('backslash', '\\\\'),
+                   ('line_terminator_ascii', '[{0}]'.format(re.escape(LIT_GRAMMAR['line_terminator_ascii']))),
+                   ('line_terminator_unicode', '[{0}]'.format(re.escape(LIT_GRAMMAR['line_terminator_unicode'])))]
 
 def _group_if_needed(pattern):
     if '|' in pattern:
