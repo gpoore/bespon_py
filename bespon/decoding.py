@@ -694,6 +694,7 @@ class BespONDecoder(object):
         '''
         Start a tag.
         '''
+        raise NotImplementedError
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.first_lineno:
                 raise erring.ParseError('Cannot start a tag when a prior scalar has not yet been resolved', state, unresolved_cache=True)
@@ -709,6 +710,7 @@ class BespONDecoder(object):
         '''
         End a tag.
         '''
+        raise NotImplementedError
         if line[:2] != end_tag_with_suffix:
             raise erring.ParseError('Invalid end tag delimiter', state)
         if state.next_scalar is not None:
