@@ -936,10 +936,14 @@ class BespONDecoder(object):
         Parse a section.  This is invoked by `_parse_token_block_prefix()`.
         At this point, `line` has already had the delimiter stripped.
         '''
-        # No need to check for cached values.  `_parse_token_block_prefix()`
-        # takes care of scalars.  When the object is created, it is specified
-        # as not tagable, which takes care of any misplaced tags.  And doc
-        # comments are fine.
+        # No need to check for cached scalars, since that's done in
+        # `_parse_token_block_prefix()`.  Can't have doc comments or tags
+        # for sections in general, although that could technically be relaxed
+        # for the first section if the root node were empty.
+        if state.next_cache:
+            if state.next_doc_comment is not None:
+                raise erring.ParseError('Sections do not take doc comments', state, state.next_doc_comment)
+            raise erring.ParseError('Sections do not take tags', state, state.next_tag)
         node = SectionNode(state, delim)
         if line[:1] == block_suffix:
             state.ast.end_section(delim)
