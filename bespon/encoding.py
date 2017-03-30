@@ -27,7 +27,8 @@ class BespONEncoder(object):
     syntax.
     '''
     def __init__(self):
-        self._indent_per_level = '\x20\x20\x20\x20'
+        self._dict_indent_per_level = '\x20\x20\x20\x20'
+        self._list_indent_per_level = '\x20\x20'
 
         self._escape = escape.Escape()
         self._escape_unicode = self._escape.escape_unicode
@@ -53,6 +54,7 @@ class BespONEncoder(object):
         self._dict_types = set([type({})])
         self._list_types = set([type([])])
         self._collection_types = self._dict_types | self._list_types
+        self._scalar_types = set([k for k in self._encode_funcs if k not in self._collection_types])
 
 
     def _encode_none(self, obj, indent, key=False, val=False):
@@ -92,9 +94,6 @@ class BespONEncoder(object):
         obj_encoded_lines = obj_encoded.splitlines(True)
         if obj_encoded_lines[-1][-1:] != '\n':
             obj_encoded_lines[-1] += '\\\n'
-        if val:
-            continuation_indent = indent + self._indent_per_level
-            return '|"""\n{0}{1}|"""/'.format(''.join([continuation_indent + line for line in obj_encoded_lines]), continuation_indent)
         return '|"""\n{0}{1}|"""/'.format(''.join([indent + line for line in obj_encoded_lines]), indent)
 
 
@@ -103,20 +102,30 @@ class BespONEncoder(object):
             raise TypeError('Lists are not supported as dict keys')
         if not obj:
             yield '[]\n'
-        for elem in obj:
-            type_elem = type(elem)
-            if type_elem in self._list_types and elem:
-                yield indent + '*\n'
-                for x in self._encode_funcs[type_elem](elem, indent + '  '):
-                    yield x
-            else:
-                yield '\n' + indent + '* '
-                if type_elem not in self._collection_types:
-                    yield self._encode_funcs[type_elem](elem, indent + '  ')
-                    yield '\n'
-                else:
+        else:
+            first = True
+            for n, elem in enumerate(obj):
+                type_elem = type(elem)
+                if type_elem in self._list_types and elem:
+                    if first:
+                        yield '*\n' + indent + '  '
+                        first = False
+                    else:
+                        yield indent + '*\n' + indent + '  '
                     for x in self._encode_funcs[type_elem](elem, indent + '  '):
                         yield x
+                else:
+                    if first:
+                        yield '* '
+                        first = False
+                    else:
+                        yield indent + '* '
+                    if type_elem in self._scalar_types:
+                        yield self._encode_funcs[type_elem](elem, indent + '  ')
+                        yield '\n'
+                    else:
+                        for x in self._encode_funcs[type_elem](elem, indent + '  '):
+                            yield x
 
     def _encode_dict(self, obj, indent, key=False, val=False):
         if key:
@@ -133,22 +142,23 @@ class BespONEncoder(object):
                     yield indent + self._encode_funcs[type(k)](k, indent, key=True)
                 yield ' ='
                 type_v = type(v)
-                if type_v not in self._collection_types:
+                if type_v in self._scalar_types:
                     if self._last_scalar_bidi_rtl:
-                        yield '\n' + indent + self._indent_per_level
+                        yield '\n' + indent + self._dict_indent_per_level
                     else:
                         yield ' '
-                    yield self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True)
+                    yield self._encode_funcs[type_v](v, indent + self._dict_indent_per_level, val=True)
                     yield '\n'
                 elif not v:
                     yield ' '
-                    yield self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True)
+                    yield self._encode_funcs[type_v](v, indent + self._dict_indent_per_level, val=True)
                 elif type_v in self._dict_types:
-                    yield '\n' + indent + self._indent_per_level
-                    for x in self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True):
+                    yield '\n' + indent + self._dict_indent_per_level
+                    for x in self._encode_funcs[type_v](v, indent + self._dict_indent_per_level, val=True):
                         yield x
                 elif type_v in self._list_types:
-                    for x in self._encode_funcs[type_v](v, indent + self._indent_per_level, val=True):
+                    yield '\n' + indent + self._list_indent_per_level
+                    for x in self._encode_funcs[type_v](v, indent + self._list_indent_per_level, val=True):
                         yield x
                 else:
                     raise TypeError('Unsupported object of type {0}'.format(type_v))
