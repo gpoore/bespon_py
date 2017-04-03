@@ -35,8 +35,6 @@ elif sys.version_info.major == 2:
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 
 
-
-
 def basic_unicode_escape(code_point):
     '''
     Basic backslash-escape.  Useful for creating error messages, etc.
@@ -99,6 +97,8 @@ class Escape(object):
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
                         'newline': NEWLINE}
 
+        self.invalid_literal_unicode_re = re.compile('{always_escaped_unicode}'.format(**pattern_dict))
+
         invalid_literal_or_backslash_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_newline_unicode_pattern)
         invalid_literal_or_backslash_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
@@ -118,6 +118,8 @@ class Escape(object):
         self._invalid_literal_or_backslash_multiple_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_unicode_pattern)
         invalid_literal_or_backslash_multiple_doublequote_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_unicode_pattern)
+
+        self.invalid_literal_bytes_re = re.compile('{always_escaped_ascii}'.format(**pattern_dict).encode('ascii'))
 
         invalid_literal_or_backslash_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_singlequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_singlequote_newline_bytes_pattern)
@@ -186,19 +188,19 @@ class Escape(object):
         return '\\U{0:08x}'.format(n)
 
 
-    def escape_unicode(self, s, delim, multidelim=False, all=False, inline=False):
+    def escape_unicode(self, s, delim_char, multidelim=False, all=False, inline=False):
         '''
         Within a string, replace all code points that are not allowed to
         appear literally with their escaped counterparts.
         '''
-        if delim != "'" and delim != '"':
+        if delim_char != "'" and delim_char != '"':
             raise TypeError
         d = self._escape_unicode_dict
         if all:
             v = ''.join(d[c] for c in s)
         else:
             if inline:
-                if delim == "'":
+                if delim_char == "'":
                     if multidelim:
                         r = self._invalid_literal_or_backslash_multiple_singlequote_newline_unicode_re
                     else:
@@ -209,7 +211,7 @@ class Escape(object):
                     else:
                         r = self._invalid_literal_or_backslash_doublequote_newline_unicode_re
             else:
-                if delim == "'":
+                if delim_char == "'":
                     if multidelim:
                         r = self._invalid_literal_or_backslash_multiple_singlequote_unicode_re
                     else:
@@ -223,17 +225,17 @@ class Escape(object):
         return v
 
 
-    def escape_bytes(self, b, delim, multidelim=False, inline=False):
+    def escape_bytes(self, b, delim_char, multidelim=False, inline=False):
         '''
         Within a binary string, replace all bytes whose corresponding Latin-1
         code points are not allowed to appear literally with their escaped
         counterparts.
         '''
-        if delim != "'" and delim != '"':
+        if delim_char != "'" and delim_char != '"':
             raise TypeError
         d = self._escape_bytes_dict
         if inline:
-            if delim == "'":
+            if delim_char == "'":
                 if multidelim:
                     r = self._invalid_literal_or_backslash_multiple_singlequote_newline_bytes_re
                 else:
@@ -244,7 +246,7 @@ class Escape(object):
                 else:
                     r = self._invalid_literal_or_backslash_doublequote_newline_bytes_re
         else:
-            if delim == "'":
+            if delim_char == "'":
                 if multidelim:
                     r = self._invalid_literal_or_backslash_multiple_singlequote_bytes_re
                 else:
