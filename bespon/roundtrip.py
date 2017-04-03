@@ -87,10 +87,12 @@ class RoundtripAst(object):
         self._replacements = {}
 
 
-    def replace_scalar_val(self, path, obj):
+    def replace_val(self, path, obj):
         '''
-        Replace a scalar value in the AST.
+        Replace a value in the AST.
         '''
+        if isinstance(obj, dict) or isinstance(obj, list):
+            raise TypeError('Replacing collections is not currently supported')
         if not isinstance(path, list) and not isinstance(path, tuple):
             raise TypeError('Path to value must be a list or tuple of dict keys/list indices')
         pos = self.root[0]
@@ -101,9 +103,9 @@ class RoundtripAst(object):
         continuation_indent = pos.continuation_indent
         if path and (continuation_indent == '' or pos.first_lineno == pos.last_lineno):
             continuation_indent += self.encoder.dict_indent_per_level
-        encoded_val = self.encoder.encode_scalar(obj, continuation_indent,
-                                                 delim=pos.delim, block=pos.block,
-                                                 num_base=pos.num_base)
+        encoded_val = self.encoder.encode_element(obj, continuation_indent,
+                                                  delim=pos.delim, block=pos.block,
+                                                  num_base=pos.num_base)
         if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
             if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
                 raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
@@ -126,14 +128,19 @@ class RoundtripAst(object):
         if not isinstance(pos, dict):
             raise TypeError('Key replacement is only allowed for dicts')
         current_dict = pos
-        pos = [k for k in pos if k.final_val == path[-1]][0]
+        key_objs = [k for k in pos if k.final_val == path[-1]]
+        if len(key_objs) != 1:
+            if len(key_objs) == 0:
+                raise KeyError(obj)
+            raise ValueError('Multiple keys were found that matched {0}'.format(obj))
+        pos = key_objs[0]
         if type(pos.final_val) != type(obj):
             raise TypeError('Key replacement is only allowed for keys of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         key_path = False if pos.key_path is None else True
-        encoded_val = self.encoder.encode_scalar(obj, pos.continuation_indent,
-                                                 key=True, key_path=key_path,
-                                                 delim=pos.delim, block=pos.block,
-                                                 num_base=pos.num_base)
+        encoded_val = self.encoder.encode_element(obj, pos.continuation_indent,
+                                                  key=True, key_path=key_path,
+                                                  delim=pos.delim, block=pos.block,
+                                                  num_base=pos.num_base)
         if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
             if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
                 raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')

@@ -290,10 +290,10 @@ class BespONEncoder(object):
         return ''.join(x for x in self.iterencode(obj))
 
 
-    def encode_scalar(self, obj, indent='', key=False, key_path=False,
-                      delim=None, block=False, num_base=None):
+    def encode_element(self, obj, indent='', key=False, key_path=False,
+                       delim=None, block=False, num_base=None):
         '''
-        Encode a scalar.
+        Encode an object in a manner suitable for a specified context.
 
         This is used in RoundtripAst.
         '''
