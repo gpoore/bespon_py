@@ -24,7 +24,7 @@ END_INLINE_LIST = grammar.LIT_GRAMMAR['end_inline_list']
 START_TAG = grammar.LIT_GRAMMAR['start_tag']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 INLINE_ELEMENT_SEPARATOR = grammar.LIT_GRAMMAR['inline_element_separator']
-OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
+OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 
@@ -37,7 +37,8 @@ class Ast(object):
     conversion into standard Python objects.
     '''
     __slots__ = ['state', 'full_ast', 'max_nesting_depth',
-                 'source', 'root', 'pos', 'section_pos',
+                 'source', 'source_lines', 'root', 'pos', 'section_pos',
+                 'scalar_nodes', 'line_comments',
                  '_unresolved_nodes', '_in_tag_cached_pos',
                  '_first_section', '_last_section']
 
@@ -53,6 +54,9 @@ class Ast(object):
         self.root = self.source.root
         self.pos = self.root
         self.section_pos = None
+        if self.full_ast:
+            self.scalar_nodes = []
+            self.line_comments = []
         self._unresolved_nodes = [self.root]
         self._in_tag_cached_pos = None
         self._first_section = None
@@ -444,7 +448,7 @@ class Ast(object):
             raise erring.ParseError('Misplaced object separator "{0}" or missing object/key-value pair'.format(INLINE_ELEMENT_SEPARATOR), state)
 
 
-    def open_noninline_list(self, ListlikeNode=astnodes.ListlikeNode):
+    def open_indentation_list(self, ListlikeNode=astnodes.ListlikeNode):
         '''
         Open a list-like object in non-inline syntax at `*`.
         '''
@@ -480,11 +484,11 @@ class Ast(object):
                 pos.last_lineno = state.last_lineno
                 pos.last_colno = state.last_colno
             else:
-                raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_NONINLINE_LIST), state)
+                raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_INDENTATION_LIST), state)
 
 
     def _append_key_path(self, kp_obj,
-                         open_noninline_list=OPEN_NONINLINE_LIST,
+                         open_indentation_list=OPEN_INDENTATION_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
                          ListlikeNode=astnodes.ListlikeNode):
         '''
@@ -520,15 +524,15 @@ class Ast(object):
             if pos.basetype == 'dict' and kp_elem in pos:
                 pos = pos[kp_elem]
                 key_obj = pos.index
-                if key_obj.key_path_occurances is None:
-                    key_obj.key_path_occurances = [kp_elem]
+                if key_obj.key_path_occurrences is None:
+                    key_obj.key_path_occurrences = [kp_elem]
                 else:
-                    key_obj.key_path_occurances.append(kp_elem)
+                    key_obj.key_path_occurrences.append(kp_elem)
                 if not pos._key_path_traversable:
                     raise erring.ParseError('Key path encountered an object that already exists, or a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
                 pos.check_append_key_path_scalar_key(kp_elem)
-                if next_kp_elem == open_noninline_list:
+                if next_kp_elem == open_indentation_list:
                     collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
                 else:
                     collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
@@ -538,7 +542,7 @@ class Ast(object):
                     initial_pos._key_path_scope = [collection_obj]
                 else:
                     initial_pos._key_path_scope.append(collection_obj)
-        if kp_obj[-1] == open_noninline_list:
+        if kp_obj[-1] == open_indentation_list:
             if pos.basetype != 'list':
                 raise erring.ParseError('Key path cannot open list; incompatible with pre-existing object', kp_obj, pos)
             pos._open = True
@@ -548,7 +552,7 @@ class Ast(object):
 
 
     def start_section(self, section_obj,
-                      open_noninline_list=OPEN_NONINLINE_LIST,
+                      open_indentation_list=OPEN_INDENTATION_LIST,
                       ListlikeNode=astnodes.ListlikeNode,
                       DictlikeNode=astnodes.DictlikeNode):
         '''
@@ -571,7 +575,7 @@ class Ast(object):
                 raise erring.ParseError('Cannot start a section when a previous section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
         self._last_section = section_obj
         if pos is root:
-            if section_obj.scalar is not None and section_obj.scalar.final_val == open_noninline_list:
+            if section_obj.scalar is not None and section_obj.scalar.final_val == open_indentation_list:
                 obj = ListlikeNode(section_obj)
             else:
                 obj = DictlikeNode(section_obj)
@@ -595,26 +599,26 @@ class Ast(object):
                 if kp_elem in pos:
                     pos = pos[kp_elem]
                     key_obj = pos.index
-                    if key_obj.key_path_occurances is None:
-                        key_obj.key_path_occurances = [kp_elem]
+                    if key_obj.key_path_occurrences is None:
+                        key_obj.key_path_occurrences = [kp_elem]
                     else:
-                        key_obj.key_path_occurances.append(kp_elem)
+                        key_obj.key_path_occurrences.append(kp_elem)
                     if not pos._key_path_traversable:
                         raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
                 else:
                     pos.check_append_key_path_scalar_key(kp_elem)
-                    if next_kp_elem == open_noninline_list:
+                    if next_kp_elem == open_indentation_list:
                         collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
                     else:
                         collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
                     self._append_key_path_collection(collection_obj)
                     pos = collection_obj
-            if kp_obj[-1] == open_noninline_list:
+            if kp_obj[-1] == open_indentation_list:
                 pos._open = True
             else:
                 pos.check_append_key_path_scalar_key(kp_obj[-1])
             self.pos = pos
-        elif section_obj.scalar.final_val != open_noninline_list:
+        elif section_obj.scalar.final_val != open_indentation_list:
             pos.check_append_key_path_scalar_key(section_obj.scalar)
         else:
             if pos.basetype != 'list':
@@ -634,6 +638,59 @@ class Ast(object):
             raise erring.ParseError('Section start and end delims must have the same length', self.state, self._last_section)
         self._last_section._end_delim = True
         self._section_climb(self.pos)
+
+
+    def resolve(self):
+        '''
+        Convert all unresolved nodes into standard Python types.
+        '''
+        # Unresolved nodes are visited in the opposite order from which they
+        # were created.  Later nodes are lower in the AST, so under normal
+        # circumstances they can and must be resolved first.
+        #
+        # Objects with alias or copy tags can't be resolved until the
+        # targeted object has been resolved.  Similarly, collections
+        # configured with init, default, or recmerge have to wait to be
+        # resolved until the targeted collection(s) are resolved.  Multiple
+        # passes through the remaining unresolved objects may be required.
+        #
+        # Circular or otherwise complex aliases can exist in or between
+        # collections.  These require special care.  If a collection contains
+        # a reference to itself, the collection must be created with a
+        # placeholder element, which is then replaced with the alias to the
+        # collection that now exists.  This can be complicated by the use
+        # of immutable collections.  A truly immutable collection cannot
+        # contain an alias to itself, unless that alias is inside a mutable
+        # collection.  This complicates the resolving process for immutable
+        # objects, and requires a check for unresolvable situations.
+        type_data = self.state.type_data
+        unresolved_nodes = list(reversed(self._unresolved_nodes))
+        while unresolved_nodes:
+            initial_unresolved_count = len(unresolved_nodes)
+            remaining_nodes = []
+            for node in unresolved_nodes:
+                if node._unresolved_dependency_count > 0:
+                    remaining_nodes.append(node)
+                elif node.basetype == 'tag':
+                    # #### Check
+                    node._resolved = True
+                elif node.tag is None or node.tag._resolved:
+                    # #### Fix for other types
+                    if node.basetype == 'dict':
+                        node.final_val = type_data[node.basetype].parser((k.final_val, v.final_val) for k, v in node.items())
+                        node.parent._unresolved_dependency_count -= 1
+                    elif node.basetype == 'list':
+                        node.final_val = type_data[node.basetype].parser(x.final_val for x in node)
+                        node.parent._unresolved_dependency_count -= 1
+                    elif node.basetype == 'root':
+                        node.final_val = node[0].final_val
+                    else:
+                        raise NotImplementedError
+                else:
+                    remaining_nodes.append(node)
+            unresolved_nodes = remaining_nodes
+            if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
+                raise erring.ParseError('Could not resolve all nodes', self.state)
 
 
     def finalize(self):
@@ -689,57 +746,6 @@ class Ast(object):
                 pos = parent
             self.pos = pos
         self.resolve()
-
-
-    def resolve(self):
-        '''
-        Convert all unresolved nodes into standard Python types.
-        '''
-        # Unresolved nodes are visited in the opposite order from which they
-        # were created.  Later nodes are lower in the AST, so under normal
-        # circumstances they can and must be resolved first.
-        #
-        # Objects with alias or copy tags can't be resolved until the
-        # targeted object has been resolved.  Similarly, collections
-        # configured with init, default, or recmerge have to wait to be
-        # resolved until the targeted collection(s) are resolved.  Multiple
-        # passes through the remaining unresolved objects may be required.
-        #
-        # Circular or otherwise complex aliases can exist in or between
-        # collections.  These require special care.  If a collection contains
-        # a reference to itself, the collection must be created with a
-        # placeholder element, which is then replaced with the alias to the
-        # collection that now exists.  This can be complicated by the use
-        # of immutable collections.  A truly immutable collection cannot
-        # contain an alias to itself, unless that alias is inside a mutable
-        # collection.  This complicates the resolving process for immutable
-        # objects, and requires a check for unresolvable situations.
-        type_data = self.state.type_data
-        unresolved_nodes = list(reversed(self._unresolved_nodes))
-        while unresolved_nodes:
-            initial_unresolved_count = len(unresolved_nodes)
-            remaining_nodes = []
-            for node in unresolved_nodes:
-                if node._unresolved_dependency_count > 0:
-                    remaining_nodes.append(node)
-                elif node.basetype == 'tag':
-                    # #### Check
-                    node._resolved = True
-                elif node.tag is None or node.tag._resolved:
-                    # #### Fix for other types
-                    if node.basetype == 'dict':
-                        node.final_val = type_data[node.basetype].parser((k.final_val, v.final_val) for k, v in node.items())
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'list':
-                        node.final_val = type_data[node.basetype].parser(x.final_val for x in node)
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'root':
-                        node.final_val = node[0].final_val
-                    else:
-                        raise NotImplementedError
-                else:
-                    remaining_nodes.append(node)
-            unresolved_nodes = remaining_nodes
-            if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
-                raise erring.ParseError('Could not resolve all nodes', self.state)
-        # #### make finalize do all resolving except pythonize?
+        # Update source with final locations
+        self.source.last_lineno = state.last_lineno
+        self.source.last_colno = state.last_colno

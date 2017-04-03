@@ -23,7 +23,7 @@ from . import grammar
 from . import erring
 
 
-OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
+OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
 INLINE_ELEMENT_SEPARATOR = grammar.LIT_GRAMMAR['inline_element_separator']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 
@@ -295,7 +295,7 @@ class ScalarNode(object):
     basetype = 'scalar'
     __slots__ = (_node_common_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
-                  'raw_val', 'num_base', 'key_path_occurances',
+                  'raw_val', 'num_base', 'key_path', 'key_path_occurrences',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
 
     def __init__(self, state, init_common=_init_common,
@@ -305,7 +305,8 @@ class ScalarNode(object):
         self.implicit_type = implicit_type
         self.num_base = num_base
         self.continuation_indent = state.continuation_indent
-        self.key_path_occurances = None
+        self.key_path = None
+        self.key_path_occurrences = None
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
         init_common(self, state)
@@ -386,7 +387,7 @@ class ListlikeNode(list):
             if self.inline:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
-                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_NONINLINE_LIST), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), obj)
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
@@ -426,7 +427,7 @@ class ListlikeNode(list):
             if self.inline:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
-                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_NONINLINE_LIST), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), obj)
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
@@ -743,7 +744,7 @@ class KeyPathNode(list):
 
     def __init__(self, state, key_path_raw_val,
                  init_common=_init_common,
-                 open_noninline_list=OPEN_NONINLINE_LIST,
+                 open_indentation_list=OPEN_INDENTATION_LIST,
                  path_separator=PATH_SEPARATOR,
                  reserved_word_patterns=_reserved_word_patterns,
                  key_path_reserved_word_vals=_key_path_reserved_word_vals,
@@ -755,7 +756,7 @@ class KeyPathNode(list):
         first_colno = state.first_colno
         last_colno = first_colno
         for kp_elem_raw in key_path_raw_val.split(path_separator):
-            if kp_elem_raw == open_noninline_list:
+            if kp_elem_raw == open_indentation_list:
                 self.append(kp_elem_raw)
                 last_colno += 2
                 first_colno = last_colno
@@ -785,6 +786,7 @@ class KeyPathNode(list):
                     kp_elem_node.raw_val = kp_elem_raw
                 kp_elem_node.final_val = kp_elem_final
                 kp_elem_node._resolved = True
+                kp_elem_node.key_path = self
                 self.append(kp_elem_node)
                 last_colno += 2
                 first_colno = last_colno

@@ -39,7 +39,7 @@ ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequo
 ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim']
 LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
 COMMENT_DELIM = grammar.LIT_GRAMMAR['comment_delim']
-OPEN_NONINLINE_LIST = grammar.LIT_GRAMMAR['open_noninline_list']
+OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
@@ -148,12 +148,12 @@ class State(object):
         self.unescape_bytes = decoder._unescape_bytes
 
         self._check_literals_set_code_point_attrs(raw_source_string, decoder)
-        if self.full_ast:
-            self.raw_source_string = raw_source_string
         self.source_lines = raw_source_string.splitlines()
         self.source_lines_iter = iter(self.source_lines)
 
         self.ast = Ast(self)
+        if self.full_ast:
+            self.ast.source_lines = self.source_lines
 
 
     def _traceback_not_valid_literal(self, raw_source_string, index):
@@ -290,7 +290,7 @@ class BespONDecoder(object):
         parse_scalar_token = collections.defaultdict(lambda: self._parse_token_unquoted_string_or_key_path)
         token_functions = {'comment_delim': self._parse_token_comment_delim,
                            'assign_key_val': self._parse_token_assign_key_val,
-                           'open_noninline_list': self._parse_token_open_noninline_list,
+                           'open_indentation_list': self._parse_token_open_indentation_list,
                            'start_inline_dict': self._parse_token_start_inline_dict,
                            'end_inline_dict': self._parse_token_end_inline_dict,
                            'start_inline_list': self._parse_token_start_inline_list,
@@ -455,23 +455,40 @@ class BespONDecoder(object):
         return ''.join(s_list_inline)
 
 
-    def decode(self, string_or_bytes):
+    def _as_unicode_string(self, unicode_string_or_bytes):
+        '''
+        Take an object that may be a Unicode string or bytes, and return
+        a Unicode string.
+        '''
+        if isinstance(unicode_string_or_bytes, str):
+            unicode_string = unicode_string_or_bytes
+        else:
+            try:
+                unicode_string = unicode_string_or_bytes.decode('utf8')
+            except Exception as e:
+                raise erring.SourceDecodeError(e)
+        return unicode_string
+
+
+    def decode(self, unicode_string_or_bytes):
         '''
         Decode a Unicode string or byte string into Python objects.
         '''
-        if isinstance(string_or_bytes, str):
-            raw_source_string = string_or_bytes
-        else:
-            try:
-                raw_source_string = string_or_bytes.decode('utf8')
-            except Exception as e:
-                raise erring.SourceDecodeError(e)
+        unicode_string = self._as_unicode_string(unicode_string_or_bytes)
+        state = State(self, unicode_string)
+        self._parse_lines(state)
+        return state.ast.root.final_val
 
-        state = State(self, raw_source_string)
 
-        ast, data = self._parse_lines(state)
-
-        return data
+    def decode_to_ast(self, unicode_string_or_bytes):
+        '''
+        Decode a Unicode string or byte string into AST with full source
+        information.
+        '''
+        unicode_string = self._as_unicode_string(unicode_string_or_bytes)
+        state = State(self, unicode_string, full_ast=True)
+        self._parse_lines(state)
+        return state.ast
 
 
     def _parse_lines(self, state):
@@ -492,13 +509,9 @@ class BespONDecoder(object):
         while line is not None:
             line = parse_token[line[:1]](line, state)
 
-        ast = state.ast
-        ast.finalize()
-        if not ast.root:
+        state.ast.finalize()
+        if not state.ast.root:
             raise erring.ParseError('There was no data to load', state)
-        data = ast.root.final_val
-
-        return (ast, data)
 
 
     def _check_bidi_rtl(self, state):
@@ -627,7 +640,7 @@ class BespONDecoder(object):
         return line[1:]
 
 
-    def _parse_token_open_noninline_list(self, line, state,
+    def _parse_token_open_indentation_list(self, line, state,
                                          path_separator=PATH_SEPARATOR):
         '''
         Open a non-inline list, or start a key path that has a list as its
@@ -640,7 +653,7 @@ class BespONDecoder(object):
             if state.inline or state.next_scalar.last_lineno == state.first_lineno:
                 raise erring.ParseError('Encountered a tag when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
-        state.ast.open_noninline_list()
+        state.ast.open_indentation_list()
         if line[1:2] == '\t' and (state.indent == '' or state.indent[-1:] == '\t'):
             return self._parse_line_start_last(state.indent + line[1:], state)
         return self._parse_line_start_last(state.indent + '\x20' + line[1:], state)
@@ -792,7 +805,8 @@ class BespONDecoder(object):
 
 
     def _parse_token_line_comment(self, line, state,
-                                  comment_delim=COMMENT_DELIM):
+                                  comment_delim=COMMENT_DELIM,
+                                  ScalarNode=ScalarNode):
         '''
         Parse a line comment.  This is used in `_parse_token_comment()`.
         No checking is done for `#` followed by `#`, since this function is
@@ -800,6 +814,14 @@ class BespONDecoder(object):
         the line with the leading `#` still intact.
         '''
         state.last_line_comment_lineno = state.last_lineno
+        if state.full_ast:
+            state.last_colno += len(line) - 1
+            node = ScalarNode(state, delim=comment_delim, implicit_type='line_comment')
+            node.raw_val = line[1:]
+            node.final_val = node.raw_val
+            node._resolved = True
+            state.ast.scalar_nodes.append(node)
+            state.ast.line_comments.append(node)
         return self._parse_line_goto_next('', state)
 
 
@@ -833,6 +855,7 @@ class BespONDecoder(object):
         node = ScalarNode(state, delim=delim, block=False, implicit_type='doc_comment')
         if state.full_ast:
             node.raw_val = content_lines
+            state.ast.scalar_nodes.append(node)
         node.final_val = content
         node._resolved = True
         state.next_doc_comment = node
@@ -870,6 +893,7 @@ class BespONDecoder(object):
         node = ScalarNode(state, delim=delim, block=False, implicit_type='literal_string')
         if state.full_ast:
             node.raw_val = content_lines
+            state.ast.scalar_nodes.append(node)
         node.final_val = content
         node._resolved = True
         state.next_scalar = node
@@ -909,6 +933,7 @@ class BespONDecoder(object):
         node = ScalarNode(state, delim=delim, block=False, implicit_type='escaped_string')
         if state.full_ast:
             node.raw_val = content_lines
+            state.ast.scalar_nodes.append(node)
         if '\\' not in content:
             content_esc = content
         else:
@@ -931,7 +956,7 @@ class BespONDecoder(object):
                              block_suffix=BLOCK_SUFFIX,
                              whitespace=INDENT,
                              SectionNode=SectionNode,
-                             open_noninline_list=OPEN_NONINLINE_LIST,
+                             open_indentation_list=OPEN_INDENTATION_LIST,
                              ScalarNode=ScalarNode,
                              comment_delim=COMMENT_DELIM):
         '''
@@ -1072,6 +1097,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, delim=delim, block=True, implicit_type='literal_string')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
+                state.ast.scalar_nodes.append(node)
             node.final_val = content
             node._resolved = True
             state.next_scalar = node
@@ -1081,6 +1107,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, delim=delim, block=True, implicit_type='escaped_string')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
+                state.ast.scalar_nodes.append(node)
             try:
                 content_esc = self._unescape_unicode(content)
             except Exception as e:
@@ -1094,6 +1121,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, delim=delim, block=True, implicit_type='doc_comment')
             if state.full_ast:
                 node.raw_val = content_lines_dedent
+                state.ast.scalar_nodes.append(node)
             node.final_val = content
             node._resolved = True
             state.next_doc_comment = node
@@ -1138,7 +1166,7 @@ class BespONDecoder(object):
                     final_val = parser(cleaned_val, int(group_base))
             except Exception as e:
                 raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
-            node = ScalarNode(state, implicit_type='int', num_base=group_base)
+            node = ScalarNode(state, implicit_type='int', num_base=int(group_base))
             state.next_scalar_is_keyable = True
         elif group_type == 'float' or group_type == 'float_inf_or_nan':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
@@ -1156,6 +1184,7 @@ class BespONDecoder(object):
             raise ValueError
         if state.full_ast:
             node.raw_val = raw_val
+            state.ast.scalar_nodes.append(node)
         node.final_val = final_val
         node._resolved = True
         state.next_scalar = node
@@ -1166,7 +1195,7 @@ class BespONDecoder(object):
     def _parse_token_unquoted_string_or_key_path(self, line, state,
                                                  section=False,
                                                  whitespace=INDENT,
-                                                 open_noninline_list=OPEN_NONINLINE_LIST,
+                                                 open_indentation_list=OPEN_INDENTATION_LIST,
                                                  ScalarNode=ScalarNode,
                                                  KeyPathNode=KeyPathNode):
         '''
@@ -1188,6 +1217,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, implicit_type='key')
             if state.full_ast:
                 node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
             node.final_val = raw_val
             node._resolved = True
             state.next_scalar = node
@@ -1212,6 +1242,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, implicit_type=word_type)
             if state.full_ast:
                 node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
             node.final_val = final_val
             node._resolved = True
             state.next_scalar = node
@@ -1229,6 +1260,7 @@ class BespONDecoder(object):
             node = KeyPathNode(state, raw_val)
             if state.full_ast:
                 node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
             node._resolved = True
             state.next_scalar = node
             state.next_scalar_is_keyable = True
@@ -1246,6 +1278,7 @@ class BespONDecoder(object):
             node = ScalarNode(state, implicit_type='unquoted_string')
             if state.full_ast:
                 node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
             node.final_val = raw_val
             node._resolved = True
             state.next_scalar = node
