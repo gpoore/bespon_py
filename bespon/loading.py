@@ -35,7 +35,7 @@ def load(fp, cls=None, **kwargs):
 
 def loads(s, cls=None, **kwargs):
     '''
-    Load data from a Unicode string.
+    Load data from a Unicode or byte string.
     '''
     if cls is None:
         if not kwargs:
