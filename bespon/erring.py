@@ -17,6 +17,13 @@ class BespONException(Exception):
     '''
     Base BespON exception.
     '''
+    pass
+
+
+class DecodingException(BespONException):
+    '''
+    Base decoding exception.
+    '''
     def fmt_msg_with_traceback(self, msg, state_or_obj, other_obj=None, unresolved_cache=False):
         if unresolved_cache:
             if state_or_obj.next_doc_comment is not None:
@@ -74,7 +81,7 @@ class BespONException(Exception):
         return '\n  {0}\n    {1}'.format(traceback, msg)
 
 
-class Bug(BespONException):
+class Bug(DecodingException):
     '''
     There is a bug in the program, as opposed to invalid user data.
 
@@ -100,7 +107,7 @@ def SourceDecodeError(BespONException):
         return 'Could not decode binary source:\n  {0}'.format(self.err_msg)
 
 
-class InvalidLiteralError(BespONException):
+class InvalidLiteralError(DecodingException):
     '''
     Code point that is not allowed to appear literally has appeared.
     '''
@@ -124,7 +131,7 @@ class UnknownEscapeError(BespONException):
         return 'Unknown escape sequence: "{0}"'.format(self.escape_esc)
 
 
-class ParseError(BespONException):
+class ParseError(DecodingException):
     '''
     General error during parsing.
     '''
@@ -137,7 +144,7 @@ class ParseError(BespONException):
         return self.fmt_msg_with_traceback(self.msg, self.state_or_obj, self.other_obj, self.unresolved_cache)
 
 
-class IndentationError(ParseError):
+class IndentationError(DecodingException):
     '''
     Error in relative indentation
     '''
