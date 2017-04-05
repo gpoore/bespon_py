@@ -51,7 +51,7 @@ BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
                        ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM,
                        ASSIGN_KEY_VAL, COMMENT_DELIM])
 NEWLINE = grammar.LIT_GRAMMAR['newline']
-NUMBER_OR_NUMBER_UNIT_START = grammar.LIT_GRAMMAR['number_or_number_unit_start']
+NUMBER_START = grammar.LIT_GRAMMAR['number_start']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 
 
@@ -81,7 +81,7 @@ class State(object):
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
                  'newline_re',
-                 'unquoted_string_or_key_path_re', 'number_or_number_unit_re',
+                 'unquoted_string_or_key_path_re', 'number_re',
                  'escape_unicode', 'unescape_unicode', 'unescape_bytes']
     def __init__(self, decoder, raw_source_string,
                  source_name=None, source_include_depth=0,
@@ -179,8 +179,8 @@ class State(object):
     def _check_literals_set_code_point_attrs(self, raw_source_string, decoder, bom=BOM):
         '''
         Check the decoded source for right-to-left code points and invalid
-        literal code points.  Set regexes for key paths, unquoted strings,
-        and number-unit strings based on the range of code points present.
+        literal code points.  Set regexes for key paths and unquoted strings
+        based on the range of code points present.
         '''
         self.pure_ascii = True
         self.only_below_u0590 = True
@@ -189,7 +189,7 @@ class State(object):
         self.bidi_rtl_last_scalar_last_lineno = 0
         self.bidi_rtl_last_scalar_last_line = ''
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_ascii_re
-        self.number_or_number_unit_re = decoder._number_or_number_unit_ascii_re
+        self.number_re = decoder._number_re
 
         if raw_source_string[:1] == bom:
             bom_offset = 1
@@ -204,13 +204,11 @@ class State(object):
             self._traceback_not_valid_literal(raw_source_string, m_not_valid_ascii.start())
         self.pure_ascii = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
-        self.number_or_number_unit_re = decoder._number_or_number_unit_below_u0590_re
         m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(raw_source_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
         self.only_below_u0590 = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
-        self.number_or_number_unit_re = decoder._number_or_number_unit_unicode_re
         m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(raw_source_string, m_not_valid_below_u0590.start())
         if m_bidi_rtl_or_not_valid_unicode is None:
             return
@@ -308,9 +306,9 @@ class BespONDecoder(object):
             parse_token[token] = func
             if 'string' in token_name:
                 parse_scalar_token[token] = func
-        for c in NUMBER_OR_NUMBER_UNIT_START:
-            parse_token[c] = self._parse_token_number_or_number_unit
-            parse_scalar_token[c] = self._parse_token_number_or_number_unit
+        for c in NUMBER_START:
+            parse_token[c] = self._parse_token_number
+            parse_scalar_token[c] = self._parse_token_number
         for c in INDENT:
             parse_token[c] = self._parse_token_whitespace
         parse_token[''] = self._parse_line_goto_next
@@ -377,19 +375,17 @@ class BespONDecoder(object):
             return (re.compile(pattern), group)
         self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
 
-        # Number and number-unit types.  The order in the regex is important.
+        # Number types.  The order in the regex is important.
         # Hex, octal, and binary must come first, so that the `0` in the
         # `0<letter>` prefix doesn't trigger a premature match for integer
         # zero.
         num_pattern = r'''
             {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
             (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
-            (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? (?P<number_unit_10>{unquoted_unit})? |
+            (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? |
             (?P<float_inf_or_nan_10>{inf_or_nan})
             '''.replace('\x20', '').replace('\n', '')
-        self._number_or_number_unit_ascii_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_ascii'], **grammar.RE_GRAMMAR))
-        self._number_or_number_unit_below_u0590_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_below_u0590'], **grammar.RE_GRAMMAR))
-        self._number_or_number_unit_unicode_re = re.compile(num_pattern.format(unquoted_unit=grammar.RE_GRAMMAR['unquoted_unit_unicode'], **grammar.RE_GRAMMAR))
+        self._number_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR))
 
         # Unquoted strings and key paths.
         # `{unquoted_key_or_list}` will match `*`, but that won't allow `*`
@@ -1131,20 +1127,19 @@ class BespONDecoder(object):
         return self._parse_line_continue_last(line, state)
 
 
-    def _parse_token_number_or_number_unit(self, line, state, section=False,
+    def _parse_token_number(self, line, state, section=False,
                                            int=int):
         '''
-        Parse a number (float, int, etc.) or a number-unit string.
+        Parse a number (float, int, etc.).
         '''
-        # No need to update bidi_rtl, since state cannot be modified by
-        # numbers or number-units
+        # No need to update bidi_rtl; state cannot be modified by numbers
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.first_lineno:
                 raise erring.ParseError('Cannot start a string when a prior string has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
-        m = state.number_or_number_unit_re.match(line)
+        m = state.number_re.match(line)
         if m is None:
             raise erring.ParseError('Invalid literal with numeric start')
         group_name =  m.lastgroup
@@ -1152,11 +1147,7 @@ class BespONDecoder(object):
         raw_val = line[:m.end(group_name)]
         state.last_colno += len(raw_val) - 1
         line = line[len(raw_val):]
-        if group_type == 'number_unit':
-            final_val = raw_val
-            node = ScalarNode(state, implicit_type='number_unit')
-            state.next_scalar_is_keyable = True
-        elif group_type == 'int':
+        if group_type == 'int':
             cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
             parser = state.type_data['int'].parser
             try:

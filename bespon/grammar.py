@@ -79,7 +79,7 @@ _RAW_LIT_SPECIAL = [# Special code points
                     # Combinations
                     ('end_tag_with_suffix', '{end_tag}{end_tag_suffix}'),
                     # Numbers
-                    ('number_or_number_unit_start', '0123456789+-')]
+                    ('number_start', '0123456789+-')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
 LIT_GRAMMAR = {}
@@ -153,7 +153,7 @@ _RAW_RE_TYPE = [# None type
                 # Boolean
                 ('bool_true', LIT_GRAMMAR['bool_true']),
                 ('bool_false', LIT_GRAMMAR['bool_false']),
-                ('bool_reserved_word', '(?:{0})'.format(_capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false']))),
+                ('bool_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false'])),
 
                 # Basic numeric elements
                 ('sign', '[+-]'),
@@ -230,32 +230,6 @@ _RAW_RE_TYPE = [# None type
                 ('unquoted_string_ascii', '{unquoted_key_ascii}{unquoted_string_continue_ascii}*'),
                 ('unquoted_string_below_u0590', '{unquoted_key_below_u0590}{unquoted_string_continue_below_u0590}*'),
                 ('unquoted_string_unicode', '{unquoted_key_unicode}{unquoted_string_continue_unicode}*'),
-                ('si_mu_prefix', '(?:\u00B5|\u03BC)'),
-                # The first letter in an unquoted number-unit cannot be any
-                # of [bBoOxX] because of their roles in base prefixes, unless
-                # the next letter cannot be confused with a digit (and since
-                # [O] can be confused with zero, it can never be used).
-                # Similarly, [eEpP] require special treatment due to their
-                # use in exponents, [i] is reserved for a future complex
-                # number extension, and [l] is confusable with `1`.  [jk] are
-                # not allowed as the first letter to prevent confusion with
-                # Python-style complex numbers and also to leave open the
-                # possibility of a quaternion type.
-                ('unquoted_unit_letter_less_prefix_dec_confusables', '[AC-DF-HJ-NQ-WY-Zac-df-hm-nq-wy-z]'),
-                ('unquoted_unit_letter_less_dec_confusables', '[A-NP-Za-km-z]'),
-                ('unquoted_unit_letter_less_hex_confusables', '[G-NP-Zg-km-z]'),
-                ('unquoted_unit_ascii', '''
-                                        (?: {unquoted_unit_letter_less_prefix_dec_confusables}{ascii_alpha}* |
-                                            [bBo]{unquoted_unit_letter_less_dec_confusables}{ascii_alpha}*
-                                            [Xx]{unquoted_unit_letter_less_hex_confusables}{ascii_alpha}* |
-                                            %
-                                        )
-                                        '''.replace('\x20', '').replace('\n', '')),
-                ('unquoted_unit_below_u0590', '{si_mu_prefix}?{unquoted_unit_ascii}'),
-                ('unquoted_unit_unicode', '{unquoted_unit_below_u0590}'),
-                ('unquoted_dec_number_unit_ascii', '(?:{dec_integer}|{dec_float}){unquoted_unit_ascii}'),
-                ('unquoted_dec_number_unit_below_u0590', '(?:{dec_integer}|{dec_float}){unquoted_unit_below_u0590}'),
-                ('unquoted_dec_number_unit_unicode', '{unquoted_dec_number_unit_below_u0590}'),
 
                 # Key path
                 ('key_path_continue_ascii', '(?:{path_separator}{unquoted_key_or_list_ascii})'),

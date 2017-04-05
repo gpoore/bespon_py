@@ -56,10 +56,9 @@ class BespONEncoder(object):
         self._invalid_literal_bytes_re = self._escape.invalid_literal_bytes_re
 
         # Unquoted strings containing single spaces are currently not used.
-        unquoted_string_pattern = r'(?!{reserved_word}$)(?:(?P<key>{unquoted_key})|(?P<number_unit>{number_unit}))\Z'
+        unquoted_string_pattern = r'(?!{reserved_word}$)(?:(?P<key>{unquoted_key}))\Z'
         self._unquoted_str_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                          unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii'],
-                                                                          number_unit=grammar.RE_GRAMMAR['unquoted_dec_number_unit_ascii']))
+                                                                          unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii']))
 
         self._line_terminator_re = re.compile(grammar.RE_GRAMMAR['line_terminator_unicode'])
 
