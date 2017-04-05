@@ -393,28 +393,25 @@ class BespONDecoder(object):
         # called for `*` everywhere except for sections.  In sections, `*`
         # is valid by itself, or at the end of a key path.
         uqs_or_kp_pattern = r'''
-            (?P<reserved_word>{reserved_word}(?!\x20?{unquoted_continue}|{path_separator})) |
-            (?P<key>{unquoted_key_or_list}) (?: (?P<key_path>{unquoted_key_path_continue}+) | (?P<unquoted_string>{unquoted_string_continue}+) )?
+            (?P<reserved_word>{reserved_word}(?!{unquoted_continue}|{path_separator})) |
+            (?P<unquoted_string>{unquoted_string_or_list}) (?P<key_path>{unquoted_key_path_continue}+)?
             '''.replace('\x20', '').replace('\n', '')
 
         self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                          unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_ascii'],
                                                                                          path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                         unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_ascii'],
-                                                                                         unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii'],
-                                                                                         unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_ascii']))
+                                                                                         unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_ascii'],
+                                                                                         unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii']))
         self._unquoted_string_or_key_path_below_u0590_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                                unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_below_u0590'],
                                                                                                path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                               unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_below_u0590'],
-                                                                                               unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590'],
-                                                                                               unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_below_u0590']))
+                                                                                               unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_below_u0590'],
+                                                                                               unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590']))
         self._unquoted_string_or_key_path_unicode_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                                            unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_unicode'],
                                                                                            path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                           unquoted_key_or_list=grammar.RE_GRAMMAR['unquoted_key_or_list_unicode'],
-                                                                                           unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode'],
-                                                                                           unquoted_string_continue=grammar.RE_GRAMMAR['unquoted_string_continue_unicode']))
+                                                                                           unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_unicode'],
+                                                                                           unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode']))
 
         # Dict for looking up types of valid reserved words
         self._reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
@@ -1127,8 +1124,7 @@ class BespONDecoder(object):
         return self._parse_line_continue_last(line, state)
 
 
-    def _parse_token_number(self, line, state, section=False,
-                                           int=int):
+    def _parse_token_number(self, line, state, section=False, int=int):
         '''
         Parse a number (float, int, etc.).
         '''
@@ -1190,7 +1186,7 @@ class BespONDecoder(object):
                                                  ScalarNode=ScalarNode,
                                                  KeyPathNode=KeyPathNode):
         '''
-        Parse an unquoted key, a key path, or an unquoted multi-word string.
+        Parse an unquoted string or key path.
         '''
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
@@ -1200,12 +1196,12 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)
         if m is None:
-            raise erring.ParseError('Invalid unquoted key, key path, or unquoted string', state)
-        if m.lastgroup == 'key':
-            raw_val = line[:m.end('key')]
+            raise erring.ParseError('Invalid unquoted string or key path', state)
+        if m.lastgroup == 'unquoted_string':
+            raw_val = line[:m.end()]
             line = line[len(raw_val):]
             state.last_colno += len(raw_val) - 1
-            node = ScalarNode(state, implicit_type='key')
+            node = ScalarNode(state, implicit_type='unquoted_string')
             if state.full_ast:
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
@@ -1255,25 +1251,6 @@ class BespONDecoder(object):
             node._resolved = True
             state.next_scalar = node
             state.next_scalar_is_keyable = True
-            state.next_cache = True
-            if state.bidi_rtl:
-                state.bidi_rtl_last_scalar_last_line = raw_val
-                state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-            return self._parse_line_continue_last(line, state)
-        if section:
-            raise erring.ParseError('Invalid unquoted key or key path in a section', state)
-        if m.lastgroup == 'unquoted_string':
-            raw_val = line[:m.end('unquoted_string')]
-            line = line[len(raw_val):]
-            state.last_colno += len(raw_val) - 1
-            node = ScalarNode(state, implicit_type='unquoted_string')
-            if state.full_ast:
-                node.raw_val = raw_val
-                state.ast.scalar_nodes.append(node)
-            node.final_val = raw_val
-            node._resolved = True
-            state.next_scalar = node
-            state.next_scalar_is_keyable = False
             state.next_cache = True
             if state.bidi_rtl:
                 state.bidi_rtl_last_scalar_last_line = raw_val

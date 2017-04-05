@@ -55,10 +55,9 @@ class BespONEncoder(object):
         self._invalid_literal_unicode_re = self._escape.invalid_literal_unicode_re
         self._invalid_literal_bytes_re = self._escape.invalid_literal_bytes_re
 
-        # Unquoted strings containing single spaces are currently not used.
-        unquoted_string_pattern = r'(?!{reserved_word}$)(?:(?P<key>{unquoted_key}))\Z'
+        unquoted_string_pattern = r'(?!{reserved_word}$){unquoted_string}\Z'
         self._unquoted_str_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                          unquoted_key=grammar.RE_GRAMMAR['unquoted_key_ascii']))
+                                                                          unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
 
         self._line_terminator_re = re.compile(grammar.RE_GRAMMAR['line_terminator_unicode'])
 
@@ -134,8 +133,6 @@ class BespONEncoder(object):
         if delim is None:
             m = self._unquoted_str_re.match(obj)
         if delim is None and m is not None:
-            if key_path and m.lastgroup != 'key':
-                raise ValueError('String does not match the required pattern for a key path element')
             return obj
         if key_path:
             if delim is None:

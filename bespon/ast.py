@@ -195,7 +195,7 @@ class Ast(object):
             self._append_key_path(scalar_obj)
             return
         if scalar_obj.basetype != 'scalar' or not state.next_scalar_is_keyable:
-            raise erring.ParseError('Unquoted strings and alias types are not valid keys for dict-like objects', scalar_obj)
+            raise erring.ParseError('Object is not a valid key for a dict-like object', scalar_obj)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if scalar_obj.inline:
