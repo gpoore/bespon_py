@@ -124,7 +124,7 @@ class BespONEncoder(object):
     def _encode_str(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
         # Not using grammar here for the sake of concise clarity over
         # consistency.  Might be worth revising in future.
-        # There is a lot of logic here to cover round tripping.  In that
+        # There is a lot of logic here to cover round-tripping.  In that
         # scenario, delimiter style should be preserved whenever reasonable.
         if self.bidi_rtl_re.search(obj) is None:
             self._last_scalar_bidi_rtl = False
@@ -142,25 +142,45 @@ class BespONEncoder(object):
             if delim is None:
                 if '"' not in obj:
                     return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"'))
-            if delim not in obj:
-                return delim + obj + delim
+                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
             if delim[0] == '"':
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"'))
+                if '"' not in obj:
+                    return '"{0}"'.format(self._escape_unicode(obj, '"'))
+                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
             if delim[0] == "'":
-                return "'''{0}'''".format(self._escape_unicode(obj, "'"))
+                if "'" not in obj:
+                    return "'{0}'".format(self._escape_unicode(obj, "'"))
+                return "'''{0}'''".format(self._escape_unicode(obj, "'", multidelim=True))
             if delim[0] == '`':
                 if self._invalid_literal_unicode_re.search(obj) is not None:
                     if '"' not in obj:
                         return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                    return '"""{0}"""'.format(self._escape_unicode(obj, '"'))
+                    return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
+                if '`' not in obj:
+                    return '`{0}`'.format(obj)
+                if '``' not in obj:
+                    if obj[0] == '`':
+                        open_delim = '``\x20'
+                    else:
+                        open_delim = '``'
+                    if obj[-1] == '`':
+                        close_delim = '\x20``'
+                    else:
+                        close_delim = '``'
+                    return open_delim + obj + close_delim
                 if '```' not in obj:
-                    return '```' + obj + '```'
-                if '``````' not in obj:
-                    return '``````' + obj + '``````'
+                    if obj[0] == '`':
+                        open_delim = '```\x20'
+                    else:
+                        open_delim = '```'
+                    if obj[-1] == '`':
+                        close_delim = '\x20```'
+                    else:
+                        close_delim = '```'
+                    return open_delim + obj + close_delim
                 if '"' not in obj:
                     return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"'))
+                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
             raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
         if delim is not None and len(delim) % 3 != 0:
             delim = delim[0]*3
@@ -191,6 +211,7 @@ class BespONEncoder(object):
             return '|{0}\n{1}{2}|{0}/'.format(delim[0]*6, obj_indented, indent)
         obj_encoded = self._escape_unicode(obj, '"', multidelim=True)
         obj_encoded_lines = obj_encoded.splitlines(True)
+        obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
         return '|{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented, indent)
 
 

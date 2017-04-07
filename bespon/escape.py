@@ -104,9 +104,9 @@ class Escape(object):
         invalid_literal_or_backslash_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_newline_unicode_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern = '{backslash}|{singlequote}(?={singlequote}|\\Z)|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern)
 
         invalid_literal_or_backslash_singlequote_unicode_pattern = '{backslash}|{singlequote}|{always_escaped_unicode}'.format(**pattern_dict)
@@ -114,9 +114,9 @@ class Escape(object):
         invalid_literal_or_backslash_doublequote_unicode_pattern = '{backslash}|{doublequote}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_unicode_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_unicode_pattern = '{backslash}|{singlequote}(?={singlequote})|{always_escaped_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_singlequote_unicode_pattern = '{backslash}|{singlequote}(?={singlequote}|\\Z)|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_unicode_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_unicode_pattern = '{backslash}|{doublequote}(?={doublequote})|{always_escaped_unicode}'.format(**pattern_dict)
+        invalid_literal_or_backslash_multiple_doublequote_unicode_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_unicode_pattern)
 
         self.invalid_literal_bytes_re = re.compile('{always_escaped_ascii}'.format(**pattern_dict).encode('ascii'))
@@ -126,9 +126,9 @@ class Escape(object):
         invalid_literal_or_backslash_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_newline_bytes_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern = '{backslash}|{singlequote}(?={singlequote}|\\Z)|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_singlequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_bytes_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{newline}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_doublequote_newline_bytes_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_bytes_pattern)
 
         invalid_literal_or_backslash_singlequote_bytes_pattern = '{backslash}|{singlequote}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
@@ -136,9 +136,9 @@ class Escape(object):
         invalid_literal_or_backslash_doublequote_bytes_pattern = '{backslash}|{doublequote}|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_doublequote_bytes_re = re.compile(invalid_literal_or_backslash_doublequote_bytes_pattern)
 
-        invalid_literal_or_backslash_multiple_singlequote_bytes_pattern = '{backslash}|{singlequote}(?={singlequote})|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_singlequote_bytes_pattern = '{backslash}|{singlequote}(?={singlequote}|\\Z)|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_singlequote_bytes_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_bytes_pattern)
-        invalid_literal_or_backslash_multiple_doublequote_bytes_pattern = '{backslash}|{doublequote}(?={doublequote})|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
+        invalid_literal_or_backslash_multiple_doublequote_bytes_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{always_escaped_ascii}'.format(**pattern_dict).encode('ascii')
         self._invalid_literal_or_backslash_multiple_doublequote_bytes_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_bytes_pattern)
 
 
