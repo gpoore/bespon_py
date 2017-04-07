@@ -130,8 +130,8 @@ class RoundtripAst(object):
         current_dict = pos
         key_objs = [k for k in pos if k.final_val == path[-1]]
         if len(key_objs) != 1:
-            if len(key_objs) == 0:
-                raise KeyError(obj)
+            if not key_objs:
+                raise KeyError(path[-1])
             raise ValueError('Multiple keys were found that matched {0}'.format(obj))
         pos = key_objs[0]
         if type(pos.final_val) != type(obj):
