@@ -36,7 +36,7 @@ values can be modified, and then data can be saved again with minimal
 impact on the data file layout.
 
 Data can be loaded from a file or string into an instance of the
-`RoundtripAst` class.
+``RoundtripAst`` class.
 
 * ``bespon.load_roundtrip_ast(<file-like object>)``
 * ``bespon.loads_roundtrip_ast(<string or bytes>)``
@@ -52,7 +52,7 @@ This class has two methods that allow data to be modified.
   the replaced key).  ``<obj>`` must be a Unicode string, int, or bool,
   and must have the same type as the object it is replacing.
 
-After data in a `RoundtripAst` instance has been modified, it may be encoded
+After data in a ``RoundtripAst`` instance has been modified, it may be encoded
 back into a string with the ``dumps()`` method.  An example is shown below.
 
 ::
