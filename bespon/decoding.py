@@ -167,11 +167,14 @@ class State(object):
             newline_count += 1
             newline_index = m.start()
         if newline_count == 0:
-            self.last_colno += index - self.bom_offset
+            self.first_colno += index - self.bom_offset
+            self.last_colno = self.first_colno
         else:
-            self.last_lineno += newline_count
-            self.last_colno = index - newline_index
-        code_point = self.raw_source_string[index]
+            self.first_lineno += newline_count
+            self.first_colno = index - newline_index
+            self.last_lineno = self.first_lineno
+            self.last_colno = self.first_colno
+        code_point = raw_source_string[index]
         code_point_esc = self.escape_unicode(code_point)
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
 
