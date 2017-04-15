@@ -20,8 +20,10 @@ if (sys.version_info < (2, 7) or
         (sys.version_info.major == 3 and sys.version_info < (3, 3))):
     sys.exit('BespON requires Python 2.7 or 3.3+')
 
-
-from distutils.core import setup
+try:
+    from setuptools import setup
+except ImportError:
+    from distutils.core import setup
 
 
 # Extract the version from version.py
