@@ -17,9 +17,9 @@ from __future__ import (division, print_function, absolute_import,
 
 from .version import __version__
 import sys
-
 import collections
 import re
+
 from . import erring
 from . import escape
 from . import tooling
@@ -32,27 +32,30 @@ if sys.version_info.major == 2:
     str = unicode
 
 
+BOM = grammar.LIT_GRAMMAR['bom']
+MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
+
+NEWLINE = grammar.LIT_GRAMMAR['newline']
 INDENT = grammar.LIT_GRAMMAR['indent']
 WHITESPACE_SET = set(grammar.LIT_GRAMMAR['whitespace'])
 UNICODE_WHITESPACE_SET = set(grammar.LIT_GRAMMAR['unicode_whitespace'])
+
+OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
+PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
+END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
+ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
+
 ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim']
 ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim']
 LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
 COMMENT_DELIM = grammar.LIT_GRAMMAR['comment_delim']
-OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
-PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
-END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
-MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
-BOM = grammar.LIT_GRAMMAR['bom']
 BLOCK_PREFIX = grammar.LIT_GRAMMAR['block_prefix']
 BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
-ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
                        ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM,
-                       ASSIGN_KEY_VAL, COMMENT_DELIM])
-NEWLINE = grammar.LIT_GRAMMAR['newline']
+                       COMMENT_DELIM, ASSIGN_KEY_VAL])
+
 NUMBER_START = grammar.LIT_GRAMMAR['number_start']
-ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 
 
 
@@ -66,57 +69,57 @@ class State(object):
     '''
     __slots__ = ['source_name', 'source_include_depth',
                  'source_initial_nesting_depth', 'source_inline',
-                 'embedded',
+                 'source_embedded',
+                 'source_raw_string', 'source_lines', 'source_lines_iter',
+                 'source_only_ascii', 'source_only_below_u0590',
                  'indent', 'continuation_indent', 'at_line_start',
                  'inline', 'inline_indent',
+                 'bom_offset',
                  'first_lineno', 'first_colno', 'last_lineno', 'last_colno',
                  'nesting_depth',
                  'next_cache',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'last_line_comment_lineno',
                  'next_scalar', 'next_scalar_is_keyable',
-                 'type_data', 'bom_offset', 'full_ast',
-                 'raw_source_string', 'source_lines', 'source_lines_iter', 'ast',
-                 'pure_ascii', 'only_below_u0590',
+                 'type_data',
+                 'ast', 'full_ast',
                  'bidi_rtl', 'bidi_rtl_re',
-                 'bidi_rtl_last_scalar_last_lineno', 'bidi_rtl_last_scalar_last_line',
-                 'newline_re',
-                 'unquoted_string_or_key_path_re', 'number_re',
+                 'bidi_rtl_last_scalar_last_lineno',
+                 'bidi_rtl_last_scalar_last_line',
+                 'newline_re', 'unquoted_string_or_key_path_re', 'number_re',
                  'escape_unicode', 'unescape_unicode', 'unescape_bytes']
-    def __init__(self, decoder, raw_source_string,
+    def __init__(self, decoder, source_raw_string,
                  source_name=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
-                 embedded=False,
+                 source_embedded=False,
                  indent='', at_line_start=True,
                  inline=False, inline_indent=None,
                  first_lineno=1, first_colno=1,
                  type_data=None, full_ast=False):
         if not all(x is None or isinstance(x, str) for x in (source_name, inline_indent)):
-            raise TypeError('Invalid keyword argument value')
+            raise TypeError
         if not all(isinstance(x, str) for x in (indent,)):
-            raise TypeError('Invalid keyword argument value')
+            raise TypeError
         if any(x is not None and x.lstrip('\x20\t') for x in (indent, inline_indent)):
-            raise ValueError('Invalid characters in "indent" or "inline_indent"; only spaces and tabs are allowed')
+            raise ValueError('Invalid indentation characters; only spaces and tabs are allowed')
         if not all(isinstance(x, int) and x >= 0 for x in (source_include_depth, source_initial_nesting_depth)):
             if all(isinstance(x, int) for x in (source_include_depth, source_initial_nesting_depth)):
-                raise ValueError('Invalid keyword argument value')
-            else:
-                raise TypeError('Invalid keyword argument value')
+                raise ValueError
+            raise TypeError
         if not all(isinstance(x, int) and x > 0 for x in (first_lineno, first_colno)):
             if all(isinstance(x, int) for x in (first_lineno, first_colno)):
-                raise ValueError('Invalid keyword argument value')
-            else:
-                raise TypeError('Invalid keyword argument value')
-        if not all(x in (True, False) for x in (at_line_start, inline, full_ast, embedded)):
-            raise TypeError('Invalid keyword argument value')
+                raise ValueError
+            raise TypeError
+        if not all(x in (True, False) for x in (at_line_start, inline, full_ast, source_embedded)):
+            raise TypeError
         if type_data is not None and not (isinstance(type_data, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in type_data)):
-            raise TypeError('Invalid keyword argument value')
+            raise TypeError
 
         self.source_name = source_name or '<data>'
         self.source_include_depth = source_include_depth
         self.source_initial_nesting_depth = source_initial_nesting_depth
         self.source_inline = inline
-        self.embedded = embedded
+        self.source_embedded = source_embedded
 
         self.indent = indent
         self.continuation_indent = None
@@ -147,8 +150,8 @@ class State(object):
         self.unescape_unicode = decoder._unescape_unicode
         self.unescape_bytes = decoder._unescape_bytes
 
-        self._check_literals_set_code_point_attrs(raw_source_string, decoder)
-        self.source_lines = raw_source_string.splitlines()
+        self._check_literals_set_code_point_attrs(source_raw_string, decoder)
+        self.source_lines = source_raw_string.splitlines()
         self.source_lines_iter = iter(self.source_lines)
 
         self.ast = Ast(self)
@@ -156,14 +159,14 @@ class State(object):
             self.ast.source_lines = self.source_lines
 
 
-    def _traceback_not_valid_literal(self, raw_source_string, index):
+    def _traceback_not_valid_literal(self, source_raw_string, index):
         '''
         Locate an invalid literal code point using an re match object,
         and raise an error.
         '''
         newline_count = 0
         newline_index = 0
-        for m in self.newline_re.finditer(raw_source_string, 0, index):
+        for m in self.newline_re.finditer(source_raw_string, 0, index):
             newline_count += 1
             newline_index = m.start()
         if newline_count == 0:
@@ -174,19 +177,19 @@ class State(object):
             self.first_colno = index - newline_index
             self.last_lineno = self.first_lineno
             self.last_colno = self.first_colno
-        code_point = raw_source_string[index]
+        code_point = source_raw_string[index]
         code_point_esc = self.escape_unicode(code_point)
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
 
 
-    def _check_literals_set_code_point_attrs(self, raw_source_string, decoder, bom=BOM):
+    def _check_literals_set_code_point_attrs(self, source_raw_string, decoder, bom=BOM):
         '''
         Check the decoded source for right-to-left code points and invalid
         literal code points.  Set regexes for key paths and unquoted strings
         based on the range of code points present.
         '''
-        self.pure_ascii = True
-        self.only_below_u0590 = True
+        self.source_only_ascii = True
+        self.source_only_below_u0590 = True
         self.bidi_rtl = False
         self.bidi_rtl_re = decoder._bidi_rtl_re
         self.bidi_rtl_last_scalar_last_lineno = 0
@@ -194,34 +197,34 @@ class State(object):
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_ascii_re
         self.number_re = decoder._number_re
 
-        if raw_source_string[:1] == bom:
+        if source_raw_string[:1] == bom:
             bom_offset = 1
         else:
             bom_offset = 0
         self.bom_offset = bom_offset
 
-        m_not_valid_ascii = decoder._not_valid_ascii_re.search(raw_source_string, bom_offset)
+        m_not_valid_ascii = decoder._not_valid_ascii_re.search(source_raw_string, bom_offset)
         if m_not_valid_ascii is None:
             return
         if not decoder.literal_unicode:
-            self._traceback_not_valid_literal(raw_source_string, m_not_valid_ascii.start())
-        self.pure_ascii = False
+            self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start())
+        self.source_only_ascii = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
-        m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(raw_source_string, m_not_valid_ascii.start())
+        m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(source_raw_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
-        self.only_below_u0590 = False
+        self.source_only_below_u0590 = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
-        m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(raw_source_string, m_not_valid_below_u0590.start())
+        m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(source_raw_string, m_not_valid_below_u0590.start())
         if m_bidi_rtl_or_not_valid_unicode is None:
             return
         if m_bidi_rtl_or_not_valid_unicode.lastgroup == 'not_valid':
-            self._traceback_not_valid_literal(raw_source_string, m_bidi_rtl_or_not_valid_unicode.start())
+            self._traceback_not_valid_literal(source_raw_string, m_bidi_rtl_or_not_valid_unicode.start())
         self.bidi_rtl = True
-        m_not_valid_unicode = decoder._not_valid_unicode_re.search(raw_source_string, m_bidi_rtl_or_not_valid_unicode.start())
+        m_not_valid_unicode = decoder._not_valid_unicode_re.search(source_raw_string, m_bidi_rtl_or_not_valid_unicode.start())
         if m_not_valid_unicode is None:
             return
-        self._traceback_not_valid_literal(raw_source_string, m_not_valid_unicode.start())
+        self._traceback_not_valid_literal(source_raw_string, m_not_valid_unicode.start())
 
 
 
