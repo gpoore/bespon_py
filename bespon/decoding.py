@@ -206,7 +206,7 @@ class State(object):
         m_not_valid_ascii = decoder._not_valid_ascii_re.search(source_raw_string, bom_offset)
         if m_not_valid_ascii is None:
             return
-        if not decoder.literal_unicode:
+        if not decoder.literal_non_ascii:
             self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start())
         self.source_only_ascii = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
@@ -232,22 +232,28 @@ class State(object):
 class BespONDecoder(object):
     '''
     Decode BespON in a string or stream.
+
+    A `Decoder` instance is intended to be static once created.  Each string
+    or stream that is decoded has a `State` instance created for it, and all
+    mutability is confined within that object.  This allows a single `Decoder`
+    instance to be used for multiple, potentially nested, data sources without
+    issues due to shared state within the `Decoder` itself.
     '''
     def __init__(self, *args, **kwargs):
         # Process args
         if args:
             raise TypeError('Explicit keyword arguments are required')
-        literal_unicode = kwargs.pop('literal_unicode', True)
+        literal_non_ascii = kwargs.pop('literal_non_ascii', True)
         unquoted_strings = kwargs.pop('unquoted_strings', True)
-        unquoted_unicode = kwargs.pop('unquoted_unicode', False)
+        unquoted_non_ascii = kwargs.pop('unquoted_non_ascii', False)
         integers = kwargs.pop('integers', True)
-        if any(x not in (True, False) for x in (literal_unicode, unquoted_strings, unquoted_unicode, integers)):
+        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_strings, unquoted_non_ascii, integers)):
             raise TypeError
-        if not literal_unicode and unquoted_unicode:
-            raise ValueError('Setting "literal_unicode"=False is incompatible with "unquoted_unicode"=True')
-        self.literal_unicode = literal_unicode
+        if not literal_non_ascii and unquoted_non_ascii:
+            raise ValueError('Setting "literal_non_ascii"=False is incompatible with "unquoted_non_ascii"=True')
+        self.literal_non_ascii = literal_non_ascii
         self.unquoted_strings = unquoted_strings
-        self.unquoted_unicode = unquoted_unicode
+        self.unquoted_non_ascii = unquoted_non_ascii
         self.integers = integers
 
         custom_parsers = kwargs.pop('custom_parsers', None)
@@ -258,7 +264,7 @@ class BespONDecoder(object):
         self.custom_types = custom_types
 
         if kwargs:
-            raise TypeError('Unexpected keyword argument(s) {0}'.format(', '.join('{0}'.format(k) for k in kwargs)))
+            raise TypeError('Unexpected keyword argument(s) {0}'.format(', '.join('"{0}"'.format(k) for k in kwargs)))
 
 
         # Parser and type info access
@@ -275,8 +281,9 @@ class BespONDecoder(object):
         # Create dict of token-based parsing functions.
         #
         # Also create a dict containing only the scalar-related subset of
-        # parsing functions.  This is used in sections.
+        # parsing functions.  This is used in parsing sections.
         #
+        # The default behavior is to parse for an unquoted string or key path.
         # In general, having a valid starting code point for an unquoted
         # string or key path is a necessary but not sufficient condition for
         # finding a valid string or key path, due to the possibility of a
@@ -341,15 +348,12 @@ class BespONDecoder(object):
         # delimiter characters is unneeded.  However, the inline regexes are
         # used in processing block strings to check whether internal runs of
         # delimiters are valid.
-        escaped_string_singlequote_delim = ESCAPED_STRING_SINGLEQUOTE_DELIM
-        escaped_string_doublequote_delim = ESCAPED_STRING_DOUBLEQUOTE_DELIM
-        literal_string_delim = LITERAL_STRING_DELIM
-        comment_delim = COMMENT_DELIM
         def gen_closing_delim_regex(delim):
             c_0 = delim[0]
-            if c_0 == escaped_string_singlequote_delim or c_0 == escaped_string_doublequote_delim:
+            if c_0 == ESCAPED_STRING_SINGLEQUOTE_DELIM or c_0 == ESCAPED_STRING_DOUBLEQUOTE_DELIM:
                 group = 1
-                if delim == escaped_string_singlequote_delim or delim == escaped_string_doublequote_delim:
+                n = len(delim)
+                if n == 1:
                     pattern = r'^(?:\\.|[^{delim_char}\\])*({delim_char})'.format(delim_char=re.escape(c_0))
                 else:
                     # The pattern here is a bit complicated to deal with the
@@ -364,17 +368,19 @@ class BespONDecoder(object):
                     # additional overhead of checking backslashes and possibly
                     # re-invoking the regex are considered.  So alternatives
                     # don't seem worthwhile.
-                    n = len(delim)
+                    #
+                    # The `^` works, because any leading whitespace is already
+                    # stripped before the regex is applied.
                     pattern = r'''
                                ^(?: \\. | [^{delim_char}\\] | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
                                 ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
-            elif c_0 == literal_string_delim or (c_0 == comment_delim and len(delim) >= 3):
+            elif c_0 == LITERAL_STRING_DELIM or (c_0 == COMMENT_DELIM and len(delim) >= 3):
                 group = 0
-                if delim == literal_string_delim:
+                n = len(delim)
+                if n == 1:
                     pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
                 else:
-                    n = len(delim)
                     pattern = r'(?<!{delim_char}){delim_char}{{{n}}}(?!{delim_char})'.format(delim_char=re.escape(c_0), n=n)
             else:
                 raise ValueError
@@ -394,10 +400,10 @@ class BespONDecoder(object):
         self._number_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR))
 
         # Unquoted strings and key paths.
-        # `{unquoted_key_or_list}` will match `*`, but that won't allow `*`
-        # to be used as a normal dict key, since the list parsing function is
-        # called for `*` everywhere except for sections.  In sections, `*`
-        # is valid by itself, or at the end of a key path.
+        # `{unquoted_string_or_list}` will match `*`, but that won't allow `*`
+        # to be used as an unquoted string, since the indentation list parsing
+        # function is called for `*` everywhere except for sections.  In
+        # sections, `*` is valid by itself, or at the end of a key path.
         uqs_or_kp_pattern = r'''
             (?P<reserved_word>{reserved_word}(?!{unquoted_continue}|{path_separator})) |
             (?P<unquoted_string>{unquoted_string_or_list}) (?P<key_path>{unquoted_key_path_continue}+)?
@@ -435,7 +441,8 @@ class BespONDecoder(object):
         Any line that ends with a newline preceded by Unicode whitespace has
         the newline stripped.  Otherwise, a trailing newline is replace by a
         space.  The last line will not have a newline due to the ending
-        delimiter or alternatively the regex pattern for undelimited strings.
+        delimiter.  The list of lines received already has the newlines
+        stripped.
 
         Note that in escaped strings, a single backslash before a newline is
         not treated as an escape in unwrapping.  Escaping newlines is only
@@ -454,7 +461,8 @@ class BespONDecoder(object):
         return ''.join(s_list_inline)
 
 
-    def _as_unicode_string(self, unicode_string_or_bytes):
+    @staticmethod
+    def _as_unicode_string(unicode_string_or_bytes):
         '''
         Take an object that may be a Unicode string or bytes, and return
         a Unicode string.
@@ -502,6 +510,7 @@ class BespONDecoder(object):
             # Don't increment column, because that would throw off indentation
             # for subsequent lines
             line = line[1:]
+        # Initialize attributes like indent based on first line
         line = self._parse_line_start_last(line, state)
 
         parse_token = self._parse_token
@@ -514,6 +523,11 @@ class BespONDecoder(object):
 
 
     def _check_bidi_rtl(self, state):
+        '''
+        Determine if a new scalar can start on the current line, based
+        on whether there is a preceding scalar on the same line that contains
+        right-to-left code points on that line.
+        '''
         if state.bidi_rtl_last_scalar_last_lineno == state.first_lineno and state.bidi_rtl_re.search(state.bidi_rtl_last_scalar_last_line):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', state)
 
