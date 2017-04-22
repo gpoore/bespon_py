@@ -354,7 +354,11 @@ class BespONDecoder(object):
                 group = 1
                 n = len(delim)
                 if n == 1:
-                    pattern = r'^(?:\\.|[^{delim_char}\\])*({delim_char})'.format(delim_char=re.escape(c_0))
+                    # The `(?=[\\{delim_char}])` lookahead is required to
+                    # avoid catastrophic backtracking.  In cases when
+                    # catastrophic backtracking would not occur, the
+                    # lookahead seems to add negligible overhead.
+                    pattern = r'^(?:[^{delim_char}\\]+(?=[\\{delim_char}])|\\.)*({delim_char})'.format(delim_char=re.escape(c_0))
                 else:
                     # The pattern here is a bit complicated to deal with the
                     # possibility of escapes and of runs of the delimiter that
@@ -372,7 +376,7 @@ class BespONDecoder(object):
                     # The `^` works, because any leading whitespace is already
                     # stripped before the regex is applied.
                     pattern = r'''
-                               ^(?: \\. | [^{delim_char}\\] | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
+                               ^(?: [^{delim_char}\\]+(?=[\\{delim_char}]) | \\. | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
                                 ({delim_char}{{{n}}}(?!{delim_char}))
                                '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
             elif c_0 == LITERAL_STRING_DELIM or (c_0 == COMMENT_DELIM and len(delim) >= 3):
@@ -532,7 +536,8 @@ class BespONDecoder(object):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', state)
 
 
-    def _parse_line_goto_next(self, line, state, next=next, whitespace=INDENT,
+    def _parse_line_goto_next(self, line, state, next=next, len=len,
+                              whitespace=INDENT,
                               whitespace_set=WHITESPACE_SET):
         '''
         Go to next line.  Used when parsing completes on a line, and no
@@ -540,7 +545,7 @@ class BespONDecoder(object):
 
         The `line` argument is needed so that this can be used in the
         `_parse_token` dict of functions as the value for the empty string
-        key.  When the function is used directly as part of other parsing
+        key.  When the function is used as part of other parsing
         functions, this argument isn't actually needed.  However, it is kept
         mandatory to maintain parallelism between all of the `_parse_line_*()`
         functions, since some of these do require a `line` argument.
@@ -553,9 +558,8 @@ class BespONDecoder(object):
         inserting the missing `\n`.
         '''
         line = next(state.source_lines_iter, None)
-        lineno = state.last_lineno + 1
-        state.first_lineno = lineno
-        state.last_lineno = lineno
+        state.last_lineno += 1
+        state.first_lineno = state.last_lineno
         if line is None or line[:1] not in whitespace_set:
             state.indent = ''
             state.continuation_indent = ''
@@ -575,23 +579,11 @@ class BespONDecoder(object):
         return line_lstrip_ws
 
 
-    def _parse_line_get_next(self, line, state, next=next):
-        '''
-        Get next line.  For use in lookahead in string scanning, etc.
-        '''
-        line = next(state.source_lines_iter, None)
-        state.last_lineno += 1
-        state.last_colno = 1
-        return line
-
-
-    def _parse_line_start_last(self, line, state, whitespace=INDENT,
+    def _parse_line_start_last(self, line, state, len=len, whitespace=INDENT,
                                whitespace_set=WHITESPACE_SET):
         '''
-        Reset everything after `_parse_line_get_next()`, so that it's
-        equivalent to using `_parse_line_goto_next()`.  Useful when
-        `_parse_line_get_next()` is used for lookahead, but nothing is
-        consumed.
+        Reset everything after looking ahead to the next line but consuming
+        nothing, so that it's equivalent to using `_parse_line_goto_next()`.
 
         As with `_parse_line_goto_next()`, sensible defaults are needed for
         the `line == None` case.
@@ -616,27 +608,42 @@ class BespONDecoder(object):
         return line_lstrip_ws
 
 
-    def _parse_line_continue_last(self, line, state):
+    def _parse_line_continue_last(self, line, state, len=len,
+                                  whitespace=INDENT,
+                                  whitespace_set=WHITESPACE_SET):
         '''
-        Reset everything after `_parse_line_get_next()`, to continue on
-        with the next line after having consumed part of it.
+        Continue on the last line, after a token has been removed.  This
+        strips off any leading whitespace, to optimize the number of times
+        that `state` is modified.
         '''
         state.first_lineno = state.last_lineno
         state.continuation_indent = state.indent
         state.at_line_start = False
+        if line[:1] in whitespace_set:
+            line_lstrip_ws = line.lstrip(whitespace)
+            state.last_colno += 1 + len(line) - len(line_lstrip_ws)
+            state.first_colno = state.last_colno
+            return line_lstrip_ws
+        if line == '':
+            return self._parse_line_goto_next(line, state)
         state.last_colno += 1
         state.first_colno = state.last_colno
         return line
 
 
-    def _parse_token_whitespace(self, line, state, whitespace=INDENT):
+    def _parse_token_whitespace(self, line, state, len=len,
+                                whitespace=INDENT):
         '''
-        Parse whitespace.
+        Remove non-indentation whitespace.  That is typically done in
+        `_parse_line_continue_last()`.  This function exists for cases in
+        which lookahead is needed, such as explicit dict tags in
+        indentation-style syntax.
         '''
         line_lstrip_ws = line.lstrip(whitespace)
-        colno = state.last_colno + len(line) - len(line_lstrip_ws)
-        state.first_colno = colno
-        state.last_colno = colno
+        if line_lstrip_ws == '':
+            return self._parse_line_goto_next(line, state)
+        state.last_colno += len(line) - len(line_lstrip_ws) + 1
+        state.first_colno = state.last_colno
         return line_lstrip_ws
 
 
@@ -647,29 +654,37 @@ class BespONDecoder(object):
         if state.next_scalar is None:
             raise erring.ParseError('Missing key cannot be assigned', state)
         state.ast.append_scalar_key()
-        colno = state.last_colno + 1
-        state.first_colno = colno
-        state.last_colno = colno
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
         return line[1:]
 
 
-    def _parse_token_open_indentation_list(self, line, state,
-                                         path_separator=PATH_SEPARATOR):
+    def _parse_token_open_indentation_list(self, line, state, len=len,
+                                           whitespace=INDENT,
+                                           path_separator=PATH_SEPARATOR):
         '''
-        Open a non-inline list, or start a key path that has a list as its
-        first element.
+        Open a list in indentation-style syntax.
         '''
-        # Any tag or doc comment is handled during opening the list.
-        # No need to check for `**`, because that would attempt to open a list
-        # twice, which would trigger an error.
+        # Before opening the list, resolve any cached scalar.  After opening
+        # the list, check for other cached values.  This must be done
+        # afterward, because opening the list could involve creating a new
+        # list, which could consume a doc comment and tag.
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.first_lineno:
-                raise erring.ParseError('Encountered a tag when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         state.ast.open_indentation_list()
-        if line[1:2] == '\t' and (state.indent == '' or state.indent[-1:] == '\t'):
-            return self._parse_line_start_last(state.indent + line[1:], state)
-        return self._parse_line_start_last(state.indent + '\x20' + line[1:], state)
+        if state.next_cache:
+            raise erring.ParseError('Cannot open a list-like object when a prior object has not been resolved', state, unresolved_cache=True)
+        line_less_open = line[1:]
+        line_less_open_lstrip_ws = line_less_open.lstrip(whitespace)
+        len_indent_after = len(line_less_open) - len(line_less_open_lstrip_ws)
+        if line_less_open[:1] != '\t' or state.indent[-1:] not in ('', '\t'):
+            state.indent += '\x20' + line_less_open[:len_indent_after]
+        else:
+            state.indent += line_less_open[:len_indent_after]
+        state.last_colno += 1 + len_indent_after
+        state.first_colno = state.last_colno
+        return line_less_open_lstrip_ws
 
 
     def _parse_token_start_inline_dict(self, line, state):
@@ -679,7 +694,10 @@ class BespONDecoder(object):
         if state.next_scalar is not None:
             raise erring.ParseError('Cannot start a dict-like object when a prior scalar has not yet been resolved', state, unresolved_cache=True)
         state.ast.start_inline_dict()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_token_end_inline_dict(self, line, state):
@@ -691,7 +709,10 @@ class BespONDecoder(object):
         elif state.next_cache:
             raise erring.ParseError('Cannot end a dict-like object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.end_inline_dict()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_token_start_inline_list(self, line, state):
@@ -701,7 +722,10 @@ class BespONDecoder(object):
         if state.next_scalar is not None:
             raise erring.ParseError('Cannot start a list-like object when a prior scalar has not yet been resolved', state, unresolved_cache=True)
         state.ast.start_inline_list()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_token_end_inline_list(self, line, state):
@@ -713,41 +737,58 @@ class BespONDecoder(object):
         elif state.next_cache:
             raise erring.ParseError('Cannot end a list-like object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.end_inline_list()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_token_start_tag(self, line, state):
         '''
         Start a tag.
         '''
-        raise NotImplementedError
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.first_lineno:
-                raise erring.ParseError('Cannot start a tag when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         elif state.next_tag is not None:
             raise erring.ParseError('Cannot start a tag when a prior tag has not yet been resolved', state, unresolved_cache=True)
         state.ast.start_tag()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_token_end_tag(self, line, state,
-                             end_tag_with_suffix=END_TAG_WITH_SUFFIX):
+                             end_tag_with_suffix=END_TAG_WITH_SUFFIX,
+                             whitespace_set=WHITESPACE_SET):
         '''
         End a tag.
         '''
-        raise NotImplementedError
         if line[:2] != end_tag_with_suffix:
             raise erring.ParseError('Invalid end tag delimiter', state)
-        if state.next_scalar is not None:
-            state.ast.append_scalar_val()
         # No need to check `state.next_cache`, since doc comments and tags
         # aren't possible inside tags.
+        if state.next_scalar is not None:
+            state.ast.append_scalar_val()
         # Account for end tag suffix
         state.last_colno += 1
         state.ast.end_tag()
         # Account for end tag suffix with `[2:]`
-        return self._parse_line_continue_last(line[2:], state)
+        if 'dict' not in state.next_tag.compatible_basetypes or state.inline or len(state.next_tag.compatible_basetypes) > 1:
+            state.last_colno += 1
+            state.first_colno = state.last_colno
+            state.at_line_start = False
+            return line[2:]
+        # If dealing with a tag that could create a dict-like object in
+        # indentation-style syntax, look ahead to next significant token
+        # to determine whether it does indeed create such a dict.  It would be
+        # possible to avoid lookahead and use the standard cache approach to
+        # deal with this, but that would be complicated because such tags
+        # could have to be resolved after `state` has advanced beyond
+        # the next object.
+        line = line[2:]
+        state.last_colno += 1
+        state.first_colno = state.last_colno
 
 
     def _parse_token_inline_element_separator(self, line, state):
@@ -759,11 +800,14 @@ class BespONDecoder(object):
         elif state.next_cache:
             raise erring.ParseError('Cannot open a collection object when a prior object has not yet been resolved', state, unresolved_cache=True)
         state.ast.open_inline_collection()
-        return self._parse_line_continue_last(line[1:], state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line[1:]
 
 
     def _parse_delim_inline(self, name, delim, line, state, section=False,
-                            whitespace=INDENT,
+                            next=next, whitespace=INDENT,
                             unicode_whitespace_set=UNICODE_WHITESPACE_SET):
         '''
         Find the closing delimiter for an inline quoted string or doc comment.
@@ -777,21 +821,22 @@ class BespONDecoder(object):
             return ([content], content, line)
         if section:
             raise erring.ParseError('Unterminated {0} (section strings must start and end on the same line)'.format(name), state)
-        content_lines = []
-        content_lines.append(line)
+        content_lines = [line]
         indent = state.indent
-        line = self._parse_line_get_next(line, state)
+        line = next(state.source_lines_iter, None)
+        state.last_lineno += 1
+        state.last_colno = 1
         if line is None:
             raise erring.ParseError('Unterminated {0} (reached end of data)'.format(name), state)
         line_lstrip_ws = line.lstrip(whitespace)
         continuation_indent = line[:len(line)-len(line_lstrip_ws)]
-        state.continuation_indent = continuation_indent
         if not continuation_indent.startswith(indent):
             raise erring.IndentationError(state)
+        state.continuation_indent = continuation_indent
         line = line_lstrip_ws
         while True:
             if line == '':
-                raise erring.ParseError('Unterminated {0} (inline delimited strings cannot contain empty lines)'.format(name), state)
+                raise erring.ParseError('Unterminated {0} (inline quoted strings cannot contain empty lines)'.format(name), state)
             if line[0] in unicode_whitespace_set:
                 state.last_colno += len(continuation_indent)
                 if line[0] in whitespace:
@@ -803,10 +848,12 @@ class BespONDecoder(object):
                     line_content = line[:m.start(group)]
                     line = line[m.end(group):]
                     content_lines.append(line_content)
-                    state.last_colno += len(continuation_indent) + m.end(group) - 1
+                    state.last_colno += len(continuation_indent) + len(line_content) - 1
                     break
             content_lines.append(line)
-            line = self._parse_line_get_next(line, state)
+            line = next(state.source_lines_iter, None)
+            state.last_lineno += 1
+            state.last_colno = 1
             if line is None:
                 raise erring.ParseError('Unterminated {0} (reached end of data)'.format(name), state)
             if not line.startswith(continuation_indent):
@@ -876,7 +923,10 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
             state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        return self._parse_line_continue_last(line, state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line
 
 
     def _parse_token_literal_string_delim(self, line, state, section=False,
@@ -899,9 +949,11 @@ class BespONDecoder(object):
         delim = line[:len_delim]
         content_lines, content, line = self._parse_delim_inline('literal string', delim, line_strip_delim, state, section=section)
         content_strip_space = content.strip('\x20')
-        if content_strip_space[:1] == literal_string_delim:
+        if content_strip_space[:1] == content_strip_space[-1:] == literal_string_delim:
+            content = content[1:-1]
+        elif content_strip_space[:1] == literal_string_delim:
             content = content[1:]
-        if content_strip_space[-1:] == literal_string_delim:
+        elif content_strip_space[-1:] == literal_string_delim:
             content = content[:-1]
         node = ScalarNode(state, delim=delim, block=False, implicit_type='literal_string')
         if state.full_ast:
@@ -915,7 +967,10 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
             state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        return self._parse_line_continue_last(line, state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line
 
 
     def _parse_token_escaped_string(self, line, state, section=False,
@@ -962,7 +1017,10 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             state.bidi_rtl_last_scalar_last_line = content_lines[-1]
             state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        return self._parse_line_continue_last(line, state)
+        state.last_colno += 1
+        state.first_colno = state.last_colno
+        state.at_line_start = False
+        return line
 
 
     def _parse_token_section(self, delim, line, state,
@@ -998,7 +1056,7 @@ class BespONDecoder(object):
         line_lstrip_ws = line.lstrip(whitespace)
         state.last_colno += len(delim) + len(line) - len(line_lstrip_ws)
         state.first_colno = state.last_colno
-        line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
+        remaining_line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
         next_scalar = state.next_scalar
         state.next_scalar = None
         state.next_cache = False
@@ -1013,17 +1071,14 @@ class BespONDecoder(object):
             raise erring.ParseError('Unexpected section type', node)
         node._resolved = True
         state.ast.start_section(node)
-        line_lstrip_ws = line.lstrip(whitespace)
-        if line_lstrip_ws == '':
-            return self._parse_line_goto_next('', state)
-        state.last_colno += len(line) - len(line_lstrip_ws)
-        state.first_colno = state.last_colno
-        if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
-            return self._parse_token_line_comment(line_lstrip_ws, state)
+        if state.first_lineno != node.last_lineno:
+            return remaining_line
+        if remaining_line[:1] == comment_delim and remaining_line[1:2] != comment_delim:
+            return self._parse_token_line_comment(remaining_line, state)
         raise erring.ParseError('Unexpected content after start of section', state)
 
 
-    def _parse_token_block_prefix(self, line, state,
+    def _parse_token_block_prefix(self, line, state, next=next,
                                   max_delim_length=MAX_DELIM_LENGTH,
                                   ScalarNode=ScalarNode,
                                   whitespace=INDENT,
@@ -1066,7 +1121,9 @@ class BespONDecoder(object):
         content_lines = []
         indent = state.indent
         while True:
-            line = self._parse_line_get_next(line, state)
+            line = next(state.source_lines_iter, None)
+            state.last_lineno += 1
+            state.last_colno = 1
             if line is None:
                 raise erring.ParseError('Unterminated block object', state)
             if not line.startswith(indent) and line.lstrip(whitespace) != '':
@@ -1216,7 +1273,7 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)
         if m is None:
-            raise erring.ParseError('Invalid unquoted string or key path', state)
+            raise erring.ParseError('Invalid unquoted string or key path:  "{0}"'.format(line.replace('"', '\\"')), state)
         if m.lastgroup == 'unquoted_string':
             raw_val = line[:m.end()]
             line = line[len(raw_val):]
