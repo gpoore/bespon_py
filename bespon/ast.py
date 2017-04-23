@@ -25,7 +25,6 @@ START_TAG = grammar.LIT_GRAMMAR['start_tag']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 INLINE_ELEMENT_SEPARATOR = grammar.LIT_GRAMMAR['inline_element_separator']
 OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
-PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
 
 
@@ -71,12 +70,13 @@ class Ast(object):
         __nonzero__ = __bool__
 
 
-    def _noninline_climb_to_indent(self, state_or_scalar_obj, pos):
+    def _indentation_climb_to_indent(self, state_or_scalar_obj, pos, len=len):
         '''
-        Starting at `pos`, climb to a higher level in that AST with less
+        Starting at `pos`, climb to a higher level in the AST with less
         indentation that is potentially compatible with `state_or_scalar_obj`.
-        For use in non-inline mode.
+        For use in indentation-style syntax.
         '''
+        # `state` has no `external_indent`, but most AST nodes do
         try:
             len_indent = len(state_or_scalar_obj.external_indent)
         except AttributeError:
@@ -109,7 +109,7 @@ class Ast(object):
         return pos
 
 
-    def _section_climb(self, pos):
+    def _section_climb_to_root(self, pos):
         '''
         Starting at `pos`, climb to the highest level in the AST below root,
         which is where sections may be created.
@@ -128,7 +128,7 @@ class Ast(object):
                 if pos._open:
                     raise erring.ParseError('A list-like object ended before an expected value was added', pos)
             else:  # other invalid location
-                raise erring.IndentationError(scalar_obj)
+                raise erring.IndentationError(pos)
             parent = pos.parent
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
@@ -141,7 +141,7 @@ class Ast(object):
         return pos
 
 
-    def _key_path_climb(self, pos):
+    def _key_path_climb_to_start(self, pos):
         '''
         Starting at `pos`, which was created by a key path, climb to the
         higher level in that AST corresponding to the top of the key path.
@@ -150,6 +150,8 @@ class Ast(object):
         last_lineno = pos.last_lineno
         last_colno = pos.last_colno
         if pos.basetype == 'dict':
+            # No need to check `if not pos`, because a tag can't create a
+            # key path dict; a key path dict implies the existence of a key.
             if pos._awaiting_val:
                 raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
         elif pos.basetype == 'list':
@@ -167,7 +169,7 @@ class Ast(object):
 
 
     def append_scalar_key(self, assign_key_val=ASSIGN_KEY_VAL,
-                          DictlikeNode=astnodes.DictlikeNode):
+                          DictlikeNode=astnodes.DictlikeNode, len=len):
         '''
         Append a scalar key.
 
@@ -175,11 +177,6 @@ class Ast(object):
         if the key's indentation does not match that of the current position,
         try to find an appropriate pre-existing dict or attempt to create one.
         '''
-        # Checks could be avoided by treating any scalar that isn't a valid
-        # key as a value as soon as it is parsed, rather than caching it like
-        # a potentially valid key.  The current approach gives more
-        # informative error messages than would be possible with that
-        # approach.
         state = self.state
         scalar_obj = state.next_scalar
         if state.first_lineno != scalar_obj.last_lineno:
@@ -189,12 +186,13 @@ class Ast(object):
                 raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
         state.next_scalar = None
         state.next_cache = False
-        scalar_obj.assign_key_val_lineno = state.first_lineno
-        scalar_obj.assign_key_val_colno = state.first_colno
+        if state.full_ast:
+            scalar_obj.assign_key_val_lineno = state.first_lineno
+            scalar_obj.assign_key_val_colno = state.first_colno
         if scalar_obj.basetype == 'key_path':
             self._append_key_path(scalar_obj)
             return
-        if scalar_obj.basetype != 'scalar' or not state.next_scalar_is_keyable:
+        if not state.next_scalar_is_keyable:
             raise erring.ParseError('Object is not a valid key for a dict-like object', scalar_obj)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
@@ -209,19 +207,22 @@ class Ast(object):
             dict_obj = DictlikeNode(scalar_obj)
             self._append_key_path_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
-        elif scalar_obj.external_indent == pos.indent and pos.basetype == 'dict':
+        elif pos.basetype == 'dict' and scalar_obj.external_indent == pos.indent:
             if pos.key_path_parent is not None:
-                pos = self._key_path_climb(pos)
+                pos = self._key_path_climb_to_start(pos)
             pos.check_append_scalar_key(scalar_obj)
         elif len(scalar_obj.external_indent) >= len(pos.indent):
             if not ((pos.basetype == 'dict' and pos._awaiting_val) or pos._open):
+                # This error would be caught later, but it's possible to give
+                # a more informative error message here, with minimal
+                # overhead.
                 raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', scalar_obj)
             dict_obj = DictlikeNode(scalar_obj)
             # No need to set `._open=True`; irrelevant in non-inline mode.
             self._append_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
         else:
-            pos = self._noninline_climb_to_indent(scalar_obj, pos)
+            pos = self._indentation_climb_to_indent(scalar_obj, pos)
             if not pos.basetype == 'dict':
                 raise erring.IndentationError(scalar_obj)
             pos.check_append_scalar_key(scalar_obj)
@@ -255,7 +256,7 @@ class Ast(object):
         '''
         # There is never a need to climb to a higher level in the AST.  In
         # inline mode, that would be taken care of by closing delimiters.
-        # In non-inline mode, keys and list element openers `*` can trigger
+        # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
         self._unresolved_nodes.append(collection_obj)
         if self.section_pos is not self.pos:
@@ -275,7 +276,7 @@ class Ast(object):
         '''
         # There is never a need to climb to a higher level in the AST.  In
         # inline mode, that would be taken care of by closing delimiters.
-        # In non-inline mode, keys and list element openers `*` can trigger
+        # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
         self._unresolved_nodes.append(collection_obj)
         self.pos.check_append_key_path_collection(collection_obj)
@@ -416,6 +417,7 @@ class Ast(object):
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
         state.inline = pos.external_inline
         state.next_tag = pos
+        state.next_cache = True
         self.pos = self._in_tag_cached_pos
         state.in_tag = False
 
@@ -447,22 +449,23 @@ class Ast(object):
             raise erring.ParseError('Misplaced object separator "{0}" or missing object/key-value pair'.format(INLINE_ELEMENT_SEPARATOR), state)
 
 
-    def open_indentation_list(self, ListlikeNode=astnodes.ListlikeNode):
+    def open_indentation_list(self, ListlikeNode=astnodes.ListlikeNode,
+                              len=len):
         '''
-        Open a list-like object in non-inline syntax at `*`.
+        Open a list-like object in indentation-style syntax at `*`.
         '''
         state = self.state
         if state.inline or not state.at_line_start:
             # The `*` doesn't change `.at_line_start` status, unlike other
             # tokens.
-            raise erring.ParseError('Invalid location to begin a non-inline list element', state)
+            raise erring.ParseError('Invalid location to begin an indentation-style list element', state)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if pos is self.section_pos:
             list_obj = ListlikeNode(state)
             list_obj._open = True
             self._append_key_path_collection(list_obj)
-        elif state.indent == pos.indent and pos.basetype == 'list':
+        elif pos.basetype == 'list' and state.indent == pos.indent:
             if pos._open:
                 raise erring.ParseError('Cannot start a new list element while a previous element is missing', state)
             pos._open = True
@@ -473,8 +476,8 @@ class Ast(object):
             list_obj._open = True
             self._append_collection(list_obj)
         else:
-            pos = self._noninline_climb_to_indent(state, pos)
-            if state.indent == pos.indent and pos.basetype == 'list':
+            pos = self._indentation_climb_to_indent(state, pos)
+            if pos.basetype == 'list' and state.indent == pos.indent:
                 # Don't need to check for a list that is already open.
                 # If the list were already open, would still be at the level
                 # of the list in the AST, and never would have ended up here,
@@ -489,7 +492,7 @@ class Ast(object):
     def _append_key_path(self, kp_obj,
                          open_indentation_list=OPEN_INDENTATION_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
-                         ListlikeNode=astnodes.ListlikeNode):
+                         ListlikeNode=astnodes.ListlikeNode, len=len):
         '''
         Create the AST node corresponding to the elements in a key path.
         '''
@@ -505,7 +508,7 @@ class Ast(object):
             initial_pos = dict_obj
         elif kp_obj.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
             if pos.key_path_parent is not None:
-                pos = self._key_path_climb(pos)
+                pos = self._key_path_climb_to_start(pos)
             initial_pos = pos
         elif len(kp_obj.external_indent) >= len(pos.indent):
             if not ((pos.basetype == 'dict' and pos._awaiting_val) or pos._open):
@@ -514,7 +517,7 @@ class Ast(object):
             self._append_collection(dict_obj)
             initial_pos = dict_obj
         else:
-            pos = self._noninline_climb_to_indent(kp_obj, pos)
+            pos = self._indentation_climb_to_indent(kp_obj, pos)
             if not pos.basetype == 'dict':
                 raise erring.IndentationError(kp_obj)
             initial_pos = pos
@@ -586,7 +589,7 @@ class Ast(object):
             if initial_pos.external_indent != '':
                 raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
         else:
-            pos = self._section_climb(pos)
+            pos = self._section_climb_to_root(pos)
             initial_pos = pos
             if initial_pos.external_indent != '':
                 raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
@@ -638,7 +641,7 @@ class Ast(object):
         if self._last_section.delim != delim:
             raise erring.ParseError('Section start and end delims must have the same length', self.state, self._last_section)
         self._last_section._end_delim = True
-        self._section_climb(self.pos)
+        self._section_climb_to_root(self.pos)
 
 
     def resolve(self):
