@@ -192,70 +192,46 @@ class RootNode(list):
 
 
 
-def _init_common(self, state_or_scalar_obj, tagable=True,
-                 doc_comment_obj=None, tag_obj=None, len=len):
+def _set_tag_doc_comment_externals(self, state, len=len):
     '''
-    Shared initialization for all AST nodes below root level.
-
-    Usually takes initialization from state, but in some cases, like
-    non-inline dicts, can take values from a pre-existing scalar or other
-    object.  Hence, the argument `state_or_scalar_obj`.
+    When there are doc comments or tags, set them and determine external
+    attributes.  This is shared by all AST nodes below root level.
+    Incorporating it into individual node `__init__()` would be possible,
+    but would risk logic not staying in sync.
     '''
-    try:
-        # Only do lots of lookup and assignment if necessary.
-        if state_or_scalar_obj.next_cache:
-            doc_comment_obj = state_or_scalar_obj.next_doc_comment
-            state_or_scalar_obj.next_doc_comment = None
-            tag_obj = state_or_scalar_obj.next_tag
-            state_or_scalar_obj.next_tag = None
-            state_or_scalar_obj.next_cache = False
-            if not tagable and tag_obj is not None:
-                raise erring.ParseError('A tag was applied to an untagable object', state_or_scalar_obj, tag_obj)
-        state = state_or_scalar_obj
-    except AttributeError:
-        state = state_or_scalar_obj._state
+    doc_comment_obj = state.next_doc_comment
+    state.next_doc_comment = None
+    tag_obj = state.next_tag
+    state.next_tag = None
+    state.next_cache = False
     self.doc_comment = doc_comment_obj
     self.tag = tag_obj
 
-    self._state = state
-    self.indent = state_or_scalar_obj.indent
-    self.at_line_start = state_or_scalar_obj.at_line_start
-    self.inline = state_or_scalar_obj.inline
-    self.inline_indent = state_or_scalar_obj.inline_indent
-    self.first_lineno = state_or_scalar_obj.first_lineno
-    self.first_colno = state_or_scalar_obj.first_colno
-    self.last_lineno = state_or_scalar_obj.last_lineno
-    self.last_colno = state_or_scalar_obj.last_colno
-
     # If there is no tag or doc comment, the external appearance of the object
-    # is identical to that of the object itself.  Otherwise, the external
-    # appearance is based on the doc comment, or the tag in its absence.
-    # There is no need to perform indentation checks for the external
-    # appearance, since these will be done during appending to the AST.
-    # The rules for cases when a doc comment or a tag is not at the start
-    # of a line in indentation-style syntax will allow for things that are
-    # less visually pleasing than might be desired.  However, the tradeoff is
-    # that the rules are simple, relatively intuitive, and minimal while
+    # is identical to that of the object itself; that case is handled in
+    # individual `__init__()` since it is simple and avoids overhead.
+    # Otherwise, the external appearance is based on the doc comment, or the
+    # tag in its absence.  There is no need to perform indentation checks for
+    # the external appearance, since these will be done during appending to
+    # the AST.  The rules for cases when a doc comment or a tag is not at the
+    # start of a line in indentation-style syntax will allow for things that
+    # are less visually pleasing than might be desired.  However, the tradeoff
+    # is that the rules are simple, relatively intuitive, and minimal while
     # still preventing ambiguity.
     if tag_obj is None:
-        if doc_comment_obj is None:
-            self.external_indent = self.indent
-            self.external_at_line_start = self.at_line_start
-            self.external_first_lineno = self.first_lineno
-        else:
-            if doc_comment_obj.inline:
-                if not self.indent.startswith(doc_comment_obj.inline_indent):
-                    raise erring.IndentationError(self)
-            elif doc_comment_obj.at_line_start:
-                if not self.at_line_start:
-                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, self)
-                if doc_comment_obj.indent != self.indent:
-                    raise erring.ParseError('Inconsistent indentation between doc comment and object', doc_comment_obj, self)
-            elif self.at_line_start and (len(self.indent) <= len(doc_comment_obj.indent) or not self.indent.startswith(doc_comment_obj.indent)):
+        if doc_comment_obj.inline:
+            if not self.indent.startswith(doc_comment_obj.inline_indent):
                 raise erring.IndentationError(self)
-            self.external_indent = doc_comment_obj.indent
-            self.external_at_line_start = doc_comment_obj.at_line_start
-            self.external_first_lineno = doc_comment_obj.first_lineno
+        elif doc_comment_obj.at_line_start:
+            if not self.at_line_start:
+                raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, self)
+            if doc_comment_obj.indent != self.indent:
+                raise erring.ParseError('Inconsistent indentation between doc comment and object', doc_comment_obj, self)
+        elif self.at_line_start and (len(self.indent) <= len(doc_comment_obj.indent) or not self.indent.startswith(doc_comment_obj.indent)):
+            raise erring.IndentationError(self)
+        self.external_indent = doc_comment_obj.indent
+        self.external_at_line_start = doc_comment_obj.at_line_start
+        self.external_first_lineno = doc_comment_obj.first_lineno
     else:
         if self.basetype not in tag_obj.compatible_basetypes:
             if not self.inline and 'dict' in tag_obj.compatible_basetypes:
@@ -306,8 +282,6 @@ def _init_common(self, state_or_scalar_obj, tagable=True,
             self.external_first_lineno = doc_comment_obj.first_lineno
     self._resolved = False
     self.extra_dependents = None
-    # Some attributes are not given default values, to ensure that any
-    # incorrect attempt to access them results in an error.
 
 
 
@@ -323,7 +297,8 @@ class ScalarNode(object):
                   'raw_val', 'num_base', 'key_path', 'key_path_occurrences',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
 
-    def __init__(self, state, init_common=_init_common,
+    def __init__(self, state,
+                 set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  delim=None, block=None, implicit_type=None, num_base=None):
         self.implicit_type = implicit_type
         self.block = block
@@ -335,9 +310,25 @@ class ScalarNode(object):
             self.continuation_indent = state.continuation_indent
             self.key_path = None
             self.key_path_occurrences = None
-        # `init_common()` must follow assigning `.block`, because there is
-        # a check for using `newline` with non-block scalars.
-        init_common(self, state)
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_colno = state.first_colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        if not state.next_cache:
+            self.doc_comment = None
+            self.tag = None
+            self.external_indent = self.indent
+            self.external_at_line_start = self.at_line_start
+            self.external_first_lineno = self.first_lineno
+        else:
+            set_tag_doc_comment_externals(self, state)
 
     def __hash__(self, hash=hash):
         # The only time a scalar will need a hash is when it is used as a
@@ -362,7 +353,8 @@ class ListlikeNode(list):
     __slots__ = (_node_common_slots + _node_collection_slots +
                  ['internal_indent'])
 
-    def __init__(self, state_or_scalar_obj, init_common=_init_common,
+    def __init__(self, state_or_scalar_obj,
+                 set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  key_path_parent=None, _key_path_traversable=False,
                  list=list):
         list.__init__(self)
@@ -371,27 +363,34 @@ class ListlikeNode(list):
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
+
+        state = state_or_scalar_obj._state
+        self._state = state
+        self.indent = state_or_scalar_obj.indent
+        self.at_line_start = state_or_scalar_obj.at_line_start
+        self.inline = state_or_scalar_obj.inline
+        self.inline_indent = state_or_scalar_obj.inline_indent
+        self.first_lineno = state_or_scalar_obj.first_lineno
+        self.first_colno = state_or_scalar_obj.first_colno
+        self.last_lineno = state_or_scalar_obj.last_lineno
+        self.last_colno = state_or_scalar_obj.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        self.internal_indent = None
         if _key_path_traversable:
-            # A collection created implicitly as part of a keypath lacks most
-            # standard attributes, so they are never created. An implicit
-            # collection is always open.
             self.doc_comment = None
             self.tag = None
-            self.indent = state_or_scalar_obj.indent
-            self.inline = state_or_scalar_obj.inline
-            self.inline_indent = state_or_scalar_obj.inline_indent
-            self.first_lineno = state_or_scalar_obj.first_lineno
-            self.first_colno = state_or_scalar_obj.first_colno
-            self.last_lineno = state_or_scalar_obj.last_lineno
-            self.last_colno = state_or_scalar_obj.last_colno
             self._open = True
-            if not self.inline:
-                self.internal_indent = None
-        else:
-            init_common(self, state_or_scalar_obj)
+        elif not state.next_cache:
+            self.doc_comment = None
+            self.tag = None
+            self.external_indent = self.indent
+            self.external_at_line_start = self.at_line_start
+            self.external_first_lineno = self.first_lineno
             self._open = False
-            if not self.inline:
-                self.internal_indent = None
+        else:
+            set_tag_doc_comment_externals(self, state)
+            self._open = False
 
 
     def check_append_scalar_key(self, obj):
@@ -489,7 +488,8 @@ class DictlikeNode(collections.OrderedDict):
     __slots__ = (_node_common_slots + _node_collection_slots +
                  ['_awaiting_val', '_next_key'])
 
-    def __init__(self, state_or_scalar_obj, init_common=_init_common,
+    def __init__(self, state_or_scalar_obj,
+                 set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  key_path_parent=None, _key_path_traversable=False,
                  OrderedDict=collections.OrderedDict):
         OrderedDict.__init__(self)
@@ -498,25 +498,35 @@ class DictlikeNode(collections.OrderedDict):
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
         self._key_path_scope = None
-        if _key_path_traversable:
-            # A collection created implicitly as part of a keypath lacks most
-            # standard attributes, so they are never created.  An implicit
-            # collection is always open.
-            self.doc_comment = None
-            self.tag = None
-            self.indent = state_or_scalar_obj.indent
-            self.inline = state_or_scalar_obj.inline
-            self.inline_indent = state_or_scalar_obj.inline_indent
-            self.first_lineno = state_or_scalar_obj.first_lineno
-            self.first_colno = state_or_scalar_obj.first_colno
-            self.last_lineno = state_or_scalar_obj.last_lineno
-            self.last_colno = state_or_scalar_obj.last_colno
-            self._open = True
-        else:
-            init_common(self, state_or_scalar_obj)
-            self._open = False
         self._awaiting_val = False
         self._next_key = None
+
+        state = state_or_scalar_obj._state
+        self._state = state
+        self.indent = state_or_scalar_obj.indent
+        self.at_line_start = state_or_scalar_obj.at_line_start
+        self.inline = state_or_scalar_obj.inline
+        self.inline_indent = state_or_scalar_obj.inline_indent
+        self.first_lineno = state_or_scalar_obj.first_lineno
+        self.first_colno = state_or_scalar_obj.first_colno
+        self.last_lineno = state_or_scalar_obj.last_lineno
+        self.last_colno = state_or_scalar_obj.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        if _key_path_traversable:
+            self.doc_comment = None
+            self.tag = None
+            self._open = True
+        elif not state.next_cache:
+            self.doc_comment = None
+            self.tag = None
+            self.external_indent = self.indent
+            self.external_at_line_start = self.at_line_start
+            self.external_first_lineno = self.first_lineno
+            self._open = False
+        else:
+            set_tag_doc_comment_externals(self, state)
+            self._open = False
 
 
     def check_append_scalar_key(self, obj):
@@ -638,10 +648,11 @@ class TagNode(object):
                                       'label', 'newline',
                                       'collection_config_type', 'collection_config_val',
                                       'open', '_next_key', '_awaiting_val',
-                                      '_unresolved_dependency_count']
-    def __init__(self, state, init_common=_init_common):
+                                      '_unresolved_dependency_count', 'external_inline']
+    def __init__(self, state,
+                 set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
+                 list=list):
         list.__init__(self)
-        init_common(self, state)
         self.type = None
         self._type_data = state.type_data
         self.compatible_basetypes = set(['root', 'scalar', 'dict', 'list', 'keypath'])
@@ -652,6 +663,26 @@ class TagNode(object):
         self._open = False
         self._awaiting_val = False
         self._next_key = None
+
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_colno = state.first_colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        if not state.next_cache:
+            self.doc_comment = None
+            self.tag = None
+            self.external_indent = self.indent
+            self.external_at_line_start = self.at_line_start
+            self.external_first_lineno = self.first_lineno
+        else:
+            set_tag_doc_comment_externals(self, state)
 
     _keywords = set(['type', 'label', 'newline', 'init', 'deepinit',
                      'default', 'deepdefault', 'recmerge', 'deeprecmerge'])
@@ -764,7 +795,7 @@ class KeyPathNode(list):
                                       'assign_key_val_lineno', 'assign_key_val_colno']
 
     def __init__(self, state, key_path_raw_val,
-                 init_common=_init_common,
+                 set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  open_indentation_list=OPEN_INDENTATION_LIST,
                  path_separator=PATH_SEPARATOR,
                  reserved_word_patterns=_reserved_word_patterns,
@@ -772,7 +803,26 @@ class KeyPathNode(list):
                  reserved_word_types=_reserved_word_types,
                  ScalarNode=ScalarNode, list=list):
         list.__init__(self)
-        init_common(self, state, tagable=False)
+
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_colno = state.first_colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        if not state.next_cache:
+            self.doc_comment = None
+            self.tag = None
+            self.external_indent = self.indent
+            self.external_at_line_start = self.at_line_start
+            self.external_first_lineno = self.first_lineno
+        else:
+            set_tag_doc_comment_externals(self, state)
 
         first_colno = state.first_colno
         last_colno = first_colno
@@ -821,9 +871,22 @@ class SectionNode(object):
     '''
     basetype = 'section'
     __slots__ = _node_common_slots + ['delim', 'key_path', 'scalar', '_end_delim']
-    def __init__(self, state, delim, init_common=_init_common):
-        init_common(self, state)
+    def __init__(self, state, delim):
         self.delim = delim
         self.key_path = None
         self.scalar = None
         self._end_delim = False
+
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.first_lineno
+        self.first_colno = state.first_colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+        self._resolved = False
+        self.extra_dependents = None
+        # Sections never have tags or doc comments, and don't use external
+        # attributes
