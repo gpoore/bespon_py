@@ -46,7 +46,7 @@ _reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
 
 
 
-_node_common_slots = ['source_name',
+_node_common_slots = ['_state',
                       'indent', 'at_line_start',
                       'inline', 'inline_indent',
                       'first_lineno', 'first_colno',
@@ -81,12 +81,19 @@ class SourceNode(object):
     '''
     basetype = 'source'
 
+    __slots__ = ['source_name', 'source_include_depth',
+                 'source_initial_nesting_depth', 'nesting_depth',
+                 'full_ast',
+                 'indent', 'at_line_start', 'inline', 'inline_indent',
+                 'first_lineno', 'first_colno', 'last_lineno', 'last_colno',
+                 'root']
+
     def __init__(self, state):
         self.source_name = state.source_name
         self.source_include_depth = state.source_include_depth
         self.source_initial_nesting_depth = state.source_initial_nesting_depth
-        self.full_ast = state.full_ast
         self.nesting_depth = state.source_initial_nesting_depth
+        self.full_ast = state.full_ast
 
         self.indent = state.indent
         self.at_line_start = state.at_line_start
@@ -109,7 +116,16 @@ class RootNode(list):
     '''
     basetype = 'root'
 
-    def __init__(self, source):
+    __slots__ = ['source_name', 'tag', 'end_tag',
+                 '_unresolved_dependency_count',
+                 'nesting_depth', 'parent',
+                 'key_path_parent', '_key_path_scope',
+                 '_open', '_resolved', 'final_val',
+                 'indent', 'at_line_start', 'inline', 'inline_indent',
+                 'first_lineno', 'first_colno',
+                 'last_lineno', 'last_colno']
+
+    def __init__(self, source, list=list):
         list.__init__(self)
 
         self.source_name = source.source_name
@@ -117,8 +133,9 @@ class RootNode(list):
         self.end_tag = None
         self._unresolved_dependency_count = 0
         self.nesting_depth = source.source_initial_nesting_depth
-        self._key_path_scope = None
+        self.parent = source
         self.key_path_parent = None
+        self._key_path_scope = None
         self._open = True
         self._resolved = False
 
@@ -131,10 +148,8 @@ class RootNode(list):
         self.last_lineno = source.last_lineno
         self.last_colno = source.last_colno
 
-        self.parent = source
 
-
-    def check_append_scalar_val(self, obj):
+    def check_append_scalar_val(self, obj, len=len):
         if len(self) == 1:
             raise erring.ParseError('Only a single scalar or collection object is allowed at root level', obj)
         if not obj.external_indent.startswith(self.indent):
@@ -156,7 +171,7 @@ class RootNode(list):
         self.last_colno = obj.last_colno
 
 
-    def check_append_collection(self, obj, in_key_path_after_element1=False):
+    def check_append_collection(self, obj, len=len):
         if len(self) == 1:
             raise erring.ParseError('Only a single scalar or collection object is allowed at root level', obj)
         if not obj.external_indent.startswith(self.indent):
@@ -177,7 +192,8 @@ class RootNode(list):
 
 
 
-def _init_common(self, state_or_scalar_obj, tagable=True):
+def _init_common(self, state_or_scalar_obj, tagable=True,
+                 doc_comment_obj=None, tag_obj=None, len=len):
     '''
     Shared initialization for all AST nodes below root level.
 
@@ -186,20 +202,22 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
     object.  Hence, the argument `state_or_scalar_obj`.
     '''
     try:
-        doc_comment_obj = state_or_scalar_obj.next_doc_comment
-        state_or_scalar_obj.next_doc_comment = None
-        tag_obj = state_or_scalar_obj.next_tag
-        state_or_scalar_obj.next_tag = None
-        state_or_scalar_obj.next_cache = False
-        if not tagable and tag_obj is not None:
-            raise erring.ParseError('A tag was applied to an untagable object', state_or_scalar_obj, tag_obj)
+        # Only do lots of lookup and assignment if necessary.
+        if state_or_scalar_obj.next_cache:
+            doc_comment_obj = state_or_scalar_obj.next_doc_comment
+            state_or_scalar_obj.next_doc_comment = None
+            tag_obj = state_or_scalar_obj.next_tag
+            state_or_scalar_obj.next_tag = None
+            state_or_scalar_obj.next_cache = False
+            if not tagable and tag_obj is not None:
+                raise erring.ParseError('A tag was applied to an untagable object', state_or_scalar_obj, tag_obj)
+        state = state_or_scalar_obj
     except AttributeError:
-        doc_comment_obj = None
-        tag_obj = None
+        state = state_or_scalar_obj._state
     self.doc_comment = doc_comment_obj
     self.tag = tag_obj
 
-    self.source_name = state_or_scalar_obj.source_name
+    self._state = state
     self.indent = state_or_scalar_obj.indent
     self.at_line_start = state_or_scalar_obj.at_line_start
     self.inline = state_or_scalar_obj.inline
@@ -214,6 +232,11 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
     # appearance is based on the doc comment, or the tag in its absence.
     # There is no need to perform indentation checks for the external
     # appearance, since these will be done during appending to the AST.
+    # The rules for cases when a doc comment or a tag is not at the start
+    # of a line in indentation-style syntax will allow for things that are
+    # less visually pleasing than might be desired.  However, the tradeoff is
+    # that the rules are simple, relatively intuitive, and minimal while
+    # still preventing ambiguity.
     if tag_obj is None:
         if doc_comment_obj is None:
             self.external_indent = self.indent
@@ -225,7 +248,7 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
                     raise erring.IndentationError(self)
             elif doc_comment_obj.at_line_start:
                 if not self.at_line_start:
-                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be immediately followed by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, self)
+                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, self)
                 if doc_comment_obj.indent != self.indent:
                     raise erring.ParseError('Inconsistent indentation between doc comment and object', doc_comment_obj, self)
             elif self.at_line_start and (len(self.indent) <= len(doc_comment_obj.indent) or not self.indent.startswith(doc_comment_obj.indent)):
@@ -235,8 +258,10 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
             self.external_first_lineno = doc_comment_obj.first_lineno
     else:
         if self.basetype not in tag_obj.compatible_basetypes:
+            if not self.inline and 'dict' in tag_obj.compatible_basetypes:
+                erring.ParseError('Tag is incompatible with object; tags for dict-like objects in indentation-style syntax require an explicit type', tag_obj, self)
             raise erring.ParseError('Tag is incompatible with object', tag_obj, self)
-        if self.basetype == 'scalar' and (tag_obj['newline'] is not None or tag_obj['indent'] is not None) and not self.block:
+        if self.basetype == 'scalar' and not self.block and (tag_obj['newline'] is not None or tag_obj['indent'] is not None):
             raise erring.ParseError('Tag has a "newline" or "indent" argument, but is applied to a scalar with no literal line breaks', tag_obj, self)
         if doc_comment_obj is None:
             if tag_obj.external_inline:
@@ -261,7 +286,7 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
                     raise erring.IndentationError(self)
             elif doc_comment_obj.at_line_start:
                 if not tag_obj.at_line_start:
-                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be immediately followed by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, tag_obj)
+                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_obj, tag_obj)
                 if doc_comment_obj.indent != tag_obj.indent:
                     raise erring.ParseError('Inconsistent indentation between doc comment and tag', doc_comment_obj, tag_obj)
                 if not self.indent.startswith(tag_obj.indent):
@@ -289,8 +314,8 @@ def _init_common(self, state_or_scalar_obj, tagable=True):
 
 class ScalarNode(object):
     '''
-    Scalar object, including quoted (delim, block) and unquoted strings,
-    none, bool, int, and float.
+    Scalar object, including quoted (inline, block) and unquoted strings,
+    none, bool, int, and float.  Also used to represent doc comments.
     '''
     basetype = 'scalar'
     __slots__ = (_node_common_slots +
@@ -300,27 +325,30 @@ class ScalarNode(object):
 
     def __init__(self, state, init_common=_init_common,
                  delim=None, block=None, implicit_type=None, num_base=None):
-        self.delim = delim
-        self.block = block
         self.implicit_type = implicit_type
-        self.num_base = num_base
-        self.continuation_indent = state.continuation_indent
-        self.key_path = None
-        self.key_path_occurrences = None
+        self.block = block
+        if state.full_ast:
+            # Only store all details when a full AST is needed, for example,
+            # for round-tripping.
+            self.delim = delim
+            self.num_base = num_base
+            self.continuation_indent = state.continuation_indent
+            self.key_path = None
+            self.key_path_occurrences = None
         # `init_common()` must follow assigning `.block`, because there is
         # a check for using `newline` with non-block scalars.
         init_common(self, state)
 
-    def __hash__(self):
+    def __hash__(self, hash=hash):
         # The only time a scalar will need a hash is when it is used as a
         # dict key, and in that case it must already be resolved and thus
         # will have `.final_val`.
         return hash(self.final_val)
 
-    def __eq__(self, other):
+    def __eq__(self, other, hasattr=hasattr):
         # When a ScalarNode object is used as a dict key, allow access to
         # the value through the original object, another ScalarNode object
-        # with the save `.final_val`, or the literal scalar value.
+        # with the same `.final_val`, or the literal scalar value.
         return other == self.final_val or (hasattr(other, 'final_val') and other.final_val == self.final_val)
 
 
@@ -332,10 +360,11 @@ class ListlikeNode(list):
     '''
     basetype = 'list'
     __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['_section', 'internal_indent'])
+                 ['internal_indent'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False):
+                 key_path_parent=None, _key_path_traversable=False,
+                 list=list):
         list.__init__(self)
 
         self.key_path_parent = key_path_parent
@@ -365,15 +394,6 @@ class ListlikeNode(list):
                 self.internal_indent = None
 
 
-    def _set_internal_indent(self, obj):
-        if self._key_path_traversable:
-            self.internal_indent = obj.external_indent
-            return
-        if len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent):
-            raise erring.IndentationError(obj)
-        self.internal_indent = obj.external_indent
-
-
     def check_append_scalar_key(self, obj):
         raise erring.ParseError('Cannot append a key-value pair directly to a list-like object', obj)
 
@@ -382,10 +402,10 @@ class ListlikeNode(list):
         raise erring.ParseError('Key path is incompatible with previously created list-like object', obj, self)
 
 
-    def check_append_scalar_val(self, obj):
+    def check_append_scalar_val(self, obj, len=len):
         if not self._open:
             if self.inline:
-                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), obj)
         if self.inline:
@@ -393,9 +413,9 @@ class ListlikeNode(list):
                 raise erring.IndentationError(obj)
         elif obj.external_indent != self.internal_indent:
             if self.internal_indent is None:
-                self._set_internal_indent(obj)
-                if obj.external_indent != self.internal_indent:
+                if not self._key_path_traversable and (len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent)):
                     raise erring.IndentationError(obj)
+                self.internal_indent = obj.external_indent
             else:
                 raise erring.IndentationError(obj)
         if obj._resolved:
@@ -410,7 +430,7 @@ class ListlikeNode(list):
         self._open = False
 
 
-    def check_append_key_path_scalar_val(self, obj):
+    def check_append_key_path_scalar_val(self, obj, len=len):
         if obj._resolved:
             self.append(obj)
         else:
@@ -422,10 +442,10 @@ class ListlikeNode(list):
         self.last_colno = obj.last_colno
 
 
-    def check_append_collection(self, obj):
+    def check_append_collection(self, obj, len=len):
         if not self._open:
             if self.inline:
-                raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
+                raise erring.ParseError('Cannot append to a closed list-like object; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), obj)
         if self.inline:
@@ -433,9 +453,9 @@ class ListlikeNode(list):
                 raise erring.IndentationError(obj)
         elif obj.external_indent != self.internal_indent:
             if self.internal_indent is None:
-                self._set_internal_indent(obj)
-                if obj.external_indent != self.internal_indent:
+                if not self._key_path_traversable and (len(obj.external_indent) <= len(self.indent) or not obj.external_indent.startswith(self.indent)):
                     raise erring.IndentationError(obj)
+                self.internal_indent = obj.external_indent
             else:
                 raise erring.IndentationError(obj)
         obj.parent = self
@@ -448,7 +468,7 @@ class ListlikeNode(list):
         self._open = False
 
 
-    def check_append_key_path_collection(self, obj):
+    def check_append_key_path_collection(self, obj, len=len):
         obj.parent = self
         obj.index = len(self)
         obj.nesting_depth = self.nesting_depth + 1
@@ -470,8 +490,9 @@ class DictlikeNode(collections.OrderedDict):
                  ['_awaiting_val', '_next_key'])
 
     def __init__(self, state_or_scalar_obj, init_common=_init_common,
-                 key_path_parent=None, _key_path_traversable=False):
-        collections.OrderedDict.__init__(self)
+                 key_path_parent=None, _key_path_traversable=False,
+                 OrderedDict=collections.OrderedDict):
+        OrderedDict.__init__(self)
 
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
@@ -536,7 +557,7 @@ class DictlikeNode(collections.OrderedDict):
         self._awaiting_val = True
 
 
-    def check_append_scalar_val(self, obj):
+    def check_append_scalar_val(self, obj, len=len):
         if not self._awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
         if self.inline:
@@ -576,7 +597,7 @@ class DictlikeNode(collections.OrderedDict):
         self._awaiting_val = False
 
 
-    def check_append_collection(self, obj):
+    def check_append_collection(self, obj, len=len):
         if not self._awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
         if self.inline:
@@ -749,7 +770,7 @@ class KeyPathNode(list):
                  reserved_word_patterns=_reserved_word_patterns,
                  key_path_reserved_word_vals=_key_path_reserved_word_vals,
                  reserved_word_types=_reserved_word_types,
-                 ScalarNode=ScalarNode):
+                 ScalarNode=ScalarNode, list=list):
         list.__init__(self)
         init_common(self, state, tagable=False)
 
@@ -769,7 +790,7 @@ class KeyPathNode(list):
                         kp_elem_node = ScalarNode(state)
                         kp_elem_node.first_colno = first_colno
                         kp_elem_node.last_colno = last_colno
-                        if kp_elem_raw in _reserved_word_types:
+                        if kp_elem_raw.lower() in _reserved_word_types:
                             raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(kp_elem_raw.lower()), kp_elem_node)
                         elif kp_elem_raw == kp_elem_raw.lower():
                             raise erring.ParseError('Reserved word "{0}" is not allowed in key paths'.format(kp_elem_raw.lower()), kp_elem_node)
@@ -784,9 +805,9 @@ class KeyPathNode(list):
                 kp_elem_node.last_colno = last_colno
                 if state.full_ast:
                     kp_elem_node.raw_val = kp_elem_raw
+                    kp_elem_node.key_path = self
                 kp_elem_node.final_val = kp_elem_final
                 kp_elem_node._resolved = True
-                kp_elem_node.key_path = self
                 self.append(kp_elem_node)
                 last_colno += 2
                 first_colno = last_colno

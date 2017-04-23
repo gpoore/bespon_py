@@ -67,7 +67,8 @@ class State(object):
     source, the current parsing context, cached values, and regular
     expressions appropriate for analyzing the source.
     '''
-    __slots__ = ['source_name', 'source_include_depth',
+    __slots__ = ['_state',
+                 'source_name', 'source_include_depth',
                  'source_initial_nesting_depth', 'source_inline',
                  'source_embedded',
                  'source_raw_string', 'source_lines', 'source_lines_iter',
@@ -115,6 +116,12 @@ class State(object):
         if type_data is not None and not (isinstance(type_data, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in type_data)):
             raise TypeError
 
+        # In some cases, depending on context, data may be derived either
+        # from a `State` instance or from an AST node instance.  `_state`
+        # provides an attribute common to all of these that allows
+        # `state` access.
+        self._state = self
+
         self.source_name = source_name or '<data>'
         self.source_include_depth = source_include_depth
         self.source_initial_nesting_depth = source_initial_nesting_depth
@@ -122,7 +129,7 @@ class State(object):
         self.source_embedded = source_embedded
 
         self.indent = indent
-        self.continuation_indent = None
+        self.continuation_indent = indent
         self.at_line_start = at_line_start
         self.inline = inline
         self.inline_indent = inline_indent
@@ -1198,7 +1205,7 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.number_re.match(line)
         if m is None:
-            raise erring.ParseError('Invalid literal with numeric start')
+            raise erring.ParseError('Invalid literal with numeric start', state)
         group_name =  m.lastgroup
         group_type, group_base = group_name.rsplit('_', 1)
         raw_val = line[:m.end(group_name)]

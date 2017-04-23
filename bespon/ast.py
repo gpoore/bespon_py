@@ -284,7 +284,6 @@ class Ast(object):
         self.pos = collection_obj
 
 
-
     def start_inline_dict(self, DictlikeNode=astnodes.DictlikeNode):
         '''
         Start an inline dict-like object at "{".
@@ -524,10 +523,11 @@ class Ast(object):
             if pos.basetype == 'dict' and kp_elem in pos:
                 pos = pos[kp_elem]
                 key_obj = pos.index
-                if key_obj.key_path_occurrences is None:
-                    key_obj.key_path_occurrences = [kp_elem]
-                else:
-                    key_obj.key_path_occurrences.append(kp_elem)
+                if state.full_ast:
+                    if key_obj.key_path_occurrences is None:
+                        key_obj.key_path_occurrences = [kp_elem]
+                    else:
+                        key_obj.key_path_occurrences.append(kp_elem)
                 if not pos._key_path_traversable:
                     raise erring.ParseError('Key path encountered an object that already exists, or a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
@@ -599,10 +599,11 @@ class Ast(object):
                 if kp_elem in pos:
                     pos = pos[kp_elem]
                     key_obj = pos.index
-                    if key_obj.key_path_occurrences is None:
-                        key_obj.key_path_occurrences = [kp_elem]
-                    else:
-                        key_obj.key_path_occurrences.append(kp_elem)
+                    if state.full_ast:
+                        if key_obj.key_path_occurrences is None:
+                            key_obj.key_path_occurrences = [kp_elem]
+                        else:
+                            key_obj.key_path_occurrences.append(kp_elem)
                     if not pos._key_path_traversable:
                         raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
                 else:
