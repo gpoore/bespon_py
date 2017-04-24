@@ -57,6 +57,7 @@ BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
 
 NUMBER_START = grammar.LIT_GRAMMAR['number_start']
 
+INDENT_OR_OPEN_INDENTATION_LIST = INDENT + OPEN_INDENTATION_LIST
 
 
 
@@ -593,21 +594,15 @@ class BespONDecoder(object):
         state.last_lineno += 1
         state.first_lineno = state.last_lineno
         if line is None or line[:1] not in whitespace_set:
-            state.indent = ''
-            state.continuation_indent = ''
+            state.indent = state.continuation_indent = ''
             state.at_line_start = True
-            state.first_colno = 1
-            state.last_colno = 1
+            state.first_colno = state.last_colno = 1
             return line
         line_lstrip_ws = line.lstrip(whitespace)
         len_indent = len(line) - len(line_lstrip_ws)
-        indent = line[:len_indent]
-        state.indent = indent
-        state.continuation_indent = indent
+        state.indent = state.continuation_indent = line[:len_indent]
         state.at_line_start = True
-        colno = len_indent + 1
-        state.first_colno = colno
-        state.last_colno = colno
+        state.first_colno = state.last_colno = len_indent + 1
         return line_lstrip_ws
 
 
@@ -638,7 +633,7 @@ class BespONDecoder(object):
 
 
     def _parse_token_open_indentation_list(self, line, state, len=len,
-                                           whitespace=INDENT,
+                                           indent_or_open_indentation_list=INDENT_OR_OPEN_INDENTATION_LIST,
                                            path_separator=PATH_SEPARATOR):
         '''
         Open a list in indentation-style syntax.
@@ -652,14 +647,13 @@ class BespONDecoder(object):
         state.ast.open_indentation_list()
         if state.next_cache:
             raise erring.ParseError('Cannot open a list-like object when a prior object has not been resolved', state, unresolved_cache=True)
-        line_less_open = line[1:]
-        line_less_open_lstrip_ws = line_less_open.lstrip(whitespace)
-        len_indent_after = len(line_less_open) - len(line_less_open_lstrip_ws)
-        if line_less_open[:1] != '\t' or state.indent[-1:] not in ('', '\t'):
-            state.indent += '\x20' + line_less_open[:len_indent_after]
+        line_less_open_lstrip_ws = line.lstrip(indent_or_open_indentation_list)
+        len_stripped = len(line) - len(line_less_open_lstrip_ws)
+        if line[1:2] != '\t' or state.indent[-1:] not in ('', '\t'):
+            state.indent += '\x20' + line[1:len_stripped]
         else:
-            state.indent += line_less_open[:len_indent_after]
-        state.last_colno += 1 + len_indent_after
+            state.indent += line[1:len_stripped]
+        state.last_colno += len_stripped
         state.first_colno = state.last_colno
         return line_less_open_lstrip_ws
 
