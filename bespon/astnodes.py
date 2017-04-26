@@ -380,17 +380,15 @@ class ListlikeNode(list):
         if _key_path_traversable:
             self.doc_comment = None
             self.tag = None
-            self._open = True
         elif not state.next_cache:
             self.doc_comment = None
             self.tag = None
             self.external_indent = self.indent
             self.external_at_line_start = self.at_line_start
             self.external_first_lineno = self.first_lineno
-            self._open = False
         else:
             set_tag_doc_comment_externals(self, state)
-            self._open = False
+        self._open = False
 
 
     def check_append_scalar_key(self, obj):
@@ -439,6 +437,7 @@ class ListlikeNode(list):
             self._unresolved_dependency_count += 1
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
+        self._open = False
 
 
     def check_append_collection(self, obj, len=len):
@@ -446,6 +445,8 @@ class ListlikeNode(list):
             if self.inline:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
             else:
+                if obj.basetype == 'dict':
+                    erring.ParseError('Cannot start a new dict-like object in a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), scalar_obj)
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), obj)
         if self.inline:
             if not obj.external_indent.startswith(self.inline_indent):
@@ -516,17 +517,15 @@ class DictlikeNode(collections.OrderedDict):
         if _key_path_traversable:
             self.doc_comment = None
             self.tag = None
-            self._open = True
         elif not state.next_cache:
             self.doc_comment = None
             self.tag = None
             self.external_indent = self.indent
             self.external_at_line_start = self.at_line_start
             self.external_first_lineno = self.first_lineno
-            self._open = False
         else:
             set_tag_doc_comment_externals(self, state)
-            self._open = False
+        self._open = False
 
 
     def check_append_scalar_key(self, obj):
@@ -538,8 +537,8 @@ class DictlikeNode(collections.OrderedDict):
             if not obj.external_indent.startswith(self.inline_indent):
                 raise erring.IndentationError(obj)
         else:
-            # Non-inline dict-like objects are always open, so there is no
-            # test for them.  In contrast, non-inline list-like objects
+            # Indentation dict-like objects are always open, so there is no
+            # test for that.  In contrast, non-inline list-like objects
             # must be explicitly opened with `*`.
             if self._awaiting_val:
                 raise erring.ParseError('Missing value; cannot add a key until the previous key has been given a value', obj, self._next_key)
@@ -547,6 +546,9 @@ class DictlikeNode(collections.OrderedDict):
                 raise erring.ParseError('A key must be at the start of the line in non-inline mode', obj)
             if obj.external_indent != self.indent:
                 raise erring.IndentationError(obj)
+            # Set `_open` so that dict-like and list-like objects share a
+            # common test for completeness.
+            self._open = True
         # No need to check for valid key type; already done at AST level
         if obj in self:
             raise erring.ParseError('Duplicate keys are prohibited', obj, [k for k in self if k == obj][0])
@@ -565,6 +567,7 @@ class DictlikeNode(collections.OrderedDict):
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
         self._awaiting_val = True
+        self._open = True
 
 
     def check_append_scalar_val(self, obj, len=len):
@@ -605,6 +608,7 @@ class DictlikeNode(collections.OrderedDict):
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
         self._awaiting_val = False
+        self._open = False
 
 
     def check_append_collection(self, obj, len=len):
@@ -638,6 +642,7 @@ class DictlikeNode(collections.OrderedDict):
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
         self._awaiting_val = False
+        self._open = False
 
 
 
@@ -649,7 +654,7 @@ class TagNode(object):
                                       'collection_config_type', 'collection_config_val',
                                       'open', '_next_key', '_awaiting_val',
                                       '_unresolved_dependency_count', 'external_inline']
-    def __init__(self, state,
+    def __init__(self, state, external_inline,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  list=list):
         list.__init__(self)
@@ -667,6 +672,7 @@ class TagNode(object):
         self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
+        self.exteral_inline = external_inline
         self.inline = state.inline
         self.inline_indent = state.inline_indent
         self.first_lineno = state.first_lineno

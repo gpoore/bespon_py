@@ -83,20 +83,13 @@ class Ast(object):
             len_indent = len(state_or_scalar_obj.indent)
         section_pos = self.section_pos
         while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos is not section_pos:
-            if pos.basetype == 'dict':
-                if not pos:
-                    raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
-                if pos._awaiting_val:
+            if pos._open:
+                if pos.basetype == 'dict':
+                    if not pos:
+                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-            elif pos.basetype == 'list':
-                # No need to check for an empty list, since an empty
-                # non-inline list would necessarily be open
-                if pos._open:
-                    raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-            elif pos.basetype == 'root':
-                break
-            else:  # other invalid location
-                raise erring.IndentationError(state_or_scalar_obj)
+                # pos.basetype == 'list'
+                raise erring.ParseError('A list-like object ended before an expected value was added', pos)
             parent = pos.parent
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
@@ -117,18 +110,13 @@ class Ast(object):
         self.section_pos = None
         root = self.root
         while pos.parent is not root:
-            if pos.basetype == 'dict':
-                if not pos:
-                    raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
-                if pos._awaiting_val:
+            if pos._open:
+                if pos.basetype == 'dict':
+                    if not pos:
+                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-            elif pos.basetype == 'list':
-                # No need to check for an empty list, since an empty
-                # non-inline list would necessarily be open
-                if pos._open:
-                    raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-            else:  # other invalid location
-                raise erring.IndentationError(pos)
+                # pos.basetype == 'list'
+                raise erring.ParseError('A list-like object ended before an expected value was added', pos)
             parent = pos.parent
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
@@ -149,16 +137,13 @@ class Ast(object):
         key_path_parent = pos.key_path_parent
         last_lineno = pos.last_lineno
         last_colno = pos.last_colno
-        if pos.basetype == 'dict':
-            # No need to check `if not pos`, because a tag can't create a
-            # key path dict; a key path dict implies the existence of a key.
-            if pos._awaiting_val:
+        if pos._open:
+            if pos.basetype == 'dict':
+                if not pos:
+                    raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                 raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-        elif pos.basetype == 'list':
-            if pos._open:
-                raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-        else:  # other invalid location
-            raise erring.Bug('Unexpected key path element', pos)
+            # pos.basetype == 'list'
+            raise erring.ParseError('A list-like object ended before an expected value was added', pos)
         while pos is not key_path_parent:
             parent = pos.parent
             parent.last_lineno = last_lineno
@@ -207,24 +192,17 @@ class Ast(object):
             dict_obj = DictlikeNode(scalar_obj)
             self._append_key_path_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
-        elif pos.basetype == 'dict' and scalar_obj.external_indent == pos.indent:
+        elif scalar_obj.external_indent == pos.indent and pos.basetype == 'dict':
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb_to_start(pos)
             pos.check_append_scalar_key(scalar_obj)
         elif len(scalar_obj.external_indent) >= len(pos.indent):
-            if not ((pos.basetype == 'dict' and pos._awaiting_val) or pos._open):
-                # This error would be caught later, but it's possible to give
-                # a more informative error message here, with minimal
-                # overhead.
-                raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', scalar_obj)
             dict_obj = DictlikeNode(scalar_obj)
             # No need to set `._open=True`; irrelevant in non-inline mode.
             self._append_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
         else:
             pos = self._indentation_climb_to_indent(scalar_obj, pos)
-            if not pos.basetype == 'dict':
-                raise erring.IndentationError(scalar_obj)
             pos.check_append_scalar_key(scalar_obj)
 
 
@@ -428,7 +406,7 @@ class Ast(object):
         '''
         pos = self.pos
         state = self.state
-        if state.inline and state.indent.startswith(state.inline_indent) and not pos._open and (pos.basetype == 'list' or not pos._awaiting_val):
+        if state.inline and state.indent.startswith(state.inline_indent) and not pos._open:
             if pos.key_path_parent is not None:
                 key_path_parent = pos.key_path_parent
                 last_lineno = state.last_lineno
@@ -511,7 +489,7 @@ class Ast(object):
                 pos = self._key_path_climb_to_start(pos)
             initial_pos = pos
         elif len(kp_obj.external_indent) >= len(pos.indent):
-            if not ((pos.basetype == 'dict' and pos._awaiting_val) or pos._open):
+            if not pos._open:
                 raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', kp_obj)
             dict_obj = DictlikeNode(kp_obj)
             self._append_collection(dict_obj)
@@ -728,18 +706,13 @@ class Ast(object):
                 raise erring.Bug('Data that started in non-inline mode ended in inline mode', state)
         elif pos is not root:
             while pos is not root:
-                if pos.basetype == 'dict':
-                    if not pos:
-                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
-                    if pos._awaiting_val:
+                if pos._open:
+                    if pos.basetype == 'dict':
+                        if not pos:
+                            raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                         raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                elif pos.basetype == 'list':
-                    # No need to check for an empty list, since an empty
-                    # non-inline list would necessarily be open
-                    if pos._open:
-                        raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-                else:  # other invalid location
-                    raise erring.Bug('Object with unexpected basetype {0} never ended'.format(pos.basetype), pos)
+                    # pos.basetype == 'list'
+                    raise erring.ParseError('A list-like object ended before an expected value was added', pos)
                 parent = pos.parent
                 parent.last_lineno = pos.last_lineno
                 parent.last_colno = pos.last_colno
