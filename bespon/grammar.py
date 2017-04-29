@@ -207,6 +207,16 @@ _RAW_RE_TYPE = [# None type
                 ('float', '(?:{hex_float}|{inf_or_nan}|{dec_float})'),
                 # General number -- order is important due to exponent parts
                 ('number', '(?:{float}|{integer})'),
+                # Efficient number pattern with named groups.  The order is
+                # important.  Hex, octal, and binary must come first, so that
+                # the `0` in the `0<letter>` prefix doesn't trigger a
+                # premature match for integer zero.
+                ('number_named_groups', r'''
+                                         {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
+                                         (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
+                                         (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? |
+                                         (?P<float_inf_or_nan_10>{inf_or_nan})
+                                         '''.replace('\x20', '').replace('\n', '')),
 
                 # Reserved words
                 ('reserved_word', '(?:{none_type_reserved_word}|{bool_reserved_word}|{float_reserved_word})'),
@@ -232,6 +242,20 @@ _RAW_RE_TYPE = [# None type
                 ('key_path_ascii', '{unquoted_string_ascii}{key_path_continue_ascii}+'),
                 ('key_path_below_u0590', '{unquoted_string_below_u0590}{key_path_continue_below_u0590}+'),
                 ('key_path_unicode', '{unquoted_string_unicode}{key_path_continue_unicode}+'),
+
+                # Unquoted strings and key paths
+                ('unquoted_string_or_key_path_named_group_ascii', r'''
+                        (?P<reserved_word>{reserved_word}(?!{unquoted_continue_ascii}|{path_separator})) |
+                        (?P<unquoted_string>{unquoted_string_or_list_ascii}) (?P<key_path>{key_path_continue_ascii}+)?
+                        '''.replace('\x20', '').replace('\n', '')),
+                ('unquoted_string_or_key_path_named_group_below_u0590', r'''
+                        (?P<reserved_word>{reserved_word}(?!{unquoted_continue_below_u0590}|{path_separator})) |
+                        (?P<unquoted_string>{unquoted_string_or_list_below_u0590}) (?P<key_path>{key_path_continue_below_u0590}+)?
+                        '''.replace('\x20', '').replace('\n', '')),
+                ('unquoted_string_or_key_path_named_group_unicode', r'''
+                        (?P<reserved_word>{reserved_word}(?!{unquoted_continue_unicode}|{path_separator})) |
+                        (?P<unquoted_string>{unquoted_string_or_list_unicode}) (?P<key_path>{key_path_continue_unicode}+)?
+                        '''.replace('\x20', '').replace('\n', '')),
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_ascii})(?:{path_separator}{unquoted_string_ascii})+'),
@@ -274,6 +298,65 @@ for k, v in _RAW_RE_GRAMMAR:
 
 
 # Other grammar-related elements
+
+def gen_closing_delim_pattern(delim,
+                              escaped_string_singlequote_delim=LIT_GRAMMAR['escaped_string_singlequote_delim'],
+                              escaped_string_doublequote_delim=LIT_GRAMMAR['escaped_string_doublequote_delim'],
+                              literal_string_delim=LIT_GRAMMAR['literal_string_delim'],
+                              comment_delim=LIT_GRAMMAR['comment_delim']):
+    '''
+    Create a regex pattern suitable for finding the closing delimiter for
+    `delim`.
+    '''
+    c_0 = delim[0]
+    if c_0 == escaped_string_singlequote_delim or c_0 == escaped_string_doublequote_delim:
+        group = 1
+        n = len(delim)
+        if n == 1:
+            # The `(?=[\\{delim_char}])` lookahead is required to
+            # avoid catastrophic backtracking.  In cases when
+            # catastrophic backtracking would not occur, the
+            # lookahead seems to add negligible overhead.
+            pattern = r'^(?:[^{delim_char}\\]+(?=[\\{delim_char}])|\\.)*({delim_char})'.format(delim_char=re.escape(c_0))
+        else:
+            # The pattern here is a bit complicated to deal with the
+            # possibility of escapes and of runs of the delimiter that
+            # are too short or too long.  It would be possible just to
+            # look for runs of the delimiter of the correct length,
+            # bounded by non-delimiters or a leading `\<delim>`.  Then
+            # any leading backslashes could be stripped and counted to
+            # determine whether the first delim is literal or escaped.
+            # Some simple benchmarks suggest that that approach would
+            # typically be only a few percent faster before the
+            # additional overhead of checking backslashes and possibly
+            # re-invoking the regex are considered.  So alternatives
+            # don't seem worthwhile.
+            #
+            # The `^` works, because any leading whitespace is already
+            # stripped before the regex is applied.
+            pattern = r'''
+                        ^(?: [^{delim_char}\\]+(?=[\\{delim_char}]) | \\. | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
+                        ({delim_char}{{{n}}}(?!{delim_char}))
+                        '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
+    elif c_0 == literal_string_delim or (c_0 == comment_delim and len(delim) >= 3):
+        group = 0
+        n = len(delim)
+        if n == 1:
+            pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
+        else:
+            pattern = r'(?<!{delim_char}){delim_char}{{{n}}}(?!{delim_char})'.format(delim_char=re.escape(c_0), n=n)
+    else:
+        raise ValueError
+    return (pattern, group)
+
+def gen_closing_delim_re(delim, gen_closing_delim_pattern=gen_closing_delim_pattern):
+    '''
+    Generate a compiled regex suitable for finding the closing delimiter for
+    `delim`.
+    '''
+    p, g = gen_closing_delim_pattern(delim)
+    return (re.compile(p), g)
+
 
 # Default short backslash escapes.
 SHORT_BACKSLASH_UNESCAPES = {'\\\\': '\\',

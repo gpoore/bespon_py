@@ -356,11 +356,11 @@ class BespONDecoder(object):
         # Assemble regular expressions
         self._not_valid_ascii_re = re.compile(grammar.RE_GRAMMAR['not_valid_ascii'])
         self._not_valid_below_u0590_re = re.compile(grammar.RE_GRAMMAR['not_valid_below_u0590'])
-        not_valid_unicode = grammar.RE_GRAMMAR['not_valid_unicode']
-        self._not_valid_unicode_re = re.compile(not_valid_unicode)
-        bidi_rtl = grammar.RE_GRAMMAR['bidi_rtl']
-        self._bidi_rtl_re = re.compile(bidi_rtl)
-        self._bidi_rtl_or_not_valid_unicode_re = re.compile(r'(?P<not_valid>{0})|(?P<bidi_rtl>{1})|'.format(not_valid_unicode, bidi_rtl))
+        self._not_valid_unicode_re = re.compile(grammar.RE_GRAMMAR['not_valid_unicode'])
+        self._bidi_rtl_re = re.compile(grammar.RE_GRAMMAR['bidi_rtl'])
+        self._bidi_rtl_or_not_valid_unicode_re = re.compile(r'(?P<not_valid>{0})|(?P<bidi_rtl>{1})|'.format(grammar.RE_GRAMMAR['not_valid_unicode'],
+                                                                                                            grammar.RE_GRAMMAR['bidi_rtl']))
+
         self._newline_re = re.compile(grammar.RE_GRAMMAR['newline'])
 
         # Dict of regexes for identifying closing delimiters for inline
@@ -372,86 +372,12 @@ class BespONDecoder(object):
         # delimiter characters is unneeded.  However, the inline regexes are
         # used in processing block strings to check whether internal runs of
         # delimiters are valid.
-        def gen_closing_delim_regex(delim):
-            c_0 = delim[0]
-            if c_0 == ESCAPED_STRING_SINGLEQUOTE_DELIM or c_0 == ESCAPED_STRING_DOUBLEQUOTE_DELIM:
-                group = 1
-                n = len(delim)
-                if n == 1:
-                    # The `(?=[\\{delim_char}])` lookahead is required to
-                    # avoid catastrophic backtracking.  In cases when
-                    # catastrophic backtracking would not occur, the
-                    # lookahead seems to add negligible overhead.
-                    pattern = r'^(?:[^{delim_char}\\]+(?=[\\{delim_char}])|\\.)*({delim_char})'.format(delim_char=re.escape(c_0))
-                else:
-                    # The pattern here is a bit complicated to deal with the
-                    # possibility of escapes and of runs of the delimiter that
-                    # are too short or too long.  It would be possible just to
-                    # look for runs of the delimiter of the correct length,
-                    # bounded by non-delimiters or a leading `\<delim>`.  Then
-                    # any leading backslashes could be stripped and counted to
-                    # determine whether the first delim is literal or escaped.
-                    # Some simple benchmarks suggest that that approach would
-                    # typically be only a few percent faster before the
-                    # additional overhead of checking backslashes and possibly
-                    # re-invoking the regex are considered.  So alternatives
-                    # don't seem worthwhile.
-                    #
-                    # The `^` works, because any leading whitespace is already
-                    # stripped before the regex is applied.
-                    pattern = r'''
-                               ^(?: [^{delim_char}\\]+(?=[\\{delim_char}]) | \\. | {delim_char}{{1,{n_minus}}}(?!{delim_char}) | {delim_char}{{{n_plus},}}(?!{delim_char}) )*
-                                ({delim_char}{{{n}}}(?!{delim_char}))
-                               '''.replace('\x20', '').replace('\n', '').format(delim_char=re.escape(c_0), n=n, n_minus=n-1, n_plus=n+1)
-            elif c_0 == LITERAL_STRING_DELIM or (c_0 == COMMENT_DELIM and len(delim) >= 3):
-                group = 0
-                n = len(delim)
-                if n == 1:
-                    pattern = r'(?<!{delim_char}){delim_char}(?!{delim_char})'.format(delim_char=re.escape(c_0))
-                else:
-                    pattern = r'(?<!{delim_char}){delim_char}{{{n}}}(?!{delim_char})'.format(delim_char=re.escape(c_0), n=n)
-            else:
-                raise ValueError
-            return (re.compile(pattern), group)
-        self._closing_delim_re_dict = tooling.keydefaultdict(gen_closing_delim_regex)
+        self._closing_delim_re_dict = tooling.keydefaultdict(lambda delim: grammar.gen_closing_delim_re(delim))
 
-        # Number types.  The order in the regex is important.
-        # Hex, octal, and binary must come first, so that the `0` in the
-        # `0<letter>` prefix doesn't trigger a premature match for integer
-        # zero.
-        num_pattern = r'''
-            {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
-            (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
-            (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? |
-            (?P<float_inf_or_nan_10>{inf_or_nan})
-            '''.replace('\x20', '').replace('\n', '')
-        self._number_re = re.compile(num_pattern.format(**grammar.RE_GRAMMAR))
-
-        # Unquoted strings and key paths.
-        # `{unquoted_string_or_list}` will match `*`, but that won't allow `*`
-        # to be used as an unquoted string, since the indentation list parsing
-        # function is called for `*` everywhere except for sections.  In
-        # sections, `*` is valid by itself, or at the end of a key path.
-        uqs_or_kp_pattern = r'''
-            (?P<reserved_word>{reserved_word}(?!{unquoted_continue}|{path_separator})) |
-            (?P<unquoted_string>{unquoted_string_or_list}) (?P<key_path>{unquoted_key_path_continue}+)?
-            '''.replace('\x20', '').replace('\n', '')
-
-        self._unquoted_string_or_key_path_ascii_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                                         unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_ascii'],
-                                                                                         path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                         unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_ascii'],
-                                                                                         unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_ascii']))
-        self._unquoted_string_or_key_path_below_u0590_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                                               unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_below_u0590'],
-                                                                                               path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                               unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_below_u0590'],
-                                                                                               unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_below_u0590']))
-        self._unquoted_string_or_key_path_unicode_re = re.compile(uqs_or_kp_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                                           unquoted_continue=grammar.RE_GRAMMAR['unquoted_continue_unicode'],
-                                                                                           path_separator=grammar.RE_GRAMMAR['path_separator'],
-                                                                                           unquoted_string_or_list=grammar.RE_GRAMMAR['unquoted_string_or_list_unicode'],
-                                                                                           unquoted_key_path_continue=grammar.RE_GRAMMAR['key_path_continue_unicode']))
+        self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
+        self._unquoted_string_or_key_path_ascii_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_ascii'])
+        self._unquoted_string_or_key_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_below_u0590'])
+        self._unquoted_string_or_key_path_unicode_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_unicode'])
 
         # Dict for looking up types of valid reserved words
         self._reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
@@ -568,9 +494,9 @@ class BespONDecoder(object):
             raise erring.ParseError('Cannot start a scalar object or comment on a line with a preceding object whose last line contains right-to-left code points', state)
 
 
-    def _parse_line_goto_next(self, line, state, next=next, len=len,
-                              whitespace=INDENT,
-                              whitespace_set=WHITESPACE_SET):
+    def _parse_line_goto_next(self, line, state,
+                              whitespace=INDENT, whitespace_set=WHITESPACE_SET,
+                              next=next, len=len):
         '''
         Go to next line.  Used when parsing completes on a line, and no
         additional parsing is needed for that line.
@@ -605,14 +531,12 @@ class BespONDecoder(object):
         return line_lstrip_ws
 
 
-    def _parse_token_whitespace(self, line, state, len=len,
-                                whitespace=INDENT):
+    def _parse_token_whitespace(self, line, state,
+                                whitespace=INDENT, len=len):
         '''
         Remove non-indentation whitespace.
         '''
         line_lstrip_ws = line.lstrip(whitespace)
-        if line_lstrip_ws == '':
-            return self._parse_line_goto_next(line, state)
         state.last_colno += len(line) - len(line_lstrip_ws)
         state.first_colno = state.last_colno
         return line_lstrip_ws
@@ -631,10 +555,11 @@ class BespONDecoder(object):
         return line[1:]
 
 
-    def _parse_token_open_indentation_list(self, line, state, len=len,
+    def _parse_token_open_indentation_list(self, line, state,
                                            whitespace=INDENT,
                                            open_indentation_list=OPEN_INDENTATION_LIST,
-                                           path_separator=PATH_SEPARATOR):
+                                           path_separator=PATH_SEPARATOR,
+                                           len=len):
         '''
         Open a list in indentation-style syntax.
         '''
@@ -786,8 +711,9 @@ class BespONDecoder(object):
 
 
     def _parse_delim_inline(self, name, delim, line, state, section=False,
-                            next=next, whitespace=INDENT,
-                            unicode_whitespace_set=UNICODE_WHITESPACE_SET):
+                            whitespace=INDENT,
+                            unicode_whitespace_set=UNICODE_WHITESPACE_SET,
+                            next=next):
         '''
         Find the closing delimiter for an inline quoted string or doc comment.
         '''
@@ -1067,7 +993,7 @@ class BespONDecoder(object):
         raise erring.ParseError('Unexpected content after start of section', state)
 
 
-    def _parse_token_block_prefix(self, line, state, next=next,
+    def _parse_token_block_prefix(self, line, state,
                                   max_delim_length=MAX_DELIM_LENGTH,
                                   ScalarNode=ScalarNode,
                                   whitespace=INDENT,
@@ -1079,7 +1005,8 @@ class BespONDecoder(object):
                                   escaped_string_singlequote_delim=ESCAPED_STRING_SINGLEQUOTE_DELIM,
                                   literal_string_delim=LITERAL_STRING_DELIM,
                                   assign_key_val=ASSIGN_KEY_VAL,
-                                  newline=NEWLINE):
+                                  newline=NEWLINE,
+                                  next=next):
         '''
         Parse a block quoted string or doc comment.
         '''
@@ -1251,8 +1178,7 @@ class BespONDecoder(object):
         return line
 
 
-    def _parse_token_unquoted_string_or_key_path(self, line, state,
-                                                 section=False,
+    def _parse_token_unquoted_string_or_key_path(self, line, state, section=False,
                                                  whitespace=INDENT,
                                                  open_indentation_list=OPEN_INDENTATION_LIST,
                                                  ScalarNode=ScalarNode,
