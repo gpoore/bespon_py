@@ -280,8 +280,6 @@ def _set_tag_doc_comment_externals(self, state, len=len):
             self.external_indent = doc_comment_obj.indent
             self.external_at_line_start = doc_comment_obj.at_line_start
             self.external_first_lineno = doc_comment_obj.first_lineno
-    self._resolved = False
-    self.extra_dependents = None
 
 
 
@@ -736,7 +734,7 @@ class TagNode(object):
                 self.mutable = self._type_data[obj.final_val].mutable
             else:
                 if obj._resolved and obj.final_val in self._type_data:
-                    raise erring.ParseError('Misplaced type; type must be first in a tag')
+                    raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
                 else:
                     raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
         else:
@@ -757,7 +755,7 @@ class TagNode(object):
                         raise erring.ParseError('Invalid value for newline', obj)
                 elif self._next_key == 'type':
                     if not all(x is None for x in (self.type, self.label, self.newline, self.collection_config_type)):
-                        raise erring.ParseError('Misplaced type; type must be first in a tag')
+                        raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
                     try:
                         self.compatible_basetypes = set([self._type_data[obj.final_val].basetype])
                         self.mutable = self._type_data[obj.final_val].mutable

@@ -169,6 +169,8 @@ class Ast(object):
                 raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in non-inline mode, and no later than the following line in inline mode'.format(assign_key_val), state)
             if state.last_line_comment_lineno == scalar_obj.last_lineno:
                 raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
+            if not state.indent.startswith(state.inline_indent):
+                raise erring.IndentationError(state)
         state.next_scalar = None
         state.next_cache = False
         if state.full_ast:
@@ -218,8 +220,6 @@ class Ast(object):
         scalar_obj = state.next_scalar
         state.next_scalar = None
         state.next_cache = False
-        if scalar_obj.implicit_type == 'key_path':
-            raise erring.ParseError('Key paths are only allowed as dict keys, not as values', scalar_obj)
         if not scalar_obj._resolved:
             self._unresolved_nodes.append(scalar_obj)
         if self.section_pos is not self.pos:
@@ -476,7 +476,7 @@ class Ast(object):
         '''
         state = self.state
         if state.in_tag:
-            raise erring.ParseError('Key paths are not valid in tags')
+            raise erring.ParseError('Key paths are not valid in tags', kp_obj)
         pos = self.pos
         if kp_obj.inline:
             initial_pos = pos
@@ -683,8 +683,7 @@ class Ast(object):
             if self._first_section._end_delim != self._last_section._end_delim:
                 if self._first_section._end_delim:
                     raise erring.ParseError('The last section is missing an end delimiter; section end delimiters must be used for all sections, or not at all', self._last_section)
-                else:
-                    raise erring.ParseError('The last section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', self._last_section)
+                raise erring.ParseError('The last section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', self._last_section)
         # Temp variables must be used with care; otherwise, don't update self
         state = self.state
         pos = self.pos

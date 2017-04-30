@@ -950,9 +950,7 @@ class BespONDecoder(object):
         # for sections in general, although that could technically be relaxed
         # for the first section if the root node were empty.
         if state.next_cache:
-            if state.next_doc_comment is not None:
-                raise erring.ParseError('Sections do not take doc comments', state, state.next_doc_comment)
-            raise erring.ParseError('Sections do not take tags', state, state.next_tag)
+            raise erring.ParseError('Sections do not take doc comments or tags', state, unresolved_cache=True)
         if line[:1] == block_suffix:
             state.ast.end_section(delim)
             line_lstrip_ws = line[1:].lstrip(whitespace)
@@ -1181,6 +1179,7 @@ class BespONDecoder(object):
     def _parse_token_unquoted_string_or_key_path(self, line, state, section=False,
                                                  whitespace=INDENT,
                                                  open_indentation_list=OPEN_INDENTATION_LIST,
+                                                 assign_key_val=ASSIGN_KEY_VAL,
                                                  ScalarNode=ScalarNode,
                                                  KeyPathNode=KeyPathNode):
         '''
@@ -1245,6 +1244,14 @@ class BespONDecoder(object):
             if state.bidi_rtl:
                 state.bidi_rtl_last_scalar_last_line = raw_val
                 state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+            # Make sure that the key path will be used as a key, rather than
+            # as a value
+            if not section:
+                line = line.lstrip(whitespace)
+                if line == '' and state.inline:
+                    line = self._parse_line_goto_next('', state)
+                if not line[:1] == assign_key_val:
+                    raise erring.ParseError('Key paths must be used as keys, not values; missing or misplaced "{0}"'.format(assign_key_val), node)
         else:
             raise ValueError
         state.last_colno += 1
