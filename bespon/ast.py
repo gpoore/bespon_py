@@ -154,7 +154,9 @@ class Ast(object):
 
 
     def append_scalar_key(self, assign_key_val=ASSIGN_KEY_VAL,
-                          DictlikeNode=astnodes.DictlikeNode, len=len):
+                          DictlikeNode=astnodes.DictlikeNode,
+                          FullDictlikeNode=astnodes.FullDictlikeNode,
+                          len=len):
         '''
         Append a scalar key.
 
@@ -164,8 +166,8 @@ class Ast(object):
         '''
         state = self.state
         scalar_obj = state.next_scalar
-        if state.first_lineno != scalar_obj.last_lineno:
-            if not (state.inline and state.first_lineno == scalar_obj.last_lineno + 1):
+        if state.lineno != scalar_obj.last_lineno:
+            if not (state.inline and state.lineno == scalar_obj.last_lineno + 1):
                 raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in non-inline mode, and no later than the following line in inline mode'.format(assign_key_val), state)
             if state.last_line_comment_lineno == scalar_obj.last_lineno:
                 raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
@@ -174,8 +176,8 @@ class Ast(object):
         state.next_scalar = None
         state.next_cache = False
         if state.full_ast:
-            scalar_obj.assign_key_val_lineno = state.first_lineno
-            scalar_obj.assign_key_val_colno = state.first_colno
+            scalar_obj.assign_key_val_lineno = state.lineno
+            scalar_obj.assign_key_val_colno = state.colno
         if scalar_obj.basetype == 'key_path':
             self._append_key_path(scalar_obj)
             return
@@ -191,7 +193,10 @@ class Ast(object):
             # danger of accidentally creating an extra dict due to
             # improper key indentation, because in that case the section
             # dict wouldn't be open.
-            dict_obj = DictlikeNode(scalar_obj)
+            if not self.full_ast:
+                dict_obj = DictlikeNode(scalar_obj, scalar_obj.first_lineno, scalar_obj.first_colno)
+            else:
+                dict_obj = FullDictlikeNode(scalar_obj, scalar_obj.first_lineno, scalar_obj.first_colno)
             self._append_key_path_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
         elif scalar_obj.external_indent == pos.indent and pos.basetype == 'dict':
@@ -199,7 +204,10 @@ class Ast(object):
                 pos = self._key_path_climb_to_start(pos)
             pos.check_append_scalar_key(scalar_obj)
         elif len(scalar_obj.external_indent) >= len(pos.indent):
-            dict_obj = DictlikeNode(scalar_obj)
+            if not self.full_ast:
+                dict_obj = DictlikeNode(scalar_obj, scalar_obj.first_lineno, scalar_obj.first_colno)
+            else:
+                dict_obj = FullDictlikeNode(scalar_obj, scalar_obj.first_lineno, scalar_obj.first_colno)
             # No need to set `._open=True`; irrelevant in non-inline mode.
             self._append_collection(dict_obj)
             dict_obj.check_append_scalar_key(scalar_obj)
@@ -236,7 +244,8 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        self._unresolved_nodes.append(collection_obj)
+        if not collection_obj._resolved:
+            self._unresolved_nodes.append(collection_obj)
         if self.section_pos is not self.pos:
             self.pos.check_append_collection(collection_obj)
         else:
@@ -256,14 +265,16 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        self._unresolved_nodes.append(collection_obj)
+        if not collection_obj._resolved:
+            self._unresolved_nodes.append(collection_obj)
         self.pos.check_append_key_path_collection(collection_obj)
         if collection_obj.nesting_depth > self.max_nesting_depth:
             raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
         self.pos = collection_obj
 
 
-    def start_inline_dict(self, DictlikeNode=astnodes.DictlikeNode):
+    def start_inline_dict(self, DictlikeNode=astnodes.DictlikeNode,
+                          FullDictlikeNode=astnodes.FullDictlikeNode):
         '''
         Start an inline dict-like object at "{".
         '''
@@ -271,7 +282,13 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
-        dict_obj = DictlikeNode(state)
+        # No need to check indentation, since the dict-like object inherits
+        # indentation, and thus indentation will be checked when it is
+        # appended to the AST.
+        if not self.full_ast:
+            dict_obj = DictlikeNode(state, state.lineno, state.colno)
+        else:
+            dict_obj = FullDictlikeNode(state, state.lineno, state.colno)
         dict_obj._open = True
         self._append_collection(dict_obj)
 
@@ -291,8 +308,8 @@ class Ast(object):
         if pos._awaiting_val:
             raise erring.ParseError('Missing value; a dict-like object cannot end with an incomplete key-value pair', state)
         if pos.key_path_parent is None:
-            pos.last_lineno = state.last_lineno
-            pos.last_colno = state.last_colno
+            pos.last_lineno = state.lineno
+            pos.last_colno = state.colno
             pos = pos.parent
             state.inline = pos.inline
             self.pos = pos
@@ -312,7 +329,8 @@ class Ast(object):
             self.pos = pos.parent
 
 
-    def start_inline_list(self, ListlikeNode=astnodes.ListlikeNode):
+    def start_inline_list(self, ListlikeNode=astnodes.ListlikeNode,
+                          FullListlikeNode=astnodes.FullListlikeNode):
         '''
         Start an inline list-like object at "[".
         '''
@@ -320,7 +338,10 @@ class Ast(object):
         if not state.inline:
             state.inline = True
             state.inline_indent = state.indent
-        list_obj = ListlikeNode(state)
+        if not self.full_ast:
+            list_obj = ListlikeNode(state, state.lineno, state.colno)
+        else:
+            list_obj = FullListlikeNode(state, state.lineno, state.colno)
         list_obj._open = True
         self._append_collection(list_obj)
 
@@ -338,8 +359,8 @@ class Ast(object):
         if pos.basetype != 'list':
             raise erring.ParseError('Encountered "{0}" when there is no list-like object to end'.format(END_INLINE_LIST), state)
         if pos.key_path_parent is None:
-            pos.last_lineno = state.last_lineno
-            pos.last_colno = state.last_colno
+            pos.last_lineno = state.lineno
+            pos.last_colno = state.colno
             pos = pos.parent
             state.inline = pos.inline
             self.pos = pos
@@ -359,7 +380,8 @@ class Ast(object):
             self.pos = pos.parent
 
 
-    def start_tag(self, TagNode=astnodes.TagNode):
+    def start_tag(self, TagNode=astnodes.TagNode,
+                  FullTagNode=astnodes.FullTagNode):
         '''
         Start a tag at "(".
         '''
@@ -374,7 +396,10 @@ class Ast(object):
         if not external_inline:
             state.inline = True
             state.inline_indent = state.indent
-        tag_node = TagNode(state, external_inline)
+        if not self.full_ast:
+            tag_node = TagNode(state, external_inline)
+        else:
+            tag_node = FullTagNode(state, external_inline)
         self.pos = tag_node
 
 
@@ -393,6 +418,8 @@ class Ast(object):
             raise erring.ParseError('Encountered "{0}" when there is no tag to end'.format(END_TAG_WITH_SUFFIX), state)
         if pos._awaiting_val:
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
+        pos.last_lineno = state.lineno
+        pos.last_colno = state.colno + 1
         state.inline = pos.external_inline
         state.next_tag = pos
         state.next_cache = True
@@ -416,8 +443,8 @@ class Ast(object):
                     pos.last_colno = last_colno
                     pos = pos.parent
                 self.pos = pos
-            pos.last_lineno = state.last_lineno
-            pos.last_colno = state.last_colno
+            pos.last_lineno = state.lineno
+            pos.last_colno = state.colno
             pos._open = True
         else:
             if not state.inline:
@@ -428,6 +455,7 @@ class Ast(object):
 
 
     def open_indentation_list(self, ListlikeNode=astnodes.ListlikeNode,
+                              FullListlikeNode=astnodes.FullListlikeNode,
                               len=len):
         '''
         Open a list-like object in indentation-style syntax at `*`.
@@ -440,17 +468,23 @@ class Ast(object):
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if pos is self.section_pos:
-            list_obj = ListlikeNode(state)
+            if not self.full_ast:
+                list_obj = ListlikeNode(state, state.lineno, state.colno)
+            else:
+                list_obj = FullListlikeNode(state, state.lineno, state.colno)
             list_obj._open = True
             self._append_key_path_collection(list_obj)
         elif pos.basetype == 'list' and state.indent == pos.indent:
             if pos._open:
                 raise erring.ParseError('Cannot start a new list element while a previous element is missing', state)
             pos._open = True
-            pos.last_lineno = state.last_lineno
-            pos.last_colno = state.last_colno
+            pos.last_lineno = state.lineno
+            pos.last_colno = state.colno
         elif len(state.indent) >= len(pos.indent):
-            list_obj = ListlikeNode(state)
+            if not self.full_ast:
+                list_obj = ListlikeNode(state, state.lineno, state.colno)
+            else:
+                list_obj = FullListlikeNode(state, state.lineno, state.colno)
             list_obj._open = True
             self._append_collection(list_obj)
         else:
@@ -461,8 +495,8 @@ class Ast(object):
                 # of the list in the AST, and never would have ended up here,
                 # needing to climb up the AST.
                 pos._open = True
-                pos.last_lineno = state.last_lineno
-                pos.last_colno = state.last_colno
+                pos.last_lineno = state.lineno
+                pos.last_colno = state.colno
             else:
                 raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_INDENTATION_LIST), state)
 
@@ -470,18 +504,23 @@ class Ast(object):
     def _append_key_path(self, kp_obj,
                          open_indentation_list=OPEN_INDENTATION_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
-                         ListlikeNode=astnodes.ListlikeNode, len=len):
+                         FullDictlikeNode=astnodes.FullDictlikeNode,
+                         ListlikeNode=astnodes.ListlikeNode,
+                         FullListlikeNode=astnodes.FullListlikeNode, len=len):
         '''
         Create the AST node corresponding to the elements in a key path.
         '''
         state = self.state
+        if self.full_ast:
+            DictlikeNode = FullDictlikeNode
+            ListlikeNode = FullListlikeNode
         if state.in_tag:
             raise erring.ParseError('Key paths are not valid in tags', kp_obj)
         pos = self.pos
         if kp_obj.inline:
             initial_pos = pos
         elif pos is self.section_pos:
-            dict_obj = DictlikeNode(kp_obj)
+            dict_obj = DictlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno)
             self._append_collection(dict_obj)
             initial_pos = dict_obj
         elif kp_obj.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
@@ -491,7 +530,7 @@ class Ast(object):
         elif len(kp_obj.external_indent) >= len(pos.indent):
             if not pos._open:
                 raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', kp_obj)
-            dict_obj = DictlikeNode(kp_obj)
+            dict_obj = DictlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno)
             self._append_collection(dict_obj)
             initial_pos = dict_obj
         else:
@@ -501,8 +540,8 @@ class Ast(object):
             initial_pos = pos
         pos = initial_pos
         for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
-            if pos.basetype == 'dict' and kp_elem in pos:
-                pos = pos[kp_elem]
+            if pos.basetype == 'dict' and kp_elem.final_val in pos:
+                pos = pos[kp_elem.final_val]
                 key_obj = pos.index
                 if state.full_ast:
                     if key_obj.key_path_occurrences is None:
@@ -514,9 +553,9 @@ class Ast(object):
             else:
                 pos.check_append_key_path_scalar_key(kp_elem)
                 if next_kp_elem == open_indentation_list:
-                    collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
+                    collection_obj = ListlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno, key_path_parent=initial_pos, _key_path_traversable=True)
                 else:
-                    collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
+                    collection_obj = DictlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno, key_path_parent=initial_pos, _key_path_traversable=True)
                 self._append_key_path_collection(collection_obj)
                 pos = collection_obj
                 if initial_pos._key_path_scope is None:
@@ -534,12 +573,17 @@ class Ast(object):
 
     def start_section(self, section_obj,
                       open_indentation_list=OPEN_INDENTATION_LIST,
+                      DictlikeNode=astnodes.DictlikeNode,
+                      FullDictlikeNode=astnodes.FullDictlikeNode,
                       ListlikeNode=astnodes.ListlikeNode,
-                      DictlikeNode=astnodes.DictlikeNode):
+                      FullListlikeNode=astnodes.FullListlikeNode):
         '''
         Start a section.
         '''
         state = self.state
+        if self.full_ast:
+            DictlikeNode = FullDictlikeNode
+            ListlikeNode = FullListlikeNode
         if state.inline:
             # This covers the case of being in a tag
             raise erring.ParseError('Sections are not allowed in inline mode', section_obj)
@@ -556,10 +600,10 @@ class Ast(object):
                 raise erring.ParseError('Cannot start a section when a previous section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
         self._last_section = section_obj
         if pos is root:
-            if section_obj.scalar is not None and section_obj.scalar.final_val == open_indentation_list:
-                obj = ListlikeNode(section_obj)
+            if section_obj.key_path is not None and section_obj.key_path[0] == open_indentation_list:
+                obj = ListlikeNode(section_obj, section_obj.first_lineno, section_obj.first_colno)
             else:
-                obj = DictlikeNode(section_obj)
+                obj = DictlikeNode(section_obj, section_obj.first_lineno, section_obj.first_colno)
             self._append_collection(obj)
             initial_pos = obj
         elif pos.parent is root:
@@ -574,38 +618,39 @@ class Ast(object):
         pos = initial_pos
         if section_obj.key_path is not None:
             kp_obj = section_obj.key_path
-            for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
-                if pos.basetype != 'dict':
-                    raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
-                if kp_elem in pos:
-                    pos = pos[kp_elem]
-                    key_obj = pos.index
-                    if state.full_ast:
-                        if key_obj.key_path_occurrences is None:
-                            key_obj.key_path_occurrences = [kp_elem]
-                        else:
-                            key_obj.key_path_occurrences.append(kp_elem)
-                    if not pos._key_path_traversable:
-                        raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
-                else:
-                    pos.check_append_key_path_scalar_key(kp_elem)
-                    if next_kp_elem == open_indentation_list:
-                        collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
-                    else:
-                        collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
-                    self._append_key_path_collection(collection_obj)
-                    pos = collection_obj
-            if kp_obj[-1] == open_indentation_list:
+            if len(kp_obj) == 1:
+                if pos.basetype != 'list':
+                    raise erring.ParseError('Key path is incompatible with previously created object', section_obj.scalar, pos)
                 pos._open = True
             else:
-                pos.check_append_key_path_scalar_key(kp_obj[-1])
-            self.pos = pos
-        elif section_obj.scalar.final_val != open_indentation_list:
-            pos.check_append_key_path_scalar_key(section_obj.scalar)
+                for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
+                    if pos.basetype != 'dict':
+                        raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
+                    if kp_elem.final_val in pos:
+                        pos = pos[kp_elem.final_val]
+                        key_obj = pos.index
+                        if state.full_ast:
+                            if key_obj.key_path_occurrences is None:
+                                key_obj.key_path_occurrences = [kp_elem]
+                            else:
+                                key_obj.key_path_occurrences.append(kp_elem)
+                        if not pos._key_path_traversable:
+                            raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
+                    else:
+                        pos.check_append_key_path_scalar_key(kp_elem)
+                        if next_kp_elem == open_indentation_list:
+                            collection_obj = ListlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno, key_path_parent=initial_pos, _key_path_traversable=True)
+                        else:
+                            collection_obj = DictlikeNode(kp_obj, kp_obj.first_lineno, kp_obj.first_colno, key_path_parent=initial_pos, _key_path_traversable=True)
+                        self._append_key_path_collection(collection_obj)
+                        pos = collection_obj
+                if kp_obj[-1] == open_indentation_list:
+                    pos._open = True
+                else:
+                    pos.check_append_key_path_scalar_key(kp_obj[-1])
+                self.pos = pos
         else:
-            if pos.basetype != 'list':
-                raise erring.ParseError('Key path is incompatible with previously created object', section_obj.scalar, pos)
-            pos._open = True
+            pos.check_append_key_path_scalar_key(section_obj.scalar)
         self.section_pos = pos
 
 
@@ -647,32 +692,37 @@ class Ast(object):
         # objects, and requires a check for unresolvable situations.
         type_data = self.state.type_data
         unresolved_nodes = list(reversed(self._unresolved_nodes))
-        while unresolved_nodes:
-            initial_unresolved_count = len(unresolved_nodes)
-            remaining_nodes = []
-            for node in unresolved_nodes:
-                if node._unresolved_dependency_count > 0:
-                    remaining_nodes.append(node)
-                elif node.basetype == 'tag':
-                    # #### Check
-                    node._resolved = True
-                elif node.tag is None or node.tag._resolved:
-                    # #### Fix for other types
-                    if node.basetype == 'dict':
-                        node.final_val = type_data[node.basetype].parser((k.final_val, v.final_val) for k, v in node.items())
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'list':
-                        node.final_val = type_data[node.basetype].parser(x.final_val for x in node)
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'root':
-                        node.final_val = node[0].final_val
+        if not self.full_ast:
+            while unresolved_nodes:
+                initial_unresolved_count = len(unresolved_nodes)
+                remaining_nodes = []
+                for node in unresolved_nodes:
+                    if node._unresolved_dependency_count > 0:
+                        remaining_nodes.append(node)
+                    elif node.basetype == 'tag':
+                        # #### Check
+                        node._resolved = True
+                    elif node.tag is None or node.tag._resolved:
+                        # #### Fix for other types
+                        if node.basetype == 'dict':
+                            #node.final_val = type_data[node.basetype].parser((k, v.final_val) for k, v in node.items())
+                            node.final_val = {k: v.final_val for k, v in node.items()}
+                            node.parent._unresolved_dependency_count -= 1
+                        elif node.basetype == 'list':
+                            #node.final_val = type_data[node.basetype].parser(x.final_val for x in node)
+                            node.final_val = [x.final_val for x in node]
+                            node.parent._unresolved_dependency_count -= 1
+                        elif node.basetype == 'root':
+                            node.final_val = node[0].final_val
+                        else:
+                            raise NotImplementedError
                     else:
-                        raise NotImplementedError
-                else:
-                    remaining_nodes.append(node)
-            unresolved_nodes = remaining_nodes
-            if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
-                raise erring.ParseError('Could not resolve all nodes', self.state)
+                        remaining_nodes.append(node)
+                unresolved_nodes = remaining_nodes
+                if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
+                    raise erring.ParseError('Could not resolve all nodes', self.state)
+        else:
+            raise NotImplementedError
 
 
     def finalize(self):
@@ -723,5 +773,5 @@ class Ast(object):
             self.pos = pos
         self.resolve()
         # Update source with final locations
-        self.source.last_lineno = state.last_lineno
-        self.source.last_colno = state.last_colno
+        self.source.last_lineno = state.lineno
+        self.source.last_colno = state.colno

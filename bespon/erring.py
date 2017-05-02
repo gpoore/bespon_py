@@ -27,39 +27,40 @@ class DecodingException(BespONException):
     def fmt_msg_with_traceback(self, msg, state_or_obj, other_obj=None, unresolved_cache=False):
         source_name = state_or_obj._state.source_name
         if unresolved_cache:
-            if not hasattr(state_or_obj, 'next_doc_comment'):
+            if not hasattr(state_or_obj, 'next_cache'):
                 raise Bug('Invalid error message', state_or_obj)
-            if state_or_obj.next_doc_comment is not None:
-                cache_obj = state_or_obj.next_doc_comment
+            state = state_or_obj
+            if state.next_doc_comment is not None:
+                cache_obj = state.next_doc_comment
                 cache_name = 'doc comment'
-            elif state_or_obj.next_tag is not None:
-                cache_obj = state_or_obj.next_tag
+            elif state.next_tag is not None:
+                cache_obj = state.next_tag
                 cache_name = 'tag'
-            elif state_or_obj.next_scalar is not None:
-                cache_obj = state_or_obj.next_scalar
+            elif state.next_scalar is not None:
+                cache_obj = state.next_scalar
                 cache_name = 'scalar object'
             else:
-                raise Bug('Invalid error message', state_or_obj)
+                raise Bug('Invalid error message', state)
             if cache_obj.first_lineno == cache_obj.last_lineno:
                 if cache_obj.first_colno == cache_obj.last_colno:
                     traceback = 'In "{0}" at line {1}:{2}, in relation to {3} at {4}:{5}:'.format(source_name,
-                                                                                                  state_or_obj.first_lineno,
-                                                                                                  state_or_obj.first_colno,
+                                                                                                  state.lineno,
+                                                                                                  state.colno,
                                                                                                   cache_name,
                                                                                                   cache_obj.first_lineno,
                                                                                                   cache_obj.first_colno)
                 else:
                     traceback = 'In "{0}" at line {1}:{2}, in relation to {3} at {4}:{5}-{6}:'.format(source_name,
-                                                                                                      state_or_obj.first_lineno,
-                                                                                                      state_or_obj.first_colno,
+                                                                                                      state.lineno,
+                                                                                                      state.colno,
                                                                                                       cache_name,
                                                                                                       cache_obj.first_lineno,
                                                                                                       cache_obj.first_colno,
                                                                                                       cache_obj.last_colno)
             else:
                 traceback = 'In "{0}" at line {1}:{2}, in relation to {3} at {4}:{5}-{6}:{7}:'.format(source_name,
-                                                                                                      state_or_obj.first_lineno,
-                                                                                                      state_or_obj.first_colno,
+                                                                                                      state.lineno,
+                                                                                                      state.colno,
                                                                                                       cache_name,
                                                                                                       cache_obj.first_lineno,
                                                                                                       cache_obj.first_colno,
@@ -77,20 +78,28 @@ class DecodingException(BespONException):
             else:
                 other_traceback = ', in relation to object at {0}:{1}-{2}:{3}'.format(other_obj.first_lineno, other_obj.first_colno,
                                                                                       other_obj.last_lineno, other_obj.last_colno)
-            if state_or_obj.first_lineno == state_or_obj.last_lineno:
-                if state_or_obj.first_colno == state_or_obj.last_colno:
+            if hasattr(state_or_obj, 'next_cache'):
+                first_lineno = last_lineno = state_or_obj.lineno
+                first_colno = last_colno = state_or_obj.colno
+            else:
+                first_lineno = state_or_obj.first_lineno
+                first_colno = state_or_obj.first_colno
+                last_lineno = state_or_obj.last_lineno
+                last_colno = state_or_obj.last_colno
+            if first_lineno == last_lineno:
+                if first_colno == last_colno:
                     traceback = 'In "{0}" at line {1}:{2}{3}:'.format(source_name,
-                                                                      state_or_obj.first_lineno, state_or_obj.first_colno,
+                                                                      first_lineno, first_colno,
                                                                       other_traceback)
                 else:
                     traceback = 'In "{0}" at line {1}:{2}-{3}{4}:'.format(source_name,
-                                                                          state_or_obj.first_lineno, state_or_obj.first_colno,
-                                                                          state_or_obj.last_colno,
+                                                                          first_lineno, first_colno,
+                                                                          last_colno,
                                                                           other_traceback)
             else:
                 traceback = 'In "{0}" at line {1}:{2}-{3}:{4}{5}:'.format(source_name,
-                                                                          state_or_obj.first_lineno, state_or_obj.first_colno,
-                                                                          state_or_obj.last_lineno, state_or_obj.last_colno,
+                                                                          first_lineno, first_colno,
+                                                                          last_lineno, last_colno,
                                                                           other_traceback)
         return '\n  {0}\n    {1}'.format(traceback, msg)
 
