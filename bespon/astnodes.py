@@ -384,7 +384,8 @@ class FullCommentNode(object):
     '''
     basetype = 'comment'
     __slots__ = (_node_common_slots +
-                 ['delim', 'block', 'implicit_type', 'continuation_indent'])
+                 ['delim', 'block', 'implicit_type', 'continuation_indent',
+                  'raw_val'])
 
     def __init__(self, state, first_lineno, first_colno,
                  last_lineno, last_colno,

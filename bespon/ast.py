@@ -532,9 +532,9 @@ class Ast(object):
         pos = initial_pos
         for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
             if pos.basetype == 'dict' and kp_elem.final_val in pos:
+                key_obj = pos.key_nodes[kp_elem.final_val]
                 pos = pos[kp_elem.final_val]
                 if state.full_ast:
-                    key_obj = pos.key_nodes[kp_elem.final_val]
                     if key_obj.key_path_occurrences is None:
                         key_obj.key_path_occurrences = [kp_elem]
                     else:

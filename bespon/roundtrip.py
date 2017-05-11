@@ -101,8 +101,11 @@ class RoundtripAst(object):
         if type(pos.final_val) != type(obj):
             raise TypeError('Value replacement is only allowed for values of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         continuation_indent = pos.continuation_indent
-        if path and (continuation_indent == '' or pos.first_lineno == pos.last_lineno):
-            continuation_indent += self.encoder.dict_indent_per_level
+        if continuation_indent is None:
+            if pos.at_line_start:
+                continuation_indent = pos.indent
+            else:
+                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
         encoded_val = self.encoder.encode_element(obj, continuation_indent,
                                                   delim=pos.delim, block=pos.block,
                                                   num_base=pos.num_base)
@@ -126,18 +129,20 @@ class RoundtripAst(object):
         # Must check type of collection object, given that the key extraction
         # method could also work on a list.
         if not isinstance(pos, dict):
-            raise TypeError('Key replacement is only allowed for dicts')
+            raise TypeError('Key replacement is only possible for dicts')
         current_dict = pos
-        key_objs = [k for k in pos if k.final_val == path[-1]]
-        if len(key_objs) != 1:
-            if not key_objs:
-                raise KeyError(path[-1])
-            raise ValueError('Multiple keys were found that matched {0}'.format(obj))
-        pos = key_objs[0]
+        old_key = path[-1]
+        pos = pos.key_nodes[old_key]
         if type(pos.final_val) != type(obj):
             raise TypeError('Key replacement is only allowed for keys of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         key_path = False if pos.key_path is None else True
-        encoded_val = self.encoder.encode_element(obj, pos.continuation_indent,
+        continuation_indent = pos.continuation_indent
+        if continuation_indent is None:
+            if pos.at_line_start:
+                continuation_indent = pos.indent
+            else:
+                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
+        encoded_val = self.encoder.encode_element(obj, continuation_indent,
                                                   key=True, key_path=key_path,
                                                   delim=pos.delim, block=pos.block,
                                                   num_base=pos.num_base)
@@ -146,19 +151,25 @@ class RoundtripAst(object):
                 raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
         # Need to update the dict so that the key ordering is kept, the new
         # key is recognized as a key, and the old key is removed.  The
-        # easiest way to do this while keeping all dict attributes is to
-        # remove all keys, change the key object, and then add everything
-        # back again, so that the modified key can be rehashed.  Note that
-        # the object to which the key maps doesn't need to be updated,
-        # because if it is a collection, its index attribute refers to the
-        # key object, not the key object's `final_val`.
+        # easiest way to do this while keeping all dict attributes and all
+        # existing references to the dict is to remove all keys, change the
+        # key object, and then add everything back again.
         current_dict_kv_pairs = [(k, v) for k, v in current_dict.items()]
         for k, v in current_dict_kv_pairs:
             del current_dict[k]
         pos.final_val = obj
         pos.raw_val = encoded_val
         for k, v in current_dict_kv_pairs:
-            current_dict[k] = v
+            if k == old_key:
+                if hasattr(v, 'index'):
+                    v.index = obj
+                current_dict[obj] = v
+            else:
+                current_dict[k] = v
+        # The dict of key nodes isn't ordered and has no special attributes,
+        # so it's simpler to update.
+        del current_dict.key_nodes[old_key]
+        current_dict.key_nodes[obj] = pos
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
         # The key path nodes aren't being updated, since they aren't being
         # used directly, and the relevant changes are covered (at least for
