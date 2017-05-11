@@ -81,8 +81,10 @@ class Ast(object):
             len_indent = len(state_or_scalar_obj.external_indent)
         except AttributeError:
             len_indent = len(state_or_scalar_obj.indent)
+        root = self.root
+        parent = pos.parent
         section_pos = self.section_pos
-        while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos is not section_pos:
+        while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos is not section_pos and parent is not root:
             if pos._open:
                 if pos.basetype == 'dict':
                     if not pos:
@@ -90,7 +92,6 @@ class Ast(object):
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
                 # pos.basetype == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-            parent = pos.parent
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
             if pos._key_path_scope is not None:
@@ -98,6 +99,7 @@ class Ast(object):
                     kp_elem._key_path_traversable = False
                 pos._key_path_scope = None
             pos = parent
+            parent = pos.parent
         self.pos = pos
         return pos
 
@@ -109,7 +111,8 @@ class Ast(object):
         '''
         self.section_pos = None
         root = self.root
-        while pos.parent is not root:
+        parent = pos.parent
+        while parent is not root:
             if pos._open:
                 if pos.basetype == 'dict':
                     if not pos:
@@ -117,7 +120,6 @@ class Ast(object):
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
                 # pos.basetype == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
-            parent = pos.parent
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
             if pos._key_path_scope is not None:
@@ -125,6 +127,7 @@ class Ast(object):
                     kp_elem._key_path_traversable = False
                 pos._key_path_scope = None
             pos = parent
+            parent = pos.parent
         self.pos = pos
         return pos
 
@@ -380,7 +383,9 @@ class Ast(object):
         if not external_inline:
             state.inline = True
             state.inline_indent = state.indent
-        TagNode(state, external_inline)
+        tag_node = TagNode(state, state.lineno, state.colno, external_inline)
+        tag_node._open = True
+        self.state.next_tag = tag_node
         self.pos = tag_node
 
 
@@ -401,6 +406,10 @@ class Ast(object):
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
         pos.last_lineno = state.lineno
         pos.last_colno = state.colno + 1
+        if pos._unresolved_dependency_count == 0:
+            pos._resolved = True
+        else:
+            self._unresolved_nodes.append(pos)
         state.inline = pos.external_inline
         state.next_tag = pos
         state.next_cache = True
@@ -475,6 +484,19 @@ class Ast(object):
                 raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_INDENTATION_LIST), state)
 
 
+    def start_indentation_dict(self, DictlikeNode=astnodes.DictlikeNode):
+        '''
+        Start a dict-like object in indentation-style syntax after an explicit
+        type declaration.
+        '''
+        state = self.state
+        dict_obj = DictlikeNode(state, state.lineno, state.colno)
+        if self.pos is self.section_pos:
+            self._append_key_path_collection(dict_obj)
+        else:
+            self._append_collection(dict_obj)
+
+
     def _append_key_path(self, kp_obj,
                          open_indentation_list=OPEN_INDENTATION_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
@@ -511,8 +533,8 @@ class Ast(object):
         for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
             if pos.basetype == 'dict' and kp_elem.final_val in pos:
                 pos = pos[kp_elem.final_val]
-                key_obj = pos.index
                 if state.full_ast:
+                    key_obj = pos.key_nodes[kp_elem.final_val]
                     if key_obj.key_path_occurrences is None:
                         key_obj.key_path_occurrences = [kp_elem]
                     else:
