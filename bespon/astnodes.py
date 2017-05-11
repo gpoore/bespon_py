@@ -26,6 +26,7 @@ from . import erring
 OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
 INLINE_ELEMENT_SEPARATOR = grammar.LIT_GRAMMAR['inline_element_separator']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
+LINE_TERMINATOR_UNICODE_OR_EMPTY_SET = set(grammar.LIT_GRAMMAR['line_terminator_unicode_seq'] + ('',))
 
 
 # Key path nodes need to process their raw content into individual scalars.
@@ -51,11 +52,12 @@ _node_common_slots = ['_state',
                       'inline', 'inline_indent',
                       'first_lineno', 'first_colno',
                       'last_lineno', 'last_colno',
-                      'external_indent',
-                      'external_at_line_start',
-                      'external_first_lineno',
-                      'doc_comment', 'tag', 'extra_dependents',
                       '_resolved', 'final_val']
+
+_node_data_slots = ['external_indent',
+                    'external_at_line_start',
+                    'external_first_lineno',
+                    'doc_comment', 'tag', 'extra_dependents']
 
 _node_collection_slots = ['nesting_depth', 'parent', 'index',
                           'key_path_parent', '_key_path_traversable',
@@ -81,14 +83,12 @@ class SourceNode(object):
     '''
     basetype = 'source'
 
-    __slots__ = ['source_name', 'source_include_depth',
-                 'source_initial_nesting_depth', 'nesting_depth',
-                 'full_ast',
-                 'indent', 'at_line_start', 'inline', 'inline_indent',
-                 'first_lineno', 'first_colno', 'last_lineno', 'last_colno',
-                 'root']
+    __slots__ = (_node_common_slots + ['source_name', 'source_include_depth',
+                                       'source_initial_nesting_depth', 'nesting_depth',
+                                       'root', 'full_ast'])
 
     def __init__(self, state):
+        self._state = state
         self.source_name = state.source_name
         self.source_include_depth = state.source_include_depth
         self.source_initial_nesting_depth = state.source_initial_nesting_depth
@@ -99,12 +99,12 @@ class SourceNode(object):
         self.at_line_start = state.at_line_start
         self.inline = state.inline
         self.inline_indent = state.inline_indent
-        self.first_lineno = state.lineno
-        self.first_colno = state.colno
-        self.last_lineno = state.lineno
-        self.last_colno = state.colno
+        self.first_lineno = self.last_lineno = state.lineno
+        self.first_colno = self.last_colno = state.colno
 
         self.root = RootNode(self)
+
+        self._resolved = False
 
 
 
@@ -116,14 +116,8 @@ class RootNode(list):
     '''
     basetype = 'root'
 
-    __slots__ = ['source_name', 'tag', 'end_tag',
-                 '_unresolved_dependency_count',
-                 'nesting_depth', 'parent',
-                 'key_path_parent', '_key_path_scope',
-                 '_open', '_resolved', 'final_val',
-                 'indent', 'at_line_start', 'inline', 'inline_indent',
-                 'first_lineno', 'first_colno',
-                 'last_lineno', 'last_colno']
+    __slots__ = (_node_common_slots + _node_collection_slots +
+                 ['source_name', 'doc_comment', 'tag', 'end_tag'])
 
     def __init__(self, source, list=list):
         list.__init__(self)
@@ -169,6 +163,7 @@ class RootNode(list):
             self.first_colno = obj.first_colno
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
+        self._open = False
 
 
     def check_append_collection(self, obj, len=len):
@@ -188,6 +183,7 @@ class RootNode(list):
             self.first_colno = obj.first_colno
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
+        self._open = False
 
 
 
@@ -290,7 +286,7 @@ class ScalarNode(object):
     none, bool, int, and float.  Also used to represent doc comments.
     '''
     basetype = 'scalar'
-    __slots__ = _node_common_slots
+    __slots__ = _node_common_slots + _node_data_slots
     def __init__(self, state, first_lineno, first_colno,
                  last_lineno, last_colno,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals):
@@ -320,7 +316,7 @@ class FullScalarNode(object):
     ScalarNode with extra data for full AST.
     '''
     basetype = 'scalar'
-    __slots__ = (_node_common_slots +
+    __slots__ = (_node_common_slots + _node_data_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
                   'raw_val', 'num_base', 'key_path', 'key_path_occurrences',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
@@ -361,13 +357,65 @@ class FullScalarNode(object):
 
 
 
+class CommentNode(object):
+    '''
+    Line comment or doc comment.
+    '''
+    basetype = 'comment'
+    __slots__ = _node_common_slots
+
+    def __init__(self, state, first_lineno, first_colno,
+                 last_lineno, last_colno):
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = first_lineno
+        self.first_colno = first_colno
+        self.last_lineno = last_lineno
+        self.last_colno = last_colno
+        self._resolved = True
+
+
+class FullCommentNode(object):
+    '''
+    CommentNode with extra data for full AST.
+    '''
+    basetype = 'comment'
+    __slots__ = (_node_common_slots +
+                 ['delim', 'block', 'implicit_type', 'continuation_indent'])
+
+    def __init__(self, state, first_lineno, first_colno,
+                 last_lineno, last_colno,
+                 implicit_type=None, delim=None, block=None,
+                 continuation_indent=None):
+        self.implicit_type = implicit_type
+        self.delim = delim
+        self.block = block
+        self.continuation_indent = continuation_indent
+
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = first_lineno
+        self.first_colno = first_colno
+        self.last_lineno = last_lineno
+        self.last_colno = last_colno
+        self._resolved = True
+
+
+
+
 class ListlikeNode(list):
     '''
     List-like collection.
     '''
     basetype = 'list'
-    __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['internal_indent'])
+    __slots__ = (_node_common_slots + _node_data_slots +
+                 _node_collection_slots + ['internal_indent'])
 
     def __init__(self, state_or_scalar_obj, first_lineno, first_colno,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -496,8 +544,9 @@ class DictlikeNode(collections.OrderedDict):
     Dict-like collection.
     '''
     basetype = 'dict'
-    __slots__ = (_node_common_slots + _node_collection_slots +
-                 ['_awaiting_val', '_next_key', 'key_nodes'])
+    __slots__ = (_node_common_slots + _node_data_slots +
+                 _node_collection_slots +
+                 ['_next_key', '_awaiting_val', 'key_nodes'])
 
     def __init__(self, state_or_scalar_obj, first_lineno, first_colno,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -661,20 +710,29 @@ class DictlikeNode(collections.OrderedDict):
 
 
 
-class TagNode(object):
+class TagNode(collections.OrderedDict):
+    '''
+    Tag for explicit typing, configuring collection types, defining labels,
+    or setting newlines for string types.
+    '''
     basetype = 'tag'
-    __slots__ = _node_common_slots + ['type', 'mutable', 'compatible_basetypes', '_type_data'
-                                      'label', 'newline',
-                                      'collection_config_type', 'collection_config_val',
-                                      'open', '_next_key', '_awaiting_val',
-                                      '_unresolved_dependency_count', 'external_inline']
-    def __init__(self, state, external_inline,
+    __slots__ = (_node_common_slots +
+                 ['external_inline',
+                  '_open', '_unresolved_dependency_count', 'parent',
+                  '_next_key', '_awaiting_val', 'key_nodes',
+                  'type', 'mutable', 'compatible_basetypes', '_type_data',
+                  'label', 'newline',
+                  'collection_config_type', 'collection_config_val'])
+
+    def __init__(self, state, first_lineno, first_colno, external_inline,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
-                 list=list):
-        list.__init__(self)
+                 OrderedDict=collections.OrderedDict,
+                 default_compatible_basetypes = set(['root', 'scalar', 'dict', 'list'])):
+        OrderedDict.__init__(self)
+
         self.type = None
         self._type_data = state.type_data
-        self.compatible_basetypes = set(['root', 'scalar', 'dict', 'list', 'keypath'])
+        self.compatible_basetypes = default_compatible_basetypes
         self.label = None
         self.newline = None
         self.collection_config_type = None
@@ -682,123 +740,124 @@ class TagNode(object):
         self._open = False
         self._awaiting_val = False
         self._next_key = None
+        self.key_nodes = {}
 
         self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
-        self.exteral_inline = external_inline
         self.inline = state.inline
         self.inline_indent = state.inline_indent
-        self.first_lineno = state.first_lineno
-        self.first_colno = state.first_colno
-        self.last_lineno = state.last_lineno
-        self.last_colno = state.last_colno
+        self.external_inline = external_inline
+        self.first_lineno = first_lineno
+        self.first_colno = first_colno
+        self.last_lineno = first_lineno
+        self.last_colno = first_colno
         self._resolved = False
-        self.extra_dependents = None
-        if not state.next_cache:
-            self.doc_comment = None
-            self.tag = None
-            self.external_indent = self.indent
-            self.external_at_line_start = self.at_line_start
-            self.external_first_lineno = self.first_lineno
-        else:
-            set_tag_doc_comment_externals(self, state)
 
-    _keywords = set(['type', 'label', 'newline', 'init', 'deepinit',
-                     'default', 'deepdefault', 'recmerge', 'deeprecmerge'])
-    _collection_config_types = set(['init', 'deepinit', 'default',
-                                    'deepdefault', 'recmerge', 'deeprecmerge'])
+
+    _scalar_compatible_basetypes = set(['scalar'])
+    _collection_compatible_basetypes = set(['dict', 'list'])
+
+    _keywords = set(['label', 'newline', 'init', 'deep_init',
+                     'default', 'deep_default', 'recmerge', 'deep_recmerge'])
+    _collection_config_keywords = set(['init', 'deep_init',
+                                       'default', 'deep_default',
+                                       'recmerge', 'deep_recmerge'])
+
 
     def check_append_scalar_key(self, obj):
         if not self._open:
-            raise erring.ParseError('Cannot add a key to a closed object; perhaps a "," is missing', obj)
+            raise erring.ParseError('Cannot add a key to a closed object; perhaps a "{0}" is missing'.format(INLINE_ELEMENT_SEPARATOR), obj)
         if self._awaiting_val:
-            raise erring.ParseError('Missing value; cannot add a key until the previous key has been given a value', obj)
+            raise erring.ParseError('Missing value; cannot add a key until the previous key has been given a value', obj, self.key_nodes[self._next_key])
         if not obj.external_indent.startswith(self.inline_indent):
             raise erring.IndentationError(obj)
-        if obj.basetype != 'scalar':
-            raise erring.ParseError('Tags only take strings as keys', obj)
-        # No need to check `.implicit_type`; filter for valid keys
-        if obj.final_val not in self._keywords:
-            raise erring.ParseError('Invalid keyword "{0}"'.format(obj.final_value), obj)
-        if obj.final_val in self._collection_config_types:
+        key = obj.final_val
+        if key in self:
+            raise erring.ParseError('Duplicate keys are prohibited', obj, self.key_nodes[key])
+        if key not in self._keywords:
+            raise erring.ParseError('Invalid tag keyword "{0}"'.format(key), obj)
+        if key in self._collection_config_keywords:
             if self.collection_config_type is not None:
-                raise erring.ParseError('Duplicate keys are prohibited', obj)
-            if 'dict' not in self.compatible_basetypes or 'list' not in self.compatible_basetypes:
-                raise erring.ParseError('Keyword argument incompatible with type')
-            self.compatible_basetypes = set(['dict', 'list'])
-        else:
-            if getattr(self, obj.final_val) is not None:
-                raise erring.ParseError('Duplicate keys are prohibited', obj)
-            if obj.final_val == 'newline':
-                if 'scalar' not in self.compatible_basetypes:
-                    raise erring.ParseError('Incompatible argument "newline"', obj)
-                self.compatible_basetypes == set(['scalar'])
-        self._next_key = obj
+                raise erring.ParseError('Collections cannot have multiple configuration settings', obj, self.key_nodes[self.collection_config_type])
+            if 'dict' not in self.compatible_basetypes and 'list' not in self.compatible_basetypes:
+                raise erring.ParseError('Tag keyword argument is incompatible with type', obj)
+            self.compatible_basetypes = self._collection_compatible_basetypes
+        elif key == 'newline':
+            if 'scalar' not in self.compatible_basetypes:
+                raise erring.ParseError('Tag keyword argument "newline" is incompatible with type', obj)
+            self.compatible_basetypes = self._scalar_compatible_basetypes
+        self.key_nodes[key] = obj
+        self._next_key = key
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
         self._awaiting_val = True
 
-    def check_append_scalar_val(self, obj):
+
+    def check_append_scalar_val(self, obj,
+                                line_terminator_unicode_or_empty_set=LINE_TERMINATOR_UNICODE_OR_EMPTY_SET):
         if not obj.external_indent.startswith(self.inline_indent):
             raise erring.IndentationError(obj)
         if not self._awaiting_val:
-            if (self._open and obj.basetype == 'scalar' and obj.final_val in self._type_data and
-                    all(x is None for x in (self.type, self.label, self.newline, self.collection_config_type))):
-                self.type = obj
-                self.compatible_basetypes = set((self._type_data[obj.final_val].basetype,))
-                self.mutable = self._type_data[obj.final_val].mutable
+            if self._open and obj.basetype == 'scalar' and obj.final_val in self._type_data and not self:
+                val = obj.final_val
+                self['type'] = obj
+                self.type = val
+                type_data_val = self._type_data[val]
+                self.compatible_basetypes = type_data_val.basetype_set
+                self.mutable = type_data_val.mutable
             else:
                 if obj._resolved and obj.final_val in self._type_data:
                     raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
-                else:
-                    raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
+                raise erring.ParseError('Missing key or unknown type; cannot add a value until a key has been given', obj)
         else:
-            if self._next_key in self._collection_config_types:
-                self.collection_config_type = self._next_key
-                if obj._resolved:
-                    self.collection_config_val = obj.final_val
-                else:
-                    self.collection_config_val = obj
-                    self._unresolved_dependency_count += 1
+            key = self._next_key
+            if key in self._collection_config_keywords:
+                if obj.basetype != 'alias':
+                    raise erring.ParseError('Collection configuration settings require aliases or lists of aliases', obj)
+                self[key] = obj
+                self.collection_config_type = key
+                self.collection_config_val = obj
+                self._unresolved_dependency_count += 1
             else:
                 if obj.basetype != 'scalar':
-                    raise erring.ParseError('Only scalar values are allowed', obj)
-                if obj.block:
-                    raise erring.ParseError('Block strings are not allowed as tag values', obj)
-                if self._next_key == 'newline':
-                    if obj.final_val not in set(['\v', '\f', '\r', '\n', '\r\n', '\u0085', '\u2028', '\u2029']):
+                    raise erring.ParseError('Keyword argument "{0}" only takes scalar values'.format(key), obj)
+                if obj.first_lineno != obj.last_lineno:
+                    raise erring.ParseError('Tag string values cannot be block strings or break over multiple lines', obj)
+                val = obj.final_val
+                if key == 'label':
+                    self[key] = val
+                    self.label = val
+                elif key == 'newline':
+                    if obj.final_val not in line_terminator_unicode_or_empty_set:
                         raise erring.ParseError('Invalid value for newline', obj)
-                elif self._next_key == 'type':
-                    if not all(x is None for x in (self.type, self.label, self.newline, self.collection_config_type)):
-                        raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
-                    try:
-                        self.compatible_basetypes = set([self._type_data[obj.final_val].basetype])
-                        self.mutable = self._type_data[obj.final_val].mutable
-                    except KeyError:
-                        raise erring.ParseError('Unknown type "{0}"'.format(obj.final_val), obj)
-                setattr(self, self._next_key, obj)
+                    self[key] = val
+                    self.newline = val
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
-        self._open = False
         self._awaiting_val = False
+        self._open = False
+
 
     def check_append_collection(self, obj):
         if not obj.external_indent.startswith(self.inline_indent):
             raise erring.IndentationError(obj)
         if not self._awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
-        if self._next_key not in self._collection_config_types:
-            raise erring.ParseError('A list is only allowed in a tag as part of collection configuration', obj)
-        self.collection_config_type = self._next_key
+        key = self._next_key
+        if key not in self._collection_config_keywords or obj.basetype != 'alias_list':
+            raise erring.ParseError('Collections are prohibited in tags, except for lists of aliases used in configuration for collection types', obj)
+        self[key] = obj
+        self.collection_config_type = key
         self.collection_config_val = obj
         obj.parent = self
+        obj.index = key
+        obj.nesting_depth = 0
         self._unresolved_dependency_count += 1
         self.last_lineno = obj.last_lineno
         self.last_colno = obj.last_colno
-        self._open = False
         self._awaiting_val = False
-
+        self._open = False
 
 
 
@@ -810,10 +869,11 @@ class KeyPathNode(list):
     Used as dict keys or in sections for assigning in nested objects.
     '''
     basetype = 'key_path'
-    __slots__ = _node_common_slots + ['external_indent', 'external_at_line_start',
-                                      'external_first_lineno', 'resolved',
-                                      'extra_dependents', 'raw_val',
-                                      'assign_key_val_lineno', 'assign_key_val_colno']
+    __slots__ = (_node_common_slots + _node_data_slots +
+                 ['external_indent', 'external_at_line_start',
+                  'external_first_lineno', 'resolved',
+                  'extra_dependents', 'raw_val',
+                  'assign_key_val_lineno', 'assign_key_val_colno'])
 
     def __init__(self, state, first_lineno, first_colno, key_path_raw_val,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -822,7 +882,8 @@ class KeyPathNode(list):
                  reserved_word_patterns=_reserved_word_patterns,
                  key_path_reserved_word_vals=_key_path_reserved_word_vals,
                  reserved_word_types=_reserved_word_types,
-                 ScalarNode=ScalarNode, list=list):
+                 ScalarNode=ScalarNode, FullScalarNode=FullScalarNode,
+                 list=list):
         list.__init__(self)
 
         self._state = state
@@ -873,8 +934,8 @@ class KeyPathNode(list):
                 if not self._state.full_ast:
                     kp_elem_node = ScalarNode(state, first_lineno, first_colno, first_lineno, last_colno)
                 else:
-                    kp_elem_node = ScalarNode(state, first_lineno, first_colno, first_lineno, last_colno,
-                                              implicit_type=implicit_type)
+                    kp_elem_node = FullScalarNode(state, first_lineno, first_colno, first_lineno, last_colno,
+                                                  implicit_type=implicit_type)
                 kp_elem_node.first_colno = first_colno
                 kp_elem_node.last_colno = last_colno
                 if state.full_ast:
@@ -894,7 +955,8 @@ class SectionNode(object):
     Section.
     '''
     basetype = 'section'
-    __slots__ = _node_common_slots + ['delim', 'key_path', 'scalar', '_end_delim']
+    __slots__ = (_node_common_slots + _node_data_slots +
+                 ['delim', 'key_path', 'scalar', '_end_delim'])
     def __init__(self, state, lineno, colno, delim):
         self.delim = delim
         self.key_path = None

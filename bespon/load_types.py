@@ -52,7 +52,7 @@ class DataType(object):
         tagable: Whether the type may be used in a tag to provide explicit
                  typing.
     '''
-    __slots__ = ['name', 'basetype',
+    __slots__ = ['name', 'basetype', 'basetype_set',
                  'binary', 'mutable', 'number', 'parser', 'tagable']
     def __init__(self, name=None, basetype=None,
                  binary=False, mutable=False, number=False, parser=None,
@@ -69,6 +69,7 @@ class DataType(object):
             raise ValueError
         self.name = name
         self.basetype = basetype
+        self.basetype_set = set((basetype,))
         self.binary = binary
         self.mutable = mutable
         self.number = number

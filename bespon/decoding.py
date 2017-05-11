@@ -26,7 +26,7 @@ from . import tooling
 from . import load_types
 from . import grammar
 from .ast import Ast
-from .astnodes import ScalarNode, FullScalarNode, KeyPathNode, SectionNode
+from .astnodes import ScalarNode, FullScalarNode, CommentNode, FullCommentNode, KeyPathNode, SectionNode
 
 if sys.version_info.major == 2:
     str = unicode
@@ -811,7 +811,7 @@ class BespONDecoder(object):
 
     def _parse_token_line_comment(self, line, state,
                                   comment_delim=COMMENT_DELIM,
-                                  FullScalarNode=FullScalarNode,
+                                  FullCommentNode=FullCommentNode,
                                   len=len):
         '''
         Parse a line comment.  This is used in `_parse_token_comment()`.
@@ -822,9 +822,9 @@ class BespONDecoder(object):
         state.last_line_comment_lineno = state.lineno
         if state.full_ast:
             state.colno = state.len_full_line_plus_one - len(line)
-            node = FullScalarNode(state, state.lineno, state.colno,
-                                  state.lineno, state.len_full_line_plus_one - 1,
-                                  delim=comment_delim, implicit_type='line_comment')
+            node = FullCommentNode(state, state.lineno, state.colno,
+                                   state.lineno, state.len_full_line_plus_one - 1,
+                                   delim=comment_delim, implicit_type='line_comment')
             node.raw_val = node.final_val = line[1:]
             state.ast.scalar_nodes.append(node)
             state.ast.line_comments.append(node)
@@ -834,8 +834,8 @@ class BespONDecoder(object):
     def _parse_token_comment_delim(self, line, state,
                                    comment_delim=COMMENT_DELIM,
                                    max_delim_length=MAX_DELIM_LENGTH,
-                                   ScalarNode=ScalarNode,
-                                   FullScalarNode=FullScalarNode,
+                                   CommentNode=CommentNode,
+                                   FullCommentNode=FullCommentNode,
                                    len=len):
         '''
         Parse inline comments.
@@ -864,12 +864,12 @@ class BespONDecoder(object):
         delim = line[:len_delim]
         content_lines, continuation_indent, content, last_lineno, last_colno, line = self._parse_delim_inline('doc comment', delim, line_lstrip_delim, state)
         if not state.full_ast:
-            node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+            node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno)
             node.final_val = content
         else:
-            node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                  delim=delim, block=False, continuation_indent=continuation_indent,
-                                  implicit_type='doc_comment')
+            node = FullCommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                                   delim=delim, block=False, continuation_indent=continuation_indent,
+                                   implicit_type='doc_comment')
             node.raw_val = content_lines
             node.final_val = content
             state.ast.scalar_nodes.append(node)
@@ -1055,6 +1055,8 @@ class BespONDecoder(object):
                                   max_delim_length=MAX_DELIM_LENGTH,
                                   ScalarNode=ScalarNode,
                                   FullScalarNode=FullScalarNode,
+                                  CommentNode=CommentNode,
+                                  FullCommentNode=FullCommentNode,
                                   whitespace=INDENT,
                                   block_prefix=BLOCK_PREFIX,
                                   block_suffix=BLOCK_SUFFIX,
@@ -1170,10 +1172,10 @@ class BespONDecoder(object):
             state.next_cache = True
         elif delim_code_point == comment_delim:
             if not state.full_ast:
-                node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+                node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno)
             else:
-                node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                      delim=delim, block=True, implicit_type='doc_comment')
+                node = FullCommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                                       delim=delim, block=True, implicit_type='doc_comment')
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
                 node.final_val = content
