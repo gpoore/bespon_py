@@ -41,6 +41,7 @@ WHITESPACE_SET = set(grammar.LIT_GRAMMAR['whitespace'])
 UNICODE_WHITESPACE_SET = set(grammar.LIT_GRAMMAR['unicode_whitespace'])
 
 OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
+START_INLINE_DICT = grammar.LIT_GRAMMAR['start_inline_dict']
 PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
 END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
 ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
@@ -679,7 +680,11 @@ class BespONDecoder(object):
 
     def _parse_token_end_tag(self, line, state,
                              end_tag_with_suffix=END_TAG_WITH_SUFFIX,
+                             whitespace=INDENT,
                              whitespace_set=WHITESPACE_SET,
+                             comment_delim=COMMENT_DELIM,
+                             start_inline_dict=START_INLINE_DICT,
+                             block_prefix=BLOCK_PREFIX,
                              len=len):
         '''
         End a tag.
@@ -693,17 +698,40 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         state.ast.end_tag()
         # Account for end tag suffix with `[2:]`
+        line = line[2:]
         if 'dict' not in state.next_tag.compatible_basetypes or state.inline or len(state.next_tag.compatible_basetypes) > 1:
             state.at_line_start = False
-            return line[2:]
+            return line
         # If dealing with a tag that could create a dict-like object in
         # indentation-style syntax, look ahead to next significant token
         # to determine whether it does indeed create such a dict.  It would be
         # possible to avoid lookahead and use the standard cache approach to
         # deal with this, but that would be complicated because such tags
         # could have to be resolved after `state` has advanced beyond
-        # the next object.
-        raise NotImplementedError
+        # the next object, and in some situations two tags would have to be
+        # cached simultaneously.
+        line = line.lstrip(whitespace)
+        while True:
+            if line is None:
+                break
+            if line[:1] == comment_delim and line[1:2] != comment_delim:
+                line = self._parse_token_line_comment(line, state)
+            elif line == '':
+                line = self._parse_line_goto_next(line, state)
+            else:
+                break
+        if line is not None:
+            line_c0 = line[:1]
+            # The tag should only be used here if it won't be used by the next
+            # significant token, and if the next significant token can't raise
+            # an appropriate error message if the tag is incorrectly used
+            # here.  The start of an inline dict would use the tag, and the
+            # start of a section couldn't detect that an explicitly typed
+            # object had been created invalidly.
+            if line_c0 != start_inline_dict and line_c0 != block_prefix:
+                state.colno = state.len_full_line_plus_one - len(line)
+                state.ast.start_indentation_dict()
+        return line
 
 
     def _parse_token_inline_element_separator(self, line, state, len=len):
@@ -733,7 +761,7 @@ class BespONDecoder(object):
             content = line[:m.start(group)]
             m_end = m.end(group)
             line = line[m_end:]
-            return ([content], None, content, state.lineno, state.colno + m_end - 1, line)
+            return ([content], None, content, state.lineno, state.colno + len(delim) + m_end - 1, line)
         if section:
             raise erring.ParseError('Unterminated {0} (section strings must start and end on the same line)'.format(name), state)
         content_lines = [line]
@@ -1084,10 +1112,10 @@ class BespONDecoder(object):
                     line_lstrip_ws = line.lstrip(whitespace)
                     if not line_lstrip_ws.startswith(end_block_delim):
                         raise erring.ParseError('Invalid delim sequence in body of block object', state.source_range_to_loc(last_lineno, line_lstrip_ws))
-                    continuation_indent = line[:len_full_line-len(line_lstrip_ws)]
-                    len_continuation_indent = len(continuation_indent)
+                    len_continuation_indent = len_full_line - len(line_lstrip_ws)
+                    continuation_indent = line[:len_continuation_indent]
                     line = line_lstrip_ws[len_end_block_delim:]
-                    last_colno = len_continuation_indent + len_end_block_delim - 1
+                    last_colno = len_continuation_indent + len_end_block_delim
                     if state.at_line_start and indent != continuation_indent:
                         raise erring.ParseError('Inconsistent block delim indentation', state.source_range_to_loc(last_lineno, last_colno))
                     if continuation_indent == '':
@@ -1258,8 +1286,8 @@ class BespONDecoder(object):
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno)
             else:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                  implicit_type='unquoted_string')
+                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
+                                      implicit_type='unquoted_string')
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             node.final_val = raw_val
@@ -1294,6 +1322,8 @@ class BespONDecoder(object):
             state.next_cache = True
             # Reserved words don't contain rtl code points
         elif m.lastgroup == 'key_path':
+            if state.next_cache:
+                raise erring.ParseError('Key paths do not take doc comments or tags', state, unresolved_cache=True)
             node = KeyPathNode(state, lineno, first_colno, raw_val)
             if state.full_ast:
                 node.raw_val = raw_val
