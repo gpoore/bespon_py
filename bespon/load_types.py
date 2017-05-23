@@ -32,45 +32,46 @@ class DataType(object):
     Representation of data types.
 
     Overview of keyword arguments:
-        binary:  The typed string represents binary data.  If it contains
-                 escapes, only binary-compatible escapes are performed.  The
-                 string is encoded to binary via the ascii codec before being
-                 passed to the parser.
-        mutable: Whether the type is mutable.  Mutable collections are more
-                 convenient to work with when resolving aliases, etc.
-        number:  Number types.  These are only applied to unquoted strings
-                 that match the regex patterns for number literals.  Custom
-                 numeric types that require quoted strings must use
-                 number=False; this option is only for built-in types.
-        parser:  For scalars, a function that takes a parsed string and
-                 converts it to the type.  For collections, a function that
-                 takes an iterable of paired objects (dict-like) or
-                 an iterable of individual objects (list-like), and returns
-                 the corresponding collection.  In the collection case,
-                 the function must also return an empty object if no
-                 arguments are provided.
-        tagable: Whether the type may be used in a tag to provide explicit
-                 typing.
+        ascii_bytes:  The typed string represents binary data using ASCII.
+                      If escapes are used, only bytes-compatible escapes are
+                      allowed.  The string is encoded to binary with the
+                      ASCII codec before being passed to the parser.
+        mutable:      Whether the type is mutable.  Mutable collections are
+                      more convenient to work with when resolving aliases.
+        number:       Number types.  These are only applied to unquoted
+                      strings that match the regex patterns for number
+                      literals.  Custom numeric types that require quoted
+                      strings must use number=False; this option is only for
+                      built-in types.
+        parser:       For scalars, a function that takes a processed string
+                      and converts it to the type.  For collections, a
+                      function that takes an iterable of paired objects
+                      (dict-like) or an iterable of individual objects
+                      (list-like), and returns the corresponding collection.
+                      In the collection case, the function must also return
+                      an empty object if no arguments are provided.
+        tagable:      Whether the type may be used in a tag to provide
+                      explicit typing.
     '''
-    __slots__ = ['name', 'basetype', 'basetype_set',
-                 'binary', 'mutable', 'number', 'parser', 'tagable']
+    __slots__ = ['name', 'basetype', 'basetype_set', 'mutable',
+                 'ascii_bytes', 'escapes', 'number', 'parser', 'tagable']
     def __init__(self, name=None, basetype=None,
-                 binary=False, mutable=False, number=False, parser=None,
+                 ascii_bytes=False, mutable=False, number=False, parser=None,
                  tagable=True):
         if not all(isinstance(x, str) for x in (name, basetype)):
             raise TypeError
-        if not all(x in (True, False) for x in (binary, mutable, number, tagable)):
+        if not all(x in (True, False) for x in (ascii_bytes, mutable, number, tagable)):
             raise TypeError
         if not hasattr(parser, '__call__'):
             raise TypeError
         if basetype not in ('dict', 'list', 'scalar'):
             raise ValueError
-        if basetype != 'scalar' and (binary or number or not tagable):
+        if basetype != 'scalar' and (ascii_bytes or number or not tagable):
             raise ValueError
         self.name = name
         self.basetype = basetype
         self.basetype_set = set((basetype,))
-        self.binary = binary
+        self.ascii_bytes = ascii_bytes
         self.mutable = mutable
         self.number = number
         self.parser = parser
@@ -120,9 +121,9 @@ CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: 
               'str': DataType(name='str', basetype='scalar', parser=str),
               'int': DataType(name='int', basetype='scalar', number=True, parser=int),
               'float': DataType(name='float', basetype='scalar', number=True, parser=float),
-              'bytes': DataType(name='bytes', basetype='scalar', binary=True, parser=lambda x: x),
-              'b16': DataType(name='b16', basetype='scalar', binary=True, parser=_base16_parser),
-              'b64': DataType(name='b64', basetype='scalar', binary=True, parser=_base64_parser),
+              'bytes': DataType(name='bytes', basetype='scalar', ascii_bytes=True, parser=lambda x: x),
+              'b16': DataType(name='b16', basetype='scalar', ascii_bytes=True, parser=_base16_parser),
+              'b64': DataType(name='b64', basetype='scalar', ascii_bytes=True, parser=_base64_parser),
               'dict': DataType(name='dict', basetype='dict', mutable=True, parser=dict),
               'list': DataType(name='list', basetype='list', mutable=True, parser=list)}
 

@@ -97,7 +97,7 @@ class State(object):
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'last_line_comment_lineno',
                  'next_scalar', 'next_scalar_is_keyable',
-                 'type_data',
+                 'data_types',
                  'ast', 'full_ast',
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno',
@@ -111,7 +111,7 @@ class State(object):
                  indent='', at_line_start=True,
                  inline=False, inline_indent=None,
                  lineno=1, colno=1,
-                 type_data=None, full_ast=False):
+                 data_types=None, full_ast=False):
         if not all(x is None or isinstance(x, str) for x in (source_name, inline_indent)):
             raise TypeError
         if not all(isinstance(x, str) for x in (indent,)):
@@ -128,7 +128,7 @@ class State(object):
             raise TypeError
         if not all(x in (True, False) for x in (at_line_start, inline, full_ast, source_embedded)):
             raise TypeError
-        if type_data is not None and not (isinstance(type_data, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in type_data)):
+        if data_types is not None and not (isinstance(data_types, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in data_types)):
             raise TypeError
 
         # In some cases, depending on context, data may be derived either
@@ -162,7 +162,7 @@ class State(object):
         self.next_scalar = None
         self.next_scalar_is_keyable = False
 
-        self.type_data = type_data or load_types.CORE_TYPES
+        self.data_types = data_types or load_types.CORE_TYPES
         self.full_ast = full_ast
 
         self.newline_re = decoder._newline_re
@@ -190,13 +190,10 @@ class State(object):
             newline_count += 1
             newline_index = m.start()
         if newline_count == 0:
-            self.first_colno += index - self.bom_offset
-            self.last_colno = self.first_colno
+            self.colno += index - self.bom_offset
         else:
-            self.first_lineno += newline_count
-            self.first_colno = index - newline_index
-            self.last_lineno = self.first_lineno
-            self.last_colno = self.first_colno
+            self.lineno += newline_count
+            self.colno = index - newline_index
         code_point = source_raw_string[index]
         code_point_esc = self.escape_unicode(code_point)
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
@@ -271,7 +268,7 @@ class BespONDecoder(object):
     __slots__ = ['literal_non_ascii',
                  'unquoted_strings', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
-                 '_type_data',
+                 '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
                  '_parse_token', '_parse_scalar_token',
@@ -314,7 +311,7 @@ class BespONDecoder(object):
 
 
         # Parser and type info access
-        self._type_data = load_types.CORE_TYPES
+        self._data_types = load_types.CORE_TYPES
 
 
         # Create escape and unescape functions
@@ -783,7 +780,7 @@ class BespONDecoder(object):
             if line[0] in unicode_whitespace_set:
                 if line[0] in whitespace:
                     raise erring.IndentationError(state.source_range_to_loc(last_lineno, len_full_line + 1 - len(line)))
-                raise erring.ParseError('A Unicode whitespace code point "{0}" was found where a wrapped line was expected to start'.format(self._escape_unicode(line[0])), state.source_range_to_loc(last_lineo, len_full_line + 1 - len(line)))
+                raise erring.ParseError('A Unicode whitespace code point "{0}" was found where a wrapped line was expected to start'.format(self._escape_unicode(line[0])), state.source_range_to_loc(last_lineno, len_full_line + 1 - len(line)))
             if delim in line:
                 m = closing_delim_re.search(line)
                 if m is not None:
@@ -824,7 +821,7 @@ class BespONDecoder(object):
             state.colno = state.len_full_line_plus_one - len(line)
             node = FullCommentNode(state, state.lineno, state.colno,
                                    state.lineno, state.len_full_line_plus_one - 1,
-                                   delim=comment_delim, implicit_type='line_comment')
+                                   'line_comment', delim=comment_delim)
             node.raw_val = node.final_val = line[1:]
             state.ast.scalar_nodes.append(node)
             state.ast.line_comments.append(node)
@@ -864,12 +861,13 @@ class BespONDecoder(object):
         delim = line[:len_delim]
         content_lines, continuation_indent, content, last_lineno, last_colno, line = self._parse_delim_inline('doc comment', delim, line_lstrip_delim, state)
         if not state.full_ast:
-            node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno)
+            node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                               'doc_comment', delim=delim)
             node.final_val = content
         else:
             node = FullCommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                   delim=delim, block=False, continuation_indent=continuation_indent,
-                                   implicit_type='doc_comment')
+                                   'doc_comment', delim=delim,
+                                   continuation_indent=continuation_indent)
             node.raw_val = content_lines
             node.final_val = content
             state.ast.scalar_nodes.append(node)
@@ -915,14 +913,29 @@ class BespONDecoder(object):
         elif content_strip_space[-1:] == literal_string_delim:
             content = content[:-1]
         if not state.full_ast:
-            node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+            node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                              'str', delim=delim)
         else:
             node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                  delim=delim, block=False, continuation_indent=continuation_indent,
-                                  implicit_type='literal_string')
+                                  'str', delim=delim, continuation_indent=continuation_indent)
             node.raw_val = content_lines
             state.ast.scalar_nodes.append(node)
-        node.final_val = content
+        if node.tag is None:
+            node.final_val = content
+        else:
+            if node.tag.type is None:
+                node.final_val = content
+            else:
+                if not state.data_types[node.tag.type].ascii_bytes:
+                    node.final_val = self._type_tagged_scalar(state, node, content)
+                else:
+                    try:
+                        content_bin = content.encode('ascii')
+                    except Exception as e:
+                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                    node.final_val = self._type_tagged_scalar(state, node, content_bin)
+            if node.tag.label is not None:
+                state.ast.register_label(node)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -968,21 +981,57 @@ class BespONDecoder(object):
             delim = line[:len_delim]
             content_lines, continuation_indent, content, last_lineno, last_colno, line = self._parse_delim_inline('escaped string', delim, line_lstrip_delim, state, section=section)
         if not state.full_ast:
-            node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+            node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                              'str', delim=delim)
         else:
             node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                  delim=delim, block=False, continuation_indent=continuation_indent,
-                                  implicit_type='escaped_string')
+                                  'str', delim=delim, continuation_indent=continuation_indent)
             node.raw_val = content_lines
             state.ast.scalar_nodes.append(node)
-        if '\\' not in content:
-            content_esc = content
+        if node.tag is None:
+            if '\\' not in content:
+                content_esc = content
+            else:
+                try:
+                    content_esc = self._unescape_unicode(content)
+                except Exception as e:
+                    raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+            node.final_val = content_esc
         else:
-            try:
-                content_esc = self._unescape_unicode(content)
-            except Exception as e:
-                raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
-        node.final_val = content_esc
+            if node.tag.type is None:
+                if '\\' not in content:
+                    content_esc = content
+                else:
+                    try:
+                        content_esc = self._unescape_unicode(content)
+                    except Exception as e:
+                        raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                node.final_val = content_esc
+            else:
+                if not state.data_types[node.tag.type].ascii_bytes:
+                    if '\\' not in content:
+                        content_esc = content
+                    else:
+                        try:
+                            content_esc = self._unescape_unicode(content)
+                        except Exception as e:
+                            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                    node.final_val = self._type_tagged_scalar(state, node, content_esc)
+                else:
+                    try:
+                        content_bin = content.encode('ascii')
+                    except Exception as e:
+                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                    if b'\\' not in content_bin:
+                        content_bin_esc = content_bin
+                    else:
+                        try:
+                            content_bin_esc = self._unescape_bytes(content_bin)
+                        except Exception as e:
+                            raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
+                    node.final_val = self._type_tagged_scalar(state, node, content_bin_esc)
+            if node.tag.label is not None:
+                state.ast.register_label(node)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -1021,10 +1070,11 @@ class BespONDecoder(object):
                 return self._parse_token_line_comment(line_lstrip_ws, state)
             state.colno = state.len_full_line_plus_one - len(line_lstrip_ws)
             raise erring.ParseError('Unexpected content after end of section', state)
-        node = SectionNode(state, state.lineno, state.colno, delim)
+        node = SectionNode(state, delim)
         line_lstrip_ws = line.lstrip(whitespace)
         if line_lstrip_ws[:1] == open_indentation_list:
-            next_scalar = KeyPathNode(state, state.lineno, state.len_full_line_plus_one - len(line_lstrip_ws), open_indentation_list)
+            state.colno = state.len_full_line_plus_one - len(line_lstrip_ws)
+            next_scalar = KeyPathNode(state, open_indentation_list)
             line = line_lstrip_ws[1:]
         else:
             line = self._parse_scalar_token[line_lstrip_ws[:1]](line_lstrip_ws, state, section=True)
@@ -1135,49 +1185,136 @@ class BespONDecoder(object):
             content_lines.append(line)
         # Note that there's no need to reset the bidi_rtl state, given the
         # nature of the final delimiter.
-        # Modify last line by adding `\n`, then join lines with `\n`, then
-        # put last line back to original value, to avoid having to modify the
-        # final string by adding an `\n` at the end
-        content_lines_dedent_last_line = content_lines_dedent[-1]
-        content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-        content = newline.join(content_lines_dedent)
-        content_lines_dedent[-1] = content_lines_dedent_last_line
         if delim_code_point == literal_string_delim:
             if not state.full_ast:
-                node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+                node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                                  'str', delim=delim, block=True)
             else:
                 node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                      delim=delim, block=True, implicit_type='literal_string')
+                                      'str', delim=delim, block=True)
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
-            node.final_val = content
+            if node.tag is None:
+                content_lines_dedent_last_line = content_lines_dedent[-1]
+                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                content = newline.join(content_lines_dedent)
+                content_lines_dedent[-1] = content_lines_dedent_last_line
+                node.final_val = content
+            else:
+                if 'newline' in node.tag:
+                    tag_newline = node.tag['newline'].final_val
+                else:
+                    tag_newline = newline
+                if 'indent' in node.tag:
+                    tag_indent = node.tag['indent'].final_val
+                else:
+                    tag_indent = None
+                content_lines_dedent_last_line = content_lines_dedent[-1]
+                content_lines_dedent[-1] = content_lines_dedent_last_line + tag_newline
+                if tag_indent is None:
+                    content = tag_newline.join(content_lines_dedent)
+                else:
+                    content = tag_newline.join(tag_indent + x for x in content_lines_dedent)
+                content_lines_dedent[-1] = content_lines_dedent_last_line
+                if node.tag.type is None:
+                    node.final_val = content
+                else:
+                    if not state.data_types[node.tag.type].ascii_bytes:
+                        node.final_val = self._type_tagged_scalar(state, node, content)
+                    else:
+                        try:
+                            content_bin = content.encode('ascii')
+                        except Exception as e:
+                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                        node.final_val = self._type_tagged_scalar(state, node, content_bin)
+                if node.tag.label is not None:
+                    state.ast.register_label(node)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
         elif delim_code_point == escaped_string_singlequote_delim or delim_code_point == escaped_string_doublequote_delim:
             if not state.full_ast:
-                node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno)
+                node = ScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                                  'str', delim=delim, block=True)
             else:
                 node = FullScalarNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                      delim=delim, block=True, implicit_type='escaped_string')
+                                      'str', delim=delim, block=True)
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
-            try:
-                content_esc = self._unescape_unicode(content)
-            except Exception as e:
-                raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
-            node.final_val = content_esc
+            if node.tag is None:
+                content_lines_dedent_last_line = content_lines_dedent[-1]
+                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                content = newline.join(content_lines_dedent)
+                content_lines_dedent[-1] = content_lines_dedent_last_line
+                try:
+                    content_esc = self._unescape_unicode(content)
+                except Exception as e:
+                    raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                node.final_val = content_esc
+            else:
+                if 'newline' in node.tag:
+                    tag_newline = node.tag['newline'].final_val
+                else:
+                    tag_newline = newline
+                if 'indent' in node.tag:
+                    tag_indent = node.tag['indent'].final_val
+                else:
+                    tag_indent = None
+                content_lines_dedent_last_line = content_lines_dedent[-1]
+                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                if tag_indent is None:
+                    content = newline.join(content_lines_dedent)
+                else:
+                    content = newline.join(tag_indent + x for x in content_lines_dedent)
+                content_lines_dedent[-1] = content_lines_dedent_last_line
+                if node.tag.type is None:
+                    try:
+                        content_esc = self._unescape_unicode(content, newline=tag_newline)
+                    except Exception as e:
+                        raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                    node.final_val = content_esc
+                else:
+                    if not state.data_types[node.tag.type].ascii_bytes:
+                        try:
+                            content_esc = self._unescape_unicode(content, newline=tag_newline)
+                        except Exception as e:
+                            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                        node.final_val = self._type_tagged_scalar(state, node, content_esc)
+                    else:
+                        try:
+                            content_bin = content.encode('ascii')
+                        except Exception as e:
+                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                        # For ASCII bytes types, "newline" value is checked
+                        # for compatibility in tag, so there's no need for a
+                        # check here.
+                        tag_newline_bin = tag_newline.encode('ascii')
+                        try:
+                            content_bin_esc = self._unescape_bytes(content_bin, newline=tag_newline_bin)
+                        except Exception as e:
+                            raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
+                        node.final_val = self._type_tagged_scalar(state, node, content_bin_esc)
+                if node.tag.label is not None:
+                    state.ast.register_label(node)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
         elif delim_code_point == comment_delim:
             if not state.full_ast:
-                node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno)
+                node = CommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
+                                   'doc_comment', delim=delim, block=True)
             else:
                 node = FullCommentNode(state, first_lineno, first_colno, last_lineno, last_colno,
-                                       delim=delim, block=True, implicit_type='doc_comment')
+                                       'doc_comment', delim=delim, block=True)
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
+                # Modify last line by adding `\n`, then join lines with `\n`, then
+                # put last line back to original value, to avoid having to modify the
+                # final string by adding an `\n` at the end
+                content_lines_dedent_last_line = content_lines_dedent[-1]
+                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                content = newline.join(content_lines_dedent)
+                content_lines_dedent[-1] = content_lines_dedent_last_line
                 node.final_val = content
             state.next_doc_comment = node
             state.next_cache = True
@@ -1216,24 +1353,25 @@ class BespONDecoder(object):
         line = line[m_end:]
         cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
         if group_type == 'int':
-            parser = state.type_data['int'].parser
+            implicit_type = 'int'
+            parser = state.data_types[implicit_type].parser
             try:
                 if group_base == 10:
                     final_val = parser(cleaned_val)
                 else:
-                    final_val = parser(cleaned_val, int(group_base))
+                    final_val = parser(cleaned_val, group_base)
             except Exception as e:
                 raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
             if not state.full_ast:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno)
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
                 node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                      implicit_type='int', num_base=group_base)
+                                      implicit_type, num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             state.next_scalar_is_keyable = True
         elif group_type == 'float' or group_type == 'float_inf_or_nan':
-            parser = state.type_data['float'].parser
+            parser = state.data_types['float'].parser
             try:
                 if group_base == 10:
                     final_val = parser(cleaned_val)
@@ -1242,10 +1380,10 @@ class BespONDecoder(object):
             except Exception as e:
                 raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
             if not state.full_ast:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno)
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, 'float')
             else:
                 node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                      implicit_type='float', num_base=group_base)
+                                      'float', num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             state.next_scalar_is_keyable = False
@@ -1285,14 +1423,17 @@ class BespONDecoder(object):
         last_colno = first_colno + m_end - 1
         line = line[m_end:]
         if m.lastgroup == 'unquoted_string':
+            implicit_type = 'str'
             if not state.full_ast:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno)
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
-                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                      implicit_type='unquoted_string')
+                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
-            node.final_val = raw_val
+            if node.tag is None:
+                node.final_val = raw_val
+            else:
+                node.final_val = self._process_scalar_tag(state, node, raw_val, implicit_type)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
@@ -1301,23 +1442,22 @@ class BespONDecoder(object):
                 state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
         elif m.lastgroup == 'reserved_word':
             try:
-                word_type = self._reserved_word_types[raw_val]
+                implicit_type = self._reserved_word_types[raw_val]
             except KeyError:
                 raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(raw_val.lower()), state)
             try:
-                final_val = state.type_data[word_type].parser(raw_val)
+                final_val = state.data_types[implicit_type].parser(raw_val)
             except Exception as e:
                 raise erring.ParseError('Error in typing of reserved word "{0}":\n  {1}'.format(raw_val, e), state)
             if not state.full_ast:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno)
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                  implicit_type=word_type)
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             node.final_val = final_val
             state.next_scalar = node
-            if word_type != 'float':
+            if implicit_type != 'float':
                 state.next_scalar_is_keyable = True
             else:
                 state.next_scalar_is_keyable = False
@@ -1326,7 +1466,7 @@ class BespONDecoder(object):
         elif m.lastgroup == 'key_path':
             if state.next_cache:
                 raise erring.ParseError('Key paths do not take doc comments or tags', state, unresolved_cache=True)
-            node = KeyPathNode(state, lineno, first_colno, raw_val)
+            node = KeyPathNode(state, raw_val)
             if state.full_ast:
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
@@ -1354,3 +1494,14 @@ class BespONDecoder(object):
 
     def _parse_token_alias_prefix(self, line, state):
         raise NotImplementedError
+
+
+    def _type_tagged_scalar(self, state, scalar_obj, processed_val):
+        '''
+        '''
+        tag = scalar_obj.tag
+        try:
+            final_val = state.data_types[scalar_obj.tag.type].parser(processed_val)
+        except Exception as e:
+            raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(tag.type, e), scalar_obj, scalar_obj.tag)
+        return final_val
