@@ -95,7 +95,7 @@ class Escape(object):
                         'backslash': grammar.RE_GRAMMAR['backslash'],
                         'singlequote': grammar.RE_GRAMMAR['escaped_string_singlequote_delim'],
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
-                        'newline': NEWLINE}
+                        'newline': grammar.RE_GRAMMAR['newline']}
 
         self.invalid_literal_unicode_re = re.compile('{always_escaped_unicode}'.format(**pattern_dict))
 
@@ -274,12 +274,12 @@ class Unescape(object):
         self._unescape_unicode_dict = tooling.keydefaultdict(self._unescape_unicode_char, grammar.SHORT_BACKSLASH_UNESCAPES)
         self._unescape_bytes_dict = tooling.keydefaultdict(self._unescape_byte)
         self._unescape_bytes_dict.update({'\\x{0:02x}'.format(n).encode('ascii'): chr(n).encode('latin1') for n in range(256)})
-        self._unescape_bytes_dict.update(grammar.SHORT_BACKSLASH_UNESCAPES)
+        self._unescape_bytes_dict.update({k.encode('ascii'): v.encode('ascii') for k, v in grammar.SHORT_BACKSLASH_UNESCAPES.items()})
 
         # Regexes for finding escaped code points and bytes
         unescape_unicode = grammar.RE_GRAMMAR['unicode_escape']
         unescape_bytes = grammar.RE_GRAMMAR['bytes_escape']
-        newline = NEWLINE
+        newline = grammar.RE_GRAMMAR['newline']
         self._unescape_unicode_re = re.compile(unescape_unicode)
         self._unescape_unicode_or_replace_newline_re = re.compile('{0}|{1}'.format(newline, unescape_unicode))
         self._unescape_bytes_re = re.compile(unescape_bytes.encode('ascii'))
@@ -318,7 +318,7 @@ class Unescape(object):
 
 
     @staticmethod
-    def _unescape_byte(b, int=int, chr=chr, newline=NEWLINE.encode('latin1')):
+    def _unescape_byte(b, int=int, chr=chr, newline=NEWLINE.encode('ascii')):
         '''
         Given a binary string in `\\xHH` form, return the byte corresponding
         to the hex value of the `H`'s.  Given `\\<spaces><newline>`, return
@@ -334,8 +334,9 @@ class Unescape(object):
         try:
             v = chr(int(b[2:], 16)).encode('latin1')
         except ValueError:
-            # Make sure we have the full pattern `\\<spaces><newline>`
-            if b[-1] == newline:
+            # Must use a slice rather than an index to get final byte as
+            # a bytes object rather than as an int
+            if b[-1:] == newline:
                 v = b''
             else:
                 b_esc = b.decode('latin1')

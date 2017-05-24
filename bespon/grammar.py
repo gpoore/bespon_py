@@ -263,8 +263,13 @@ _RAW_RE_TYPE = [# None type
                 ('alias_path_unicode', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_unicode})(?:{path_separator}{unquoted_string_unicode})+'),
 
                 # Binary types
-                ('base16', '{lower_hex_digit}+|{upper_hex_digit}+'),
-                ('base64', '[A-Za-z0-9+/=]+')]
+                ('base16', r'''
+                        {lower_hex_digit}+ (?:{space}*{newline} {lower_hex_digit}+)* (?:{space}*{newline})? \Z |
+                        {upper_hex_digit}+ (?:{space}*{newline} {upper_hex_digit}+)* (?:{space}*{newline})? \Z |
+                        {lower_hex_digit}{{2}}(?:{space}{lower_hex_digit}{{2}})* (?:{space}*{newline} {lower_hex_digit}{{2}}(?:{space}{lower_hex_digit}{{2}})*)* (?:{space}*{newline})? \Z |
+                        {upper_hex_digit}{{2}}(?:{space}{upper_hex_digit}{{2}})* (?:{space}*{newline} {upper_hex_digit}{{2}}(?:{space}{upper_hex_digit}{{2}})*)* (?:{space}*{newline})? \Z
+                        '''.replace('\x20', '').replace('\n', '')),
+                ('base64', r'[A-Za-z0-9+/=]+(?:{space}*{newline}[A-Za-z0-9+/=]+)*(?:{space}*{newline})?\Z')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 
 # Escapes (no string formatting is performed on these, so braces are fine)
@@ -281,8 +286,8 @@ _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2
                # valid short escapes.  Invalid escapes are caught at that
                # point; the regex pattern just needs to catch everything that
                # could be a valid escape.
-               ('bytes_escape', '{x_escape}|\\\\{space}*{newline}|\\\\.|\\\\'),
-               ('unicode_escape', '{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\\\{space}*{newline}|\\\\.|\\\\')]
+               ('bytes_escape', r'{x_escape}|\\{space}*{newline}|\\.|\\'),
+               ('unicode_escape', r'{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\{space}*{newline}|\\.|\\')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
 _raw_key_not_formatted = set(k for k, v in _RAW_LIT_SPECIAL) | set(k for k, v in _RE_PATTERNS)

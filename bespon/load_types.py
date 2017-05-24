@@ -80,32 +80,29 @@ class DataType(object):
 
 
 
-_BASE16_RE = re.compile('(?:{0})$'.format(grammar.RE_GRAMMAR['base16'].encode('ascii')).encode('ascii'))
-
-def _base16_parser(b):
-    # Need to remove any whitespace padding before decoding.  Also need to
-    # validate according to Bespon's Base16 standards, which allow uppercase
-    # or lowercase, but prohibit mixed-case.
-    b_processed = b.replace(b'\x20', b'').replace(b'\t', b'').replace(b'\n', '')
-    if not _BASE16_RE.match(b_processed):
-        raise ValueError('Invalid character(s) or mixed-case in Base16-encoded data')
-    return base64.b16decode(b_processed, casefold=True)
+WHITESPACE_BYTES_RE = re.compile('{0}+'.format(grammar.RE_GRAMMAR['whitespace']).encode('ascii'))
+BASE16_RE = re.compile(grammar.RE_GRAMMAR['base16'].encode('ascii'))
+BASE64_RE = re.compile(grammar.RE_GRAMMAR['base64'].encode('ascii'))
 
 
-if sys.version_info.major == 2:
-    _BASE64_RE = re.compile('(?:{0})$'.format(grammar.RE_GRAMMAR['base64'].encode('ascii')).encode('ascii'))
+# https://tools.ietf.org/html/rfc3548
+# https://tools.ietf.org/html/rfc4648
 
-    def _base64_parser(b):
-        # Need to remove any whitespace padding before decoding.  Also need to
-        # validate, since `b64decode()` doesn't provide that under Python 2.7.
-        b_processed = b.replace(b'\x20', b'').replace(b'\t', b'').replace(b'\n', '')
-        if not _BASE64_RE.match(b_processed):
-            raise ValueError('Invalid character(s) in Base64-encoded data')
-        return base64.b64decode(b_processed)
-else:
-    def _base64_parser(b):
-        b_processed = b.replace(b'\x20', b'').replace(b'\t', b'').replace(b'\n', '')
-        return base64.b64decode(b_processed, validate=True)
+def _base16_parser(b, whitespace_bytes_re=WHITESPACE_BYTES_RE,
+                   base16_re=BASE16_RE, b16decode=base64.b16decode):
+    if not base16_re.match(b):
+        raise ValueError('Invalid character(s) in Base16-encoded data; mixed-case characters are not permitted, spaces are only allowed if a single space separates each byte on a line, and trailing empty lines are not permitted')
+    b_processed = whitespace_bytes_re.sub(b'', b)
+    # Optional second argument is casefold
+    return b16decode(b_processed, True)
+
+
+def _base64_parser(b, whitespace_bytes_re=WHITESPACE_BYTES_RE,
+                   base64_re=BASE64_RE, b64decode=base64.b64decode):
+    if not base64_re.match(b):
+        raise ValueError('Invalid character(s) in Base64-encoded data; whitespace is only permitted at the end of lines, and trailing empty lines are not permitted')
+    b_processed = whitespace_bytes_re.sub(b'', b)
+    return base64.b64decode(b_processed)
 
 
 
@@ -122,8 +119,8 @@ CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: 
               'int': DataType(name='int', basetype='scalar', number=True, parser=int),
               'float': DataType(name='float', basetype='scalar', number=True, parser=float),
               'bytes': DataType(name='bytes', basetype='scalar', ascii_bytes=True, parser=lambda x: x),
-              'b16': DataType(name='b16', basetype='scalar', ascii_bytes=True, parser=_base16_parser),
-              'b64': DataType(name='b64', basetype='scalar', ascii_bytes=True, parser=_base64_parser),
+              'base16': DataType(name='b16', basetype='scalar', ascii_bytes=True, parser=_base16_parser),
+              'base64': DataType(name='b64', basetype='scalar', ascii_bytes=True, parser=_base64_parser),
               'dict': DataType(name='dict', basetype='dict', mutable=True, parser=dict),
               'list': DataType(name='list', basetype='list', mutable=True, parser=list)}
 

@@ -930,10 +930,10 @@ class BespONDecoder(object):
                     node.final_val = self._type_tagged_scalar(state, node, content)
                 else:
                     try:
-                        content_bin = content.encode('ascii')
+                        content_bytes = content.encode('ascii')
                     except Exception as e:
                         raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                    node.final_val = self._type_tagged_scalar(state, node, content_bin)
+                    node.final_val = self._type_tagged_scalar(state, node, content_bytes)
             if node.tag.label is not None:
                 state.ast.register_label(node)
         state.next_scalar = node
@@ -1019,17 +1019,17 @@ class BespONDecoder(object):
                     node.final_val = self._type_tagged_scalar(state, node, content_esc)
                 else:
                     try:
-                        content_bin = content.encode('ascii')
+                        content_bytes = content.encode('ascii')
                     except Exception as e:
                         raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                    if b'\\' not in content_bin:
-                        content_bin_esc = content_bin
+                    if b'\\' not in content_bytes:
+                        content_bytes_esc = content_bytes
                     else:
                         try:
-                            content_bin_esc = self._unescape_bytes(content_bin)
+                            content_bytes_esc = self._unescape_bytes(content_bytes)
                         except Exception as e:
                             raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
-                    node.final_val = self._type_tagged_scalar(state, node, content_bin_esc)
+                    node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
             if node.tag.label is not None:
                 state.ast.register_label(node)
         state.next_scalar = node
@@ -1223,10 +1223,10 @@ class BespONDecoder(object):
                         node.final_val = self._type_tagged_scalar(state, node, content)
                     else:
                         try:
-                            content_bin = content.encode('ascii')
+                            content_bytes = content.encode('ascii')
                         except Exception as e:
                             raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                        node.final_val = self._type_tagged_scalar(state, node, content_bin)
+                        node.final_val = self._type_tagged_scalar(state, node, content_bytes)
                 if node.tag.label is not None:
                     state.ast.register_label(node)
             state.next_scalar = node
@@ -1282,18 +1282,18 @@ class BespONDecoder(object):
                         node.final_val = self._type_tagged_scalar(state, node, content_esc)
                     else:
                         try:
-                            content_bin = content.encode('ascii')
+                            content_bytes = content.encode('ascii')
                         except Exception as e:
                             raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
                         # For ASCII bytes types, "newline" value is checked
                         # for compatibility in tag, so there's no need for a
                         # check here.
-                        tag_newline_bin = tag_newline.encode('ascii')
+                        tag_newline_bytes = tag_newline.encode('ascii')
                         try:
-                            content_bin_esc = self._unescape_bytes(content_bin, newline=tag_newline_bin)
+                            content_bytes_esc = self._unescape_bytes(content_bytes, newline=tag_newline_bytes)
                         except Exception as e:
                             raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
-                        node.final_val = self._type_tagged_scalar(state, node, content_bin_esc)
+                        node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
                 if node.tag.label is not None:
                     state.ast.register_label(node)
             state.next_scalar = node
