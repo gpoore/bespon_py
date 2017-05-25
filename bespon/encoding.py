@@ -52,14 +52,18 @@ class BespONEncoder(object):
 
         self._escape = escape.Escape()
         self._escape_unicode = self._escape.escape_unicode
+        self._escape_bytes = self._escape.escape_bytes
         self._invalid_literal_unicode_re = self._escape.invalid_literal_unicode_re
         self._invalid_literal_bytes_re = self._escape.invalid_literal_bytes_re
 
         unquoted_string_pattern = r'(?!{reserved_word}$){unquoted_string}\Z'
         self._unquoted_str_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
                                                                           unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
+        self._unquoted_bytes_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
+                                                                            unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']).encode('ascii'))
 
-        self._line_terminator_re = re.compile(grammar.RE_GRAMMAR['line_terminator_unicode'])
+        self._line_terminator_unicode_re = re.compile(grammar.RE_GRAMMAR['line_terminator_unicode'])
+        self._line_terminator_bytes_re = re.compile(grammar.RE_GRAMMAR['line_terminator_ascii'].encode('ascii'))
 
         self.bidi_rtl_re = re.compile(grammar.RE_GRAMMAR['bidi_rtl'])
         self._last_scalar_bidi_rtl = False
@@ -69,6 +73,7 @@ class BespONEncoder(object):
                               type(1): self._encode_int,
                               type(1.0): self._encode_float,
                               type('a'): self._encode_str,
+                              type(b'a'): self._encode_bytes,
                               type([]): self._encode_list,
                               type({}): self._encode_dict}
 
@@ -138,7 +143,7 @@ class BespONEncoder(object):
             if delim is None:
                 raise ValueError('String does not match the required pattern for a key path element')
             raise ValueError('Key path elements cannot be quoted')
-        if self._line_terminator_re.search(obj) is None:
+        if self._line_terminator_unicode_re.search(obj) is None:
             if delim is None:
                 if '"' not in obj:
                     return '"{0}"'.format(self._escape_unicode(obj, '"'))
@@ -213,6 +218,92 @@ class BespONEncoder(object):
         obj_encoded_lines = obj_encoded.splitlines(True)
         obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
         return '|{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented, indent)
+
+
+    def _encode_bytes(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
+        self._last_scalar_bidi_rtl = False
+        if delim is None:
+            m = self._unquoted_bytes_re.match(obj)
+        if key_path:
+            raise TypeError('Bytes type cannot be used in key paths')
+        if delim is None and m is not None:
+            return '(bytes)> {0}'.format(obj.decode('ascii'))
+        if self._line_terminator_bytes_re.search(obj) is None:
+            if delim is None:
+                if b'"' not in obj:
+                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
+                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
+            if delim[0] == '"':
+                if b'"' not in obj:
+                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
+                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
+            if delim[0] == "'":
+                if b"'" not in obj:
+                    return "(bytes)> '{0}'".format(self._escape_bytes(obj, "'").decode('ascii'))
+                return "(bytes)> '''{0}'''".format(self._escape_bytes(obj, "'", multidelim=True).decode('ascii'))
+            if delim[0] == '`':
+                if self._invalid_literal_bytes_re.search(obj) is not None:
+                    if b'"' not in obj:
+                        return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
+                    return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
+                if b'`' not in obj:
+                    return '(bytes)> `{0}`'.format(obj.decode('ascii'))
+                if b'``' not in obj:
+                    if obj[:1] == b'`':
+                        open_delim = '``\x20'
+                    else:
+                        open_delim = '``'
+                    if obj[-1:] == b'`':
+                        close_delim = '\x20``'
+                    else:
+                        close_delim = '``'
+                    return '(bytes)> ' + open_delim + obj.decode('ascii') + close_delim
+                if b'```' not in obj:
+                    if obj[:1] == b'`':
+                        open_delim = '```\x20'
+                    else:
+                        open_delim = '```'
+                    if obj[-1:] == b'`':
+                        close_delim = '\x20```'
+                    else:
+                        close_delim = '```'
+                    return '(bytes)> ' + open_delim + obj.decode('ascii') + close_delim
+                if b'"' not in obj:
+                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
+                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
+            raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
+        if delim is not None and len(delim) % 3 != 0:
+            delim = delim[0]*3
+        indent_bytes = indent.encode('ascii')
+        if delim is None or obj[-1:] != b'\n' or self._invalid_literal_bytes_re.search(obj) is not None:
+            if delim is None or delim[0] == '`':
+                delim_char = '"'
+            elif delim[0] in ('"', "'"):
+                delim_char = delim[0]
+            else:
+                raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
+            obj_encoded = self._escape_bytes(obj, delim_char, multidelim=True)
+            obj_encoded_lines = obj_encoded.splitlines(True)
+            if obj_encoded_lines[-1][-1:] != b'\n':
+                obj_encoded_lines[-1] += b'\\\n'
+            obj_encoded_indented = b''.join([indent_bytes + line for line in obj_encoded_lines])
+            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim_char*3, obj_encoded_indented.decode('ascii'), indent)
+        if delim.encode('ascii') not in obj:
+            obj_lines = obj.splitlines(True)
+            obj_indented = b''.join([indent_bytes + line for line in obj_lines])
+            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim, obj_indented.decode('ascii'), indent)
+        if delim[0].encode('ascii')*3 not in obj:
+            obj_lines = obj.splitlines(True)
+            obj_indented = b''.join([indent + line for line in obj_lines])
+            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim[0]*3, obj_indented.decode('ascii'), indent)
+        if delim[0].encode('ascii')*6 not in obj:
+            obj_lines = obj.splitlines(True)
+            obj_indented = b''.join([indent_bytes + line for line in obj_lines])
+            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim[0]*6, obj_indented.decode('ascii'), indent)
+        obj_encoded = self._escape_bytes(obj, '"', multidelim=True)
+        obj_encoded_lines = obj_encoded.splitlines(True)
+        obj_encoded_indented = b''.join([indent_bytes + line for line in obj_encoded_lines])
+        return '(bytes)> |{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented.decode('ascii'), indent)
 
 
     def _encode_list(self, obj, indent, key=False, key_path=False, val=False,
