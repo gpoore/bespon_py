@@ -14,6 +14,7 @@ from __future__ import (division, print_function, absolute_import,
                         unicode_literals)
 
 import sys
+import collections
 from . import erring
 from . import astnodes
 from . import grammar
@@ -38,8 +39,11 @@ class Ast(object):
     __slots__ = ['state', 'full_ast', 'max_nesting_depth',
                  'source', 'source_lines', 'root', 'pos', 'section_pos',
                  'scalar_nodes', 'line_comments',
-                 '_unresolved_nodes', '_in_tag_cached_pos',
-                 '_first_section', '_last_section']
+                 '_unresolved_collection_nodes',
+                 '_unresolved_alias_nodes',
+                 '_in_tag_cached_pos',
+                 '_first_section', '_last_section',
+                 '_labels']
 
     def __init__(self, state, max_nesting_depth=100):
         self.state = state
@@ -56,10 +60,12 @@ class Ast(object):
         if self.full_ast:
             self.scalar_nodes = []
             self.line_comments = []
-        self._unresolved_nodes = [self.root]
+        self._unresolved_collection_nodes = []
+        self._unresolved_alias_nodes = []
         self._in_tag_cached_pos = None
         self._first_section = None
         self._last_section = None
+        self._labels = {}
 
     def __bool__(self):
         if len(self.root) > 0:
@@ -225,7 +231,7 @@ class Ast(object):
         state.next_scalar = None
         state.next_cache = False
         if not scalar_obj._resolved:
-            self._unresolved_nodes.append(scalar_obj)
+            self._unresolved_alias_nodes.append(scalar_obj)
         if self.section_pos is not self.pos:
             self.pos.check_append_scalar_val(scalar_obj)
         else:
@@ -240,8 +246,7 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        if not collection_obj._resolved:
-            self._unresolved_nodes.append(collection_obj)
+        self._unresolved_collection_nodes.append(collection_obj)
         if self.section_pos is not self.pos:
             self.pos.check_append_collection(collection_obj)
         else:
@@ -261,8 +266,7 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        if not collection_obj._resolved:
-            self._unresolved_nodes.append(collection_obj)
+        self._unresolved_collection_nodes.append(collection_obj)
         self.pos.check_append_key_path_collection(collection_obj)
         if collection_obj.nesting_depth > self.max_nesting_depth:
             raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
@@ -413,7 +417,7 @@ class Ast(object):
         if pos._unresolved_dependency_count == 0:
             pos._resolved = True
         else:
-            self._unresolved_nodes.append(pos)
+            self._unresolved_collection_nodes.append(pos)
         state.inline = pos.external_inline
         state.next_tag = pos
         state.next_cache = True
@@ -661,10 +665,12 @@ class Ast(object):
         '''
         Register a labeled object for tracking and future alias resolution.
         '''
-        raise NotImplementedError
+        self._labels[obj.tag.label] = obj
 
 
-    def resolve(self):
+    def _resolve(self, home_alias=grammar.LIT_GRAMMAR['home_alias'],
+                self_alias=grammar.LIT_GRAMMAR['self_alias'],
+                dict=dict, list=list, reversed=reversed, len=len):
         '''
         Convert all unresolved nodes into standard Python types.
         '''
@@ -687,36 +693,257 @@ class Ast(object):
         # contain an alias to itself, unless that alias is inside a mutable
         # collection.  This complicates the resolving process for immutable
         # objects, and requires a check for unresolvable situations.
-        data_types = self.state.data_types
-        unresolved_nodes = list(reversed(self._unresolved_nodes))
-        while unresolved_nodes:
-            initial_unresolved_count = len(unresolved_nodes)
-            remaining_nodes = []
-            for node in unresolved_nodes:
-                if node._unresolved_dependency_count > 0:
-                    remaining_nodes.append(node)
-                elif node.basetype == 'tag':
-                    # #### Check
-                    node._resolved = True
-                elif node.tag is None or node.tag._resolved:
-                    # #### Fix for other types
-                    if node.basetype == 'dict':
-                        #node.final_val = data_types[node.basetype].parser((k, v.final_val) for k, v in node.items())
-                        node.final_val = {k: v.final_val for k, v in node.items()}
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'list':
-                        #node.final_val = data_types[node.basetype].parser(x.final_val for x in node)
-                        node.final_val = [x.final_val for x in node]
-                        node.parent._unresolved_dependency_count -= 1
-                    elif node.basetype == 'root':
-                        node.final_val = node[0].final_val
+        state = self.state
+        data_types = state.data_types
+        root = self.root
+        unresolved_alias_nodes = list(reversed(self._unresolved_alias_nodes))
+        unresolved_collection_nodes = list(reversed(self._unresolved_collection_nodes))
+        labels = self._labels
+
+        if not unresolved_alias_nodes:
+            initial_unresolved_count = len(unresolved_collection_nodes)
+
+            while unresolved_collection_nodes:
+                remaining_collection_nodes = []
+                for node in unresolved_collection_nodes:
+                    if node._unresolved_dependency_count > 0:
+                        remaining_collection_nodes.append(node)
                     else:
-                        raise NotImplementedError
-                else:
-                    remaining_nodes.append(node)
-            unresolved_nodes = remaining_nodes
-            if not len(unresolved_nodes) < initial_unresolved_count and unresolved_nodes:
-                raise erring.ParseError('Could not resolve all nodes', self.state)
+                        basetype = node.basetype
+                        if basetype == 'dict':
+                            if node.tag is None or node.tag.type is None:
+                                node_type = basetype
+                            else:
+                                node_type = node.tag.type
+                            parser = data_types[node_type].parser
+                            if parser is dict:
+                                node.final_val = {k: v.final_val for k, v in node.items()}
+                            else:
+                                node.final_val = parser((k, v.final_val) for k, v in node.items())
+                            node.parent._unresolved_dependency_count -= 1
+                        elif basetype == 'list':
+                            if node.tag is None or node.tag.type is None:
+                                node_type = basetype
+                            else:
+                                node_type = node.tag.type
+                            parser = data_types[node_type].parser
+                            if parser is list:
+                                node.final_val = [v.final_val for v in node]
+                            else:
+                                node.final_val = parser(v.final_val for v in node)
+                            node.parent._unresolved_dependency_count -= 1
+                        else:
+                            raise ValueError
+
+                unresolved_collection_nodes = remaining_collection_nodes
+                unresolved_count = len(unresolved_collection_nodes)
+                if unresolved_count == initial_unresolved_count:
+                    raise erring.ParseError('Could not resolve all nodes', state)
+                initial_unresolved_count = unresolved_count
+
+        else:
+            for node in unresolved_collection_nodes:
+                basetype = node.basetype
+                if basetype in ('dict', 'list'):
+                    if node.tag is None or node.tag.type is None:
+                        node_type = basetype
+                    else:
+                        node_type = node.tag.type
+                    data_type = data_types[node_type]
+                    if data_type.mutable:
+                        node.final_val = data_type.parser()
+
+            initial_unresolved_count = len(unresolved_collection_nodes) + len(unresolved_alias_nodes)
+            while unresolved_alias_nodes or unresolved_collection_nodes:
+                remaining_alias_nodes = []
+                remaining_collection_nodes = []
+
+                for node in unresolved_alias_nodes:
+                    if node.target_root is None:
+                        target_label = node.target_label
+                        if target_label == home_alias:
+                            if root[0].basetype not in ('dict', 'list'):
+                                raise erring.ParseError('Cannot resolve an alias to the top level of the data structure when the top level is not a dict-like or list-like object', node, root[0])
+                            node.target_root = root[0]
+                        elif target_label == self_alias:
+                            parent_basetype = node.parent.basetype
+                            if parent_basetype in ('dict', 'list'):
+                                node.target_root = node.parent
+                            elif parent_basetype == 'tag':
+                                node.target_root = node.parent.parent
+                            elif parent_basetype == 'alias_list':
+                                node.target_root = node.parent.parent.parent
+                            else:
+                                raise ValueError
+                        elif target_label in labels:
+                            node.target_root = labels[target_label]
+                        else:
+                            raise erring.ParseError('Label "{0}" was never created'.format(target_label), node)
+                        if node.target_path is None:
+                            if node.target_root is node:
+                                raise erring.ParseError('Self-referential aliases are not permitted', node)
+                            node.target_node = node.target_root
+                    if node.target_node is None:
+                        alias_pos = node.target_root
+                        for ap_elem in node.target_path:
+                            if alias_pos.basetype != 'dict':
+                                raise erring.ParseError('An alias path cannot pass through anything but a dict-like object', node, alias_pos)
+                            if ap_elem not in alias_pos:
+                                raise erring.ParseError('Alias path could not be resolved; missing path element "{0}"'.format(ap_elem), node, alias_pos)
+                            alias_pos = alias_pos[ap_elem]
+                        if alias_pos is node:
+                            raise erring.ParseError('Self-referential aliases are not permitted', node)
+                        node.target_node = alias_pos
+                    if node.target_node is not None:
+                        if node.target_node._resolved or (node.target_node.basetype in ('dict', 'list') and node.target_node.final_val is not None):
+                            node.final_val = node.target_node.final_val
+                            node.parent._unresolved_dependency_count -= 1
+                            node._resolved = True
+                    if not node._resolved:
+                        remaining_alias_nodes.append(node)
+
+                for node in unresolved_collection_nodes:
+                    if node._unresolved_dependency_count > 0:
+                        remaining_collection_nodes.append(node)
+                    else:
+                        basetype = node.basetype
+                        if basetype == 'dict':
+                            if node.final_val is None:
+                                if node.tag is None or node.tag.type is None:
+                                    node_type = basetype
+                                else:
+                                    node_type = node.tag.type
+                                parser = data_types[node_type].parser
+                                if node.tag is None or not node.tag.collection_config:
+                                    node.final_val = parser((k, v.final_val) for k, v in node.items())
+                                else:
+                                    self._resolve_dict_config(node, parser=parser)
+                            elif node.tag is None or not node.tag.collection_config:
+                                node.final_val.update({k: v.final_val for k, v in node.items()})
+                            else:
+                                self._resolve_dict_config(node)
+                            node.parent._unresolved_dependency_count -= 1
+                        elif basetype == 'list':
+                            if node.final_val is None:
+                                if node.tag is None or node.tag.type is None:
+                                    node_type = basetype
+                                else:
+                                    node_type = node.tag.type
+                                parser = data_types[node_type].parser
+                                if node.tag is None or not node.tag.collection_config:
+                                    node.final_val = parser(v.final_val for v in node)
+                                else:
+                                    self._resolve_list_config(node, parser=parser)
+                            elif node.tag is None or not node.tag.collection_config:
+                                node.final_val.extend([v.final_val for v in node])
+                            else:
+                                self._resolve_list_config(node)
+                            node.parent._unresolved_dependency_count -= 1
+                        elif basetype == 'tag' or basetype == 'alias_list':
+                            # Doesn't need a `final_val`
+                            node.parent._unresolved_dependency_count -= 1
+                        else:
+                            raise ValueError
+                        node._resolved = True
+
+                unresolved_alias_nodes = remaining_alias_nodes
+                unresolved_collection_nodes = remaining_collection_nodes
+                unresolved_count = len(unresolved_alias_nodes) + len(unresolved_collection_nodes)
+                if unresolved_count == initial_unresolved_count:
+                    sorted_nodes = list(reversed(unresolved_alias_nodes)) + list(reversed(unresolved_collection_nodes))
+                    raise erring.ParseError('Could not resolve all nodes', state, sorted_nodes)
+                initial_unresolved_count = unresolved_count
+
+        if root._unresolved_dependency_count == 0:
+            root.final_val = root[0].final_val
+            root._resolved = True
+        else:
+            raise erring.ParseError('Failed to resolved root node', state)
+
+
+    def _resolve_dict_config(self, dict_node, parser=None,
+                             OrderedDict=collections.OrderedDict):
+        '''
+        Resolve a dict-like node with collection configuration.
+        '''
+        if parser is None:
+            store = dict_node.final_val
+        else:
+            store = OrderedDict()
+        tag = dict_node.tag
+        dict_node_key_nodes = dict_node.key_nodes
+        if 'init' in tag:
+            init_aliases = tag['init']
+            if init_aliases.basetype == 'alias':
+                init_aliases = (init_aliases,)
+            for init_alias in init_aliases:
+                if init_alias.target_node.basetype != 'dict':
+                    raise erring.ParseError('Alias type is incompatible with dict-like object', init_alias, init_alias.target_node)
+                init_alias_target_node_key_nodes = init_alias.target_node.key_nodes
+                for k, v in init_alias.target_node.final_val.items():
+                    if k in store:
+                        for a in init_aliases:
+                            if k in a.target_node:
+                                other_alias = a
+                                break
+                        raise erring.ParseError('Duplicate keys in "init" are prohibited', init_alias, [init_alias.target_node, init_alias.target_node.key_nodes[k], other_alias, other_alias.target_node, other_alias.target_node.key_nodes[k]])
+                    store[k] = v
+                    dict_node_key_nodes[k] = init_alias_target_node_key_nodes[k]
+        if 'recmerge' not in tag:
+            for k, v in dict_node.items():
+                if k in store:
+                    for a in init_aliases:
+                        if k in a.target_node:
+                            alias = a
+                            break
+                    raise erring.ParseError('Duplicating keys provided by "init" is prohibited', dict_node.key_nodes[k], [alias, alias.target_node, alias.target_node.key_nodes[k]])
+                store[k] = v.final_val
+        else:
+            raise NotImplementedError
+        if 'default' in tag:
+            default_aliases = tag['default']
+            if default_aliases.basetype == 'alias':
+                default_aliases = (default_aliases,)
+            for default_alias in default_aliases:
+                if default_alias.target_node.basetype != 'dict':
+                    raise erring.ParseError('Alias type is incompatible with dict-like object', default_alias, default_alias.target_node)
+                default_alias_target_node_key_nodes = default_alias.target_node.key_nodes
+                for k, v in default_alias.target_node.final_val.items():
+                    if k not in store:
+                        store[k] = v
+                        dict_node_key_nodes[k] = default_alias_target_node_key_nodes[k]
+        if parser is not None:
+            dict_node.final_val = parser((k, v) for k, v in store.items())
+
+
+    def _resolve_list_config(self, list_node, parser=None):
+        '''
+        Resolve a list-like node with collection configuration.
+        '''
+        if parser is None:
+            store = list_node.final_val
+        else:
+            store = []
+        tag = list_node.tag
+        if 'init' in tag:
+            init_aliases = tag['init']
+            if init_aliases.basetype == 'alias':
+                init_aliases = (init_aliases,)
+            for init_alias in init_aliases:
+                if init_alias.target_node.basetype != 'list':
+                    raise erring.ParseError('Alias type is incompatible with dict-like object', init_alias, init_alias.target_node)
+                store.extend(init_alias.target_node.final_val)
+        store.extend([v.final_val for v in list_node])
+        if 'extend' in tag:
+            extend_aliases = tag['extend']
+            if extend_aliases.basetype == 'alias':
+                extend_aliases = (extend_aliases,)
+            for extend_alias in extend_aliases:
+                if extend_alias.target_node.basetype != 'list':
+                    raise erring.ParseError('Alias type is incompatible with dict-like object', extend_alias, extend_alias.target_node)
+                store.extend(extend_alias.target_node.final_val)
+        if parser is not None:
+            list_node.final_val = parser(v for v in store)
 
 
     def finalize(self):
@@ -765,7 +992,7 @@ class Ast(object):
                     pos._key_path_scope = None
                 pos = parent
             self.pos = pos
-        self.resolve()
+        self._resolve()
         # Update source with final locations
         self.source.last_lineno = state.lineno
         self.source.last_colno = state.colno

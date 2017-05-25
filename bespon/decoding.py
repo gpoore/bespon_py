@@ -26,7 +26,7 @@ from . import tooling
 from . import load_types
 from . import grammar
 from .ast import Ast
-from .astnodes import ScalarNode, FullScalarNode, CommentNode, FullCommentNode, KeyPathNode, SectionNode
+from .astnodes import ScalarNode, FullScalarNode, CommentNode, FullCommentNode, AliasNode, KeyPathNode, SectionNode
 
 if sys.version_info.major == 2:
     str = unicode
@@ -102,7 +102,8 @@ class State(object):
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno',
                  'bidi_rtl_last_scalar_last_line',
-                 'newline_re', 'unquoted_string_or_key_path_re', 'number_re',
+                 'newline_re', 'unquoted_string_or_key_path_re',
+                 'alias_path_re', 'number_re',
                  'escape_unicode', 'unescape_unicode', 'unescape_bytes']
     def __init__(self, decoder, source_raw_string,
                  source_name=None, source_include_depth=0,
@@ -212,6 +213,7 @@ class State(object):
         self.bidi_rtl_last_scalar_last_lineno = 0
         self.bidi_rtl_last_scalar_last_line = ''
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_ascii_re
+        self.alias_path_re = decoder._alias_path_ascii_re
         self.number_re = decoder._number_re
 
         if source_raw_string[:1] == bom:
@@ -227,11 +229,13 @@ class State(object):
             self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start())
         self.source_only_ascii = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
+        self.alias_path_re = decoder._alias_path_below_u0590_re
         m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(source_raw_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
         self.source_only_below_u0590 = False
         self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
+        self.alias_path_re = decoder._alias_path_unicode_re
         m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(source_raw_string, m_not_valid_below_u0590.start())
         if m_bidi_rtl_or_not_valid_unicode is None:
             return
@@ -277,10 +281,13 @@ class BespONDecoder(object):
                  '_bidi_rtl_re', '_bidi_rtl_or_not_valid_unicode_re',
                  '_newline_re',
                  '_closing_delim_re_dict',
-                 '_number_re',
                  '_unquoted_string_or_key_path_ascii_re',
                  '_unquoted_string_or_key_path_below_u0590_re',
                  '_unquoted_string_or_key_path_unicode_re',
+                 '_alias_path_ascii_re',
+                 '_alias_path_below_u0590_re',
+                 '_alias_path_unicode_re',
+                 '_number_re',
                  '_reserved_word_types']
     def __init__(self, *args, **kwargs):
         # Process args
@@ -393,10 +400,14 @@ class BespONDecoder(object):
         # delimiters are valid.
         self._closing_delim_re_dict = tooling.keydefaultdict(lambda delim: grammar.gen_closing_delim_re(delim))
 
-        self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
         self._unquoted_string_or_key_path_ascii_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_ascii'])
         self._unquoted_string_or_key_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_below_u0590'])
         self._unquoted_string_or_key_path_unicode_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_unicode'])
+        self._alias_path_ascii_re = re.compile(grammar.RE_GRAMMAR['alias_path_ascii'])
+        self._alias_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['alias_path_below_u0590'])
+        self._alias_path_unicode_re = re.compile(grammar.RE_GRAMMAR['alias_path_unicode'])
+
+        self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
 
         # Dict for looking up types of valid reserved words
         self._reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
@@ -897,7 +908,7 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Cannot start a string when a prior string has not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         line_lstrip_delim = line.lstrip(line[0])
         len_delim = len_line - len(line_lstrip_delim)
@@ -934,8 +945,6 @@ class BespONDecoder(object):
                     except Exception as e:
                         raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
                     node.final_val = self._type_tagged_scalar(state, node, content_bytes)
-            if node.tag.label is not None:
-                state.ast.register_label(node)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -963,7 +972,7 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Encountered a string when a prior string had not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Encountered a string when a prior scalar had not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         line_lstrip_delim = line.lstrip(line[0])
         len_delim = len_line - len(line_lstrip_delim)
@@ -1030,8 +1039,6 @@ class BespONDecoder(object):
                         except Exception as e:
                             raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
                     node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
-            if node.tag.label is not None:
-                state.ast.register_label(node)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -1130,7 +1137,7 @@ class BespONDecoder(object):
             raise erring.ParseError('Invalid block delimiter', state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Encountered a string when a prior string had not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Encountered a string when a prior scalar had not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         elif delim_code_point == comment_delim and state.next_doc_comment is not None:
             raise erring.ParseError('Encountered a doc comment when a prior doc comment had not yet been resolved', state, unresolved_cache=True)
@@ -1227,8 +1234,6 @@ class BespONDecoder(object):
                         except Exception as e:
                             raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
                         node.final_val = self._type_tagged_scalar(state, node, content_bytes)
-                if node.tag.label is not None:
-                    state.ast.register_label(node)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
@@ -1294,8 +1299,6 @@ class BespONDecoder(object):
                         except Exception as e:
                             raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
                         node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
-                if node.tag.label is not None:
-                    state.ast.register_label(node)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
@@ -1339,7 +1342,7 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Cannot start a string when a prior string has not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.number_re.match(line)
         if m is None:
@@ -1354,14 +1357,6 @@ class BespONDecoder(object):
         cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
         if group_type == 'int':
             implicit_type = 'int'
-            parser = state.data_types[implicit_type].parser
-            try:
-                if group_base == 10:
-                    final_val = parser(cleaned_val)
-                else:
-                    final_val = parser(cleaned_val, group_base)
-            except Exception as e:
-                raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
@@ -1369,23 +1364,58 @@ class BespONDecoder(object):
                                       implicit_type, num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
+            if node.tag is None:
+                parser = state.data_types[implicit_type].parser
+                try:
+                    if group_base == 10:
+                        final_val = parser(cleaned_val)
+                    else:
+                        final_val = parser(cleaned_val, group_base)
+                except Exception as e:
+                    raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
+            else:
+                if node.tag.type is None:
+                    parser = state.data_types[implicit_type].parser
+                    try:
+                        if group_base == 10:
+                            final_val = parser(cleaned_val)
+                        else:
+                            final_val = parser(cleaned_val, group_base)
+                    except Exception as e:
+                        raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
+                else:
+                    final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = True
         elif group_type == 'float' or group_type == 'float_inf_or_nan':
-            parser = state.data_types['float'].parser
-            try:
-                if group_base == 10:
-                    final_val = parser(cleaned_val)
-                else:
-                    final_val = parser.fromhex(cleaned_val)
-            except Exception as e:
-                raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
+            implicit_type = 'float'
             if not state.full_ast:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, 'float')
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
                 node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
-                                      'float', num_base=group_base)
+                                      implicit_type, num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
+            if node.tag is None:
+                parser = state.data_types[implicit_type].parser
+                try:
+                    if group_base == 10:
+                        final_val = parser(cleaned_val)
+                    else:
+                        final_val = parser.fromhex(cleaned_val)
+                except Exception as e:
+                    raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
+            else:
+                if node.tag.type is None:
+                    parser = state.data_types[implicit_type].parser
+                    try:
+                        if group_base == 10:
+                            final_val = parser(cleaned_val)
+                        else:
+                            final_val = parser.fromhex(cleaned_val)
+                    except Exception as e:
+                        raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
+                else:
+                    final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = False
         else:
             raise ValueError
@@ -1413,7 +1443,7 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Cannot start a string when a prior string has not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)
         if m is None:
@@ -1422,7 +1452,8 @@ class BespONDecoder(object):
         raw_val = line[:m_end]
         last_colno = first_colno + m_end - 1
         line = line[m_end:]
-        if m.lastgroup == 'unquoted_string':
+        group_name = m.lastgroup
+        if group_name == 'unquoted_string':
             implicit_type = 'str'
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
@@ -1431,30 +1462,55 @@ class BespONDecoder(object):
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             if node.tag is None:
-                node.final_val = raw_val
+                final_val = raw_val
             else:
-                node.final_val = self._process_scalar_tag(state, node, raw_val, implicit_type)
+                if node.tag.type is None:
+                    final_val = raw_val
+                else:
+                    if not state.data_types[node.tag.type].ascii_bytes:
+                        final_val = self._type_tagged_scalar(state, node, raw_val)
+                    else:
+                        # Could get an encoding error if non-ASCII unquoted
+                        # string are enabled
+                        try:
+                            raw_val_bytes = raw_val.encode('ascii')
+                        except Exception as e:
+                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                        final_val = self._type_tagged_scalar(state, node, raw_val_bytes)
+            node.final_val = final_val
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
             if state.bidi_rtl:
                 state.bidi_rtl_last_scalar_last_line = raw_val
                 state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
-        elif m.lastgroup == 'reserved_word':
+        elif group_name == 'reserved_word':
             try:
                 implicit_type = self._reserved_word_types[raw_val]
             except KeyError:
                 raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(raw_val.lower()), state)
-            try:
-                final_val = state.data_types[implicit_type].parser(raw_val)
-            except Exception as e:
-                raise erring.ParseError('Error in typing of reserved word "{0}":\n  {1}'.format(raw_val, e), state)
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
+            if node.tag is None:
+                try:
+                    final_val = state.data_types[implicit_type].parser(raw_val)
+                except Exception as e:
+                    raise erring.ParseError('Error in typing of reserved word "{0}":\n  {1}'.format(raw_val, e), state)
+            else:
+                # No need to check for type with ascii_bytes=True, because
+                # all reserved words either cannot be typed with tags (none,
+                # bool), or must be numeric (float)
+                if node.tag.type is None:
+                    try:
+                        final_val = state.data_types[implicit_type].parser(raw_val)
+                    except Exception as e:
+                        raise erring.ParseError('Error in typing of reserved word "{0}":\n  {1}'.format(raw_val, e), state)
+                else:
+                    final_val = self._type_tagged_scalar(state, node, raw_val)
             node.final_val = final_val
             state.next_scalar = node
             if implicit_type != 'float':
@@ -1463,7 +1519,7 @@ class BespONDecoder(object):
                 state.next_scalar_is_keyable = False
             state.next_cache = True
             # Reserved words don't contain rtl code points
-        elif m.lastgroup == 'key_path':
+        elif group_name == 'key_path':
             if state.next_cache:
                 raise erring.ParseError('Key paths do not take doc comments or tags', state, unresolved_cache=True)
             node = KeyPathNode(state, raw_val)
@@ -1492,16 +1548,38 @@ class BespONDecoder(object):
         return line
 
 
-    def _parse_token_alias_prefix(self, line, state):
-        raise NotImplementedError
+    def _parse_token_alias_prefix(self, line, state, AliasNode=AliasNode):
+        state.colno = state.len_full_line_plus_one - len(line)
+        if state.bidi_rtl:
+            self._check_bidi_rtl(state)
+        if state.next_scalar is not None:
+            if state.inline or state.next_scalar.last_lineno == state.lineno:
+                raise erring.ParseError('Cannot start an alias when a prior scalar has not yet been resolved', state, unresolved_cache=True)
+            state.ast.append_scalar_val()
+        m = state.alias_path_re.match(line)
+        if m is None:
+            raise erring.ParseError('Invalid alias:  "{0}"'.format(line.replace('"', '\\"')), state)
+        m_end = m.end()
+        raw_val = line[:m_end]
+        line = line[m_end:]
+        node = AliasNode(state, raw_val)
+        state.next_scalar = node
+        state.next_scalar_is_keyable = False
+        state.next_cache = True
+        if state.bidi_rtl:
+            state.bidi_rtl_last_scalar_last_line = raw_val
+            state.bidi_rtl_last_scalar_last_lineno = node.last_lineno
+        state.at_line_start = False
+        return line
 
 
-    def _type_tagged_scalar(self, state, scalar_obj, processed_val):
-        '''
-        '''
+    def _type_tagged_scalar(self, state, scalar_obj, processed_val, num_base=None):
         tag = scalar_obj.tag
+        data_type = state.data_types[tag.type]
+        if num_base is not None and not data_type.number:
+            raise erring.ParseError('Cannot apply non-numeric type "{0}" to numeric literal'.format(tag.type), scalar_obj, tag['type'])
         try:
-            final_val = state.data_types[scalar_obj.tag.type].parser(processed_val)
+            final_val = data_type.parser(processed_val)
         except Exception as e:
             raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(tag.type, e), scalar_obj, scalar_obj.tag)
         return final_val

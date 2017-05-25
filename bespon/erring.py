@@ -24,7 +24,7 @@ class DecodingException(BespONException):
     '''
     Base decoding exception.
     '''
-    def fmt_msg_with_traceback(self, msg, state_or_obj, other_obj=None, unresolved_cache=False):
+    def fmt_msg_with_traceback(self, msg, state_or_obj, other_objs=None, unresolved_cache=False):
         source_name = state_or_obj._state.source_name
         if unresolved_cache:
             if not hasattr(state_or_obj, 'next_cache'):
@@ -67,17 +67,29 @@ class DecodingException(BespONException):
                                                                                                       cache_obj.last_lineno,
                                                                                                       cache_obj.last_colno)
         else:
-            if other_obj is None:
+            if other_objs is None:
                 other_traceback = ''
-            elif other_obj.first_lineno == other_obj.last_lineno:
-                if other_obj.first_colno == other_obj.last_colno:
-                    other_traceback = ', in relation to object at {0}:{1}'.format(other_obj.first_lineno, other_obj.first_colno)
-                else:
-                    other_traceback = ', in relation to object at {0}:{1}-{2}'.format(other_obj.first_lineno, other_obj.first_colno,
-                                                                                      other_obj.last_colno)
             else:
-                other_traceback = ', in relation to object at {0}:{1}-{2}:{3}'.format(other_obj.first_lineno, other_obj.first_colno,
-                                                                                      other_obj.last_lineno, other_obj.last_colno)
+                if not isinstance(other_objs, list):
+                    other_objs = [other_objs]
+                other_obj_locs = []
+                for other_obj in other_objs:
+                    if other_obj.first_lineno == other_obj.last_lineno:
+                        if other_obj.first_colno == other_obj.last_colno:
+                            loc = '{0}:{1}'.format(other_obj.first_lineno, other_obj.first_colno)
+                        else:
+                            loc = '{0}:{1}-{2}'.format(other_obj.first_lineno, other_obj.first_colno,
+                                                                               other_obj.last_colno)
+                    else:
+                        loc = '{0}:{1}-{2}:{3}'.format(other_obj.first_lineno, other_obj.first_colno,
+                                                       other_obj.last_lineno, other_obj.last_colno)
+                    other_obj_locs.append(loc)
+                if len(other_obj_locs) == 1:
+                    other_traceback = ', in relation to object at ' + other_obj_locs[0]
+                elif len(other_obj_locs) == 2:
+                    other_traceback = ', in relation to objects at {0} and {1}'.format(other_obj_locs[0], other_obj_locs[1])
+                else:
+                    other_traceback = ', in relation to objects at ' + ', '.join(other_obj_locs[:-1]) + ', and ' + other_obj_locs[-1]
             if hasattr(state_or_obj, 'next_cache'):
                 first_lineno = last_lineno = state_or_obj.lineno
                 first_colno = last_colno = state_or_obj.colno
