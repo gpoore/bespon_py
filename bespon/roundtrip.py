@@ -98,6 +98,10 @@ class RoundtripAst(object):
         pos = self.root[0]
         for k in path:
             pos = pos[k]
+        #if pos.tag is not None and [k for k in pos.tag if k not in ('type', 'label')]:
+        #    raise TypeError('Value replacement is currently not supported for tagged objects when the tag does more than specify a type or label')
+        if pos.tag is not None:
+            raise TypeError('Value replacement is not currently supported for tagged objects')
         if type(pos.final_val) != type(obj):
             raise TypeError('Value replacement is only allowed for values of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         continuation_indent = pos.continuation_indent
@@ -133,6 +137,10 @@ class RoundtripAst(object):
         current_dict = pos
         old_key = path[-1]
         pos = pos.key_nodes[old_key]
+        #if old_key.tag is not None and [k for k in pos.tag if k not in ('type', 'label')]:
+        #    raise TypeError('Key replacement is currently not supported for tagged objects when the tag does more than specify a type or label')
+        if pos.tag is not None:
+            raise TypeError('Key replacement is not currently supported for tagged objects')
         if type(pos.final_val) != type(obj):
             raise TypeError('Key replacement is only allowed for keys of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         key_path = False if pos.key_path is None else True
