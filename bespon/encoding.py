@@ -312,6 +312,9 @@ class BespONEncoder(object):
                      end_inline_list=END_INLINE_LIST):
         if key:
             raise TypeError('Lists are not supported as dict keys')
+        if id(obj) in self._collections:
+            raise ValueError('Encoder does not currently support circular references')
+        self._collections.add(id(obj))
         if not obj:
             yield start_inline_list + end_inline_list + '\n'
         else:
@@ -345,6 +348,9 @@ class BespONEncoder(object):
                      assign_key_val=ASSIGN_KEY_VAL):
         if key:
             raise TypeError('Dicts are not supported as dict keys')
+        if id(obj) in self._collections:
+            raise ValueError('Encoder does not currently support circular references')
+        self._collections.add(id(obj))
         if not obj:
             yield start_inline_dict + end_inline_dict + '\n'
         else:
@@ -395,6 +401,7 @@ class BespONEncoder(object):
         '''
         Encode an object as a string.
         '''
+        self._collections = set()
         return ''.join(x for x in self.iterencode(obj))
 
 
@@ -405,6 +412,7 @@ class BespONEncoder(object):
 
         This is used in RoundtripAst.
         '''
+        self._collections = set()
         self._last_scalar_bidi_rtl = False
         if (block and delim is None) or (delim is not None and num_base is not None) or (key_path and not key):
             raise TypeError('Invalid argument combination')
