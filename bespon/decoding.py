@@ -57,6 +57,7 @@ BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
                        COMMENT_DELIM, ASSIGN_KEY_VAL])
 
 NUMBER_START = grammar.LIT_GRAMMAR['number_start']
+INFINITY_WORD = grammar.LIT_GRAMMAR['infinity_word']
 
 
 
@@ -272,7 +273,7 @@ class BespONDecoder(object):
     __slots__ = ['literal_non_ascii',
                  'unquoted_strings', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
-                 'max_nesting_depth',
+                 'max_nesting_depth', 'float_overflow_to_inf',
                  '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
@@ -299,7 +300,8 @@ class BespONDecoder(object):
         unquoted_non_ascii = kwargs.pop('unquoted_non_ascii', False)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
-        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_strings, unquoted_non_ascii, integers)):
+        float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
+        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_strings, unquoted_non_ascii, integers, float_overflow_to_inf)):
             raise TypeError
         if not literal_non_ascii and unquoted_non_ascii:
             raise ValueError('Setting "literal_non_ascii"=False is incompatible with "unquoted_non_ascii"=True')
@@ -312,6 +314,7 @@ class BespONDecoder(object):
         self.unquoted_non_ascii = unquoted_non_ascii
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
+        self.float_overflow_to_inf = float_overflow_to_inf
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)
@@ -1338,7 +1341,8 @@ class BespONDecoder(object):
 
 
     def _parse_token_number(self, line, state, section=False,
-                            len=len, int=int):
+                            len=len, int=int, infinity_word=INFINITY_WORD,
+                            infinity_set=set([float('-inf'), float('inf')])):
         '''
         Parse a number (float, int, etc.).
         '''
@@ -1379,7 +1383,7 @@ class BespONDecoder(object):
                     else:
                         final_val = parser(cleaned_val, group_base)
                 except Exception as e:
-                    raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
+                    raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), node)
             else:
                 if node.tag.type is None:
                     parser = state.data_types[implicit_type].parser
@@ -1389,7 +1393,7 @@ class BespONDecoder(object):
                         else:
                             final_val = parser(cleaned_val, group_base)
                     except Exception as e:
-                        raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), state)
+                        raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), node)
                 else:
                     final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = True
@@ -1411,6 +1415,8 @@ class BespONDecoder(object):
                         final_val = parser.fromhex(cleaned_val)
                 except Exception as e:
                     raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
+                if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
+                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set "float_overflow_to_inf"=True', node)
             else:
                 if node.tag.type is None:
                     parser = state.data_types[implicit_type].parser
@@ -1421,6 +1427,8 @@ class BespONDecoder(object):
                             final_val = parser.fromhex(cleaned_val)
                     except Exception as e:
                         raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
+                    if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
+                        raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set "float_overflow_to_inf"=True', node)
                 else:
                     final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = False
