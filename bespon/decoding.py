@@ -859,7 +859,7 @@ class BespONDecoder(object):
             return self._parse_token_line_comment(line, state)
         if len_delim % 3 != 0 or len_delim > max_delim_length:
             if len_delim == 2:
-                raise erring.ParseError('Invalid comment start "{0}"; use "{1}" for a line comment, or "{3}<comment>{3}" for an inline doc comment'.format(comment_delim*2, comment_delim, comment_delim*3), state)
+                raise erring.ParseError('Invalid comment start "{0}"; use "{1}" for a line comment, or "{2}<comment>{2}" for an inline doc comment'.format(comment_delim*2, comment_delim, comment_delim*3), state)
             raise erring.ParseError('Doc comment delims must have lengths that are multiples of 3 and are no longer than {0} characters'.format(max_delim_length), state)
         if state.in_tag:
             raise erring.ParseError('Doc comments are not allowed in tags', state)
