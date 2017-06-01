@@ -175,7 +175,7 @@ class State(object):
         self.source_lines = source_raw_string.splitlines()
         self.source_lines_iter = iter(self.source_lines)
 
-        self.ast = Ast(self)
+        self.ast = Ast(self, decoder.max_nesting_depth)
         if self.full_ast:
             self.ast.source_lines = self.source_lines
 
@@ -272,6 +272,7 @@ class BespONDecoder(object):
     __slots__ = ['literal_non_ascii',
                  'unquoted_strings', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
+                 'max_nesting_depth',
                  '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
@@ -297,14 +298,20 @@ class BespONDecoder(object):
         unquoted_strings = kwargs.pop('unquoted_strings', True)
         unquoted_non_ascii = kwargs.pop('unquoted_non_ascii', False)
         integers = kwargs.pop('integers', True)
+        max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
         if any(x not in (True, False) for x in (literal_non_ascii, unquoted_strings, unquoted_non_ascii, integers)):
             raise TypeError
         if not literal_non_ascii and unquoted_non_ascii:
             raise ValueError('Setting "literal_non_ascii"=False is incompatible with "unquoted_non_ascii"=True')
+        if not isinstance(max_nesting_depth, int):
+            raise TypeError('"max_nesting_depth" must be an integer')
+        if max_nesting_depth < 0:
+            raise ValueError('"max_nesting_depth" must be >= 0')
         self.literal_non_ascii = literal_non_ascii
         self.unquoted_strings = unquoted_strings
         self.unquoted_non_ascii = unquoted_non_ascii
         self.integers = integers
+        self.max_nesting_depth = max_nesting_depth
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)

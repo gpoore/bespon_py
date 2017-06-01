@@ -46,7 +46,13 @@ class BespONEncoder(object):
     Encode BespON.  This is a very basic encoder using indentation-style
     syntax.
     '''
-    def __init__(self):
+    def __init__(self, max_nesting_depth=100):
+        if not isinstance(max_nesting_depth, int):
+            raise TypeError('"max_nesting_depth" must be an integer')
+        if max_nesting_depth < 0:
+            raise ValueError('"max_nesting_depth" must be >= 0')
+        self.max_nesting_depth = max_nesting_depth
+
         self.dict_indent_per_level = '\x20\x20\x20\x20'
         self.list_indent_per_level = '\x20\x20'
 
@@ -314,6 +320,9 @@ class BespONEncoder(object):
             raise TypeError('Lists are not supported as dict keys')
         if id(obj) in self._collections:
             raise ValueError('Encoder does not currently support circular references')
+        self._nesting_depth += 1
+        if self._nesting_depth > self.max_nesting_depth:
+            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
         self._collections.add(id(obj))
         if not obj:
             yield start_inline_list + end_inline_list + '\n'
@@ -350,6 +359,9 @@ class BespONEncoder(object):
             raise TypeError('Dicts are not supported as dict keys')
         if id(obj) in self._collections:
             raise ValueError('Encoder does not currently support circular references')
+        self._nesting_depth += 1
+        if self._nesting_depth > self.max_nesting_depth:
+            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
         self._collections.add(id(obj))
         if not obj:
             yield start_inline_dict + end_inline_dict + '\n'
@@ -389,6 +401,8 @@ class BespONEncoder(object):
         '''
         Encode an object iteratively as a sequence of strings.
         '''
+        self._nesting_depth = 0
+        self._collections = set()
         self._last_scalar_bidi_rtl = False
         if type(obj) in self._encode_funcs:
             if type(obj) in self._collection_types:
@@ -401,17 +415,18 @@ class BespONEncoder(object):
         '''
         Encode an object as a string.
         '''
-        self._collections = set()
         return ''.join(x for x in self.iterencode(obj))
 
 
     def encode_element(self, obj, indent='', key=False, key_path=False,
-                       delim=None, block=False, num_base=None):
+                       delim=None, block=False, num_base=None,
+                       initial_nesting_depth=0):
         '''
         Encode an object in a manner suitable for a specified context.
 
         This is used in RoundtripAst.
         '''
+        self._nesting_depth = initial_nesting_depth
         self._collections = set()
         self._last_scalar_bidi_rtl = False
         if (block and delim is None) or (delim is not None and num_base is not None) or (key_path and not key):

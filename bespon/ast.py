@@ -45,13 +45,9 @@ class Ast(object):
                  '_first_section', '_last_section',
                  '_labels']
 
-    def __init__(self, state, max_nesting_depth=100):
+    def __init__(self, state, max_nesting_depth):
         self.state = state
         self.full_ast = state.full_ast
-        if not isinstance(max_nesting_depth, int):
-            raise TypeError
-        if max_nesting_depth < 1:
-            raise ValueError
         self.max_nesting_depth = max_nesting_depth
         self.source = astnodes.SourceNode(state)
         self.root = self.source.root
