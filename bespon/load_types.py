@@ -124,8 +124,7 @@ CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: 
               'dict': DataType(name='dict', basetype='dict', mutable=True, parser=dict),
               'list': DataType(name='list', basetype='list', mutable=True, parser=list)}
 
-EXTENDED_TYPES = {}
-# #### TO DO:  Add additional standard collections, complex and rational numbers, etc.
-# 'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict)
-# 'set': DataType(name='set', basetype='list', mutable=True, parser=set)
-# 'tuple': DataType(name='tuple', basetype='list', parser=tuple)
+# #### TO DO:  Complex and rational numbers, etc.?
+EXTENDED_TYPES = {'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict),
+                  'set': DataType(name='set', basetype='list', mutable=True, parser=set),
+                  'tuple': DataType(name='tuple', basetype='list', parser=tuple)}

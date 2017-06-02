@@ -98,7 +98,7 @@ class State(object):
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
                  'next_doc_comment', 'last_line_comment_lineno',
                  'next_scalar', 'next_scalar_is_keyable',
-                 'data_types',
+                 'data_types', 'core_data_types', 'extended_data_types',
                  'ast', 'full_ast',
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno',
@@ -113,7 +113,7 @@ class State(object):
                  indent='', at_line_start=True,
                  inline=False, inline_indent=None,
                  lineno=1, colno=1,
-                 data_types=None, full_ast=False):
+                 full_ast=False):
         if not all(x is None or isinstance(x, str) for x in (source_name, inline_indent)):
             raise TypeError
         if not all(isinstance(x, str) for x in (indent,)):
@@ -129,8 +129,6 @@ class State(object):
                 raise ValueError
             raise TypeError
         if not all(x in (True, False) for x in (at_line_start, inline, full_ast, source_embedded)):
-            raise TypeError
-        if data_types is not None and not (isinstance(data_types, dict) and all(isinstance(k, str) and hasattr(v, '__call__') for k, v in data_types)):
             raise TypeError
 
         # In some cases, depending on context, data may be derived either
@@ -164,7 +162,9 @@ class State(object):
         self.next_scalar = None
         self.next_scalar_is_keyable = False
 
-        self.data_types = data_types or load_types.CORE_TYPES
+        self.data_types = decoder._data_types
+        self.core_data_types = load_types.CORE_TYPES
+        self.extended_data_types = load_types.EXTENDED_TYPES
         self.full_ast = full_ast
 
         self.newline_re = decoder._newline_re
@@ -277,6 +277,7 @@ class BespONDecoder(object):
     __slots__ = ['literal_non_ascii', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
+                 'extended_data_types',
                  '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
@@ -303,7 +304,8 @@ class BespONDecoder(object):
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
-        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_non_ascii, integers, float_overflow_to_inf)):
+        extended_data_types = kwargs.pop('extended_data_types', False)
+        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_non_ascii, integers, float_overflow_to_inf, extended_data_types)):
             raise TypeError
         if not literal_non_ascii and unquoted_non_ascii:
             raise ValueError('Setting literal_non_ascii=False is incompatible with unquoted_non_ascii=True')
@@ -316,6 +318,7 @@ class BespONDecoder(object):
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
         self.float_overflow_to_inf = float_overflow_to_inf
+        self.extended_data_types = extended_data_types
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)
@@ -329,7 +332,10 @@ class BespONDecoder(object):
 
 
         # Parser and type info access
-        self._data_types = load_types.CORE_TYPES
+        data_types = load_types.CORE_TYPES.copy()
+        if self.extended_data_types:
+            data_types.update(load_types.EXTENDED_TYPES)
+        self._data_types = data_types
 
 
         # Create escape and unescape functions
@@ -1354,7 +1360,7 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
+                raise erring.ParseError('Cannot start a number when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.number_re.match(line)
         if m is None:
@@ -1459,6 +1465,10 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
+                if not state.unquoted_string_or_key_path_re.match(line):
+                    if not self._unquoted_string_or_key_path_unicode_re.match(line):
+                        raise erring.ParseError('Invalid character kept a prior scalar from being resolved', state, unresolved_cache=True)
+                    raise erring.ParseError('Invalid character kept a prior scalar from being resolved (unquoted_non_ascii=False)', state, unresolved_cache=True)
                 raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)

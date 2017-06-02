@@ -800,7 +800,7 @@ class TagNode(collections.OrderedDict):
     _keywords = _general_keywords | _block_scalar_keywords | _collection_keywords | _dict_keywords | _list_keywords
 
 
-    def check_append_scalar_key(self, obj):
+    def check_append_scalar_key(self, obj, len=len):
         if not self._open:
             raise erring.ParseError('Cannot add a key to a closed object; perhaps a "{0}" is missing'.format(INLINE_ELEMENT_SEPARATOR), obj)
         if self._awaiting_val:
@@ -829,7 +829,8 @@ class TagNode(collections.OrderedDict):
             #     other_key = 'deep_' + key
             # if other_key in self:
             #     raise erring.ParseError('Encountered mutually exclusive collection config settings "{0}" and "{1}'.format(key, other_key), obj, self.key_nodes[other_key])
-            self.compatible_basetypes = self._collection_compatible_basetypes
+            if len(self.compatible_basetypes) > 1:
+                self.compatible_basetypes = self._collection_compatible_basetypes
             self.collection_config = True
         elif key in self._dict_keywords:
             if 'dict' not in self.compatible_basetypes:
@@ -864,8 +865,18 @@ class TagNode(collections.OrderedDict):
                 self.type = val
                 self.compatible_basetypes = data_type.basetype_set
             else:
-                if obj._resolved and obj.final_val in data_types:
-                    raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
+                if not self._open:
+                    raise erring.ParseError('Cannot append to a closed tag; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), obj)
+                if obj.basetype != 'scalar':
+                    raise erring.ParseError('Unexpected object in tag; check for a missing key', obj)
+                if obj.final_val in data_types or obj.final_val in self._state.extended_data_types:
+                    if obj.final_val not in data_types:
+                        raise erring.ParseError('Type "{0}" is not enabled (extended_data_types=False)'.format(obj.final_val), obj)
+                    if obj.delim is not None:
+                        raise erring.ParseError('Type names must be unquoted', obj)
+                    if self:
+                        raise erring.ParseError('Misplaced type; type must be first in a tag', obj)
+                    raise erring.ParseError('Missing key or unknown type; cannot add a value until a key has been given', obj)
                 raise erring.ParseError('Missing key or unknown type; cannot add a value until a key has been given', obj)
         else:
             key = self._next_key
@@ -906,12 +917,14 @@ class TagNode(collections.OrderedDict):
 
 
     def check_append_collection(self, obj):
-        if not obj.external_indent.startswith(self.inline_indent):
+        if obj.basetype != 'alias_list':
+            raise erring.ParseError('Collections are prohibited in tags, except for lists of aliases used in collection config', obj)
+        if not obj.indent.startswith(self.inline_indent):
             raise erring.IndentationError(obj)
         if not self._awaiting_val:
             raise erring.ParseError('Missing key; cannot add a value until a key has been given', obj)
         key = self._next_key
-        if key not in self._collection_keywords or obj.basetype != 'alias_list':
+        if key not in self._collection_keywords:
             raise erring.ParseError('Collections are prohibited in tags, except for lists of aliases used in collection config', obj)
         self[key] = obj
         obj.parent = self
