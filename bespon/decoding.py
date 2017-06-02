@@ -181,7 +181,7 @@ class State(object):
             self.ast.source_lines = self.source_lines
 
 
-    def _traceback_not_valid_literal(self, source_raw_string, index):
+    def _traceback_not_valid_literal(self, source_raw_string, index, decoder):
         '''
         Locate an invalid literal code point using an re match object,
         and raise an error.
@@ -198,6 +198,8 @@ class State(object):
             self.colno = index - newline_index
         code_point = source_raw_string[index]
         code_point_esc = self.escape_unicode(code_point)
+        if not decoder.literal_non_ascii and not decoder._not_valid_unicode_re.search(source_raw_string):
+            raise erring.InvalidLiteralError(self, code_point, code_point_esc, comment='literal_non_ascii=False')
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
 
 
@@ -227,26 +229,28 @@ class State(object):
         if m_not_valid_ascii is None:
             return
         if not decoder.literal_non_ascii:
-            self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start())
+            self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start(), decoder)
         self.source_only_ascii = False
-        self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
-        self.alias_path_re = decoder._alias_path_below_u0590_re
+        if decoder.unquoted_non_ascii:
+            self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
+            self.alias_path_re = decoder._alias_path_below_u0590_re
         m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(source_raw_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
         self.source_only_below_u0590 = False
-        self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
-        self.alias_path_re = decoder._alias_path_unicode_re
+        if decoder.unquoted_non_ascii:
+            self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
+            self.alias_path_re = decoder._alias_path_unicode_re
         m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(source_raw_string, m_not_valid_below_u0590.start())
         if m_bidi_rtl_or_not_valid_unicode is None:
             return
         if m_bidi_rtl_or_not_valid_unicode.lastgroup == 'not_valid':
-            self._traceback_not_valid_literal(source_raw_string, m_bidi_rtl_or_not_valid_unicode.start())
+            self._traceback_not_valid_literal(source_raw_string, m_bidi_rtl_or_not_valid_unicode.start(), decoder)
         self.bidi_rtl = True
         m_not_valid_unicode = decoder._not_valid_unicode_re.search(source_raw_string, m_bidi_rtl_or_not_valid_unicode.start())
         if m_not_valid_unicode is None:
             return
-        self._traceback_not_valid_literal(source_raw_string, m_not_valid_unicode.start())
+        self._traceback_not_valid_literal(source_raw_string, m_not_valid_unicode.start(), decoder)
 
 
     def source_range_to_loc(self, lineno, colno):
@@ -270,8 +274,7 @@ class BespONDecoder(object):
     instance to be used for multiple, potentially nested, data sources without
     issues due to shared state within the `Decoder` itself.
     '''
-    __slots__ = ['literal_non_ascii',
-                 'unquoted_strings', 'unquoted_non_ascii',
+    __slots__ = ['literal_non_ascii', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
                  '_data_types',
@@ -296,21 +299,19 @@ class BespONDecoder(object):
         if args:
             raise TypeError('Explicit keyword arguments are required')
         literal_non_ascii = kwargs.pop('literal_non_ascii', True)
-        unquoted_strings = kwargs.pop('unquoted_strings', True)
         unquoted_non_ascii = kwargs.pop('unquoted_non_ascii', False)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
-        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_strings, unquoted_non_ascii, integers, float_overflow_to_inf)):
+        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_non_ascii, integers, float_overflow_to_inf)):
             raise TypeError
         if not literal_non_ascii and unquoted_non_ascii:
-            raise ValueError('Setting "literal_non_ascii"=False is incompatible with "unquoted_non_ascii"=True')
+            raise ValueError('Setting literal_non_ascii=False is incompatible with unquoted_non_ascii=True')
         if not isinstance(max_nesting_depth, int):
-            raise TypeError('"max_nesting_depth" must be an integer')
+            raise TypeError('max_nesting_depth must be an integer')
         if max_nesting_depth < 0:
-            raise ValueError('"max_nesting_depth" must be >= 0')
+            raise ValueError('max_nesting_depth must be >= 0')
         self.literal_non_ascii = literal_non_ascii
-        self.unquoted_strings = unquoted_strings
         self.unquoted_non_ascii = unquoted_non_ascii
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
@@ -1366,7 +1367,7 @@ class BespONDecoder(object):
         last_colno = first_colno + m_end - 1
         line = line[m_end:]
         cleaned_val = raw_val.replace('\x20', '').replace('\t', '').replace('_', '')
-        if group_type == 'int':
+        if group_type == 'int' and self.integers:
             implicit_type = 'int'
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
@@ -1397,7 +1398,7 @@ class BespONDecoder(object):
                 else:
                     final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = True
-        elif group_type == 'float' or group_type == 'float_inf_or_nan':
+        elif group_type == 'float' or group_type == 'float_inf_or_nan' or (group_type == 'int' and not self.integers):
             implicit_type = 'float'
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
@@ -1416,7 +1417,7 @@ class BespONDecoder(object):
                 except Exception as e:
                     raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
                 if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
-                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set "float_overflow_to_inf"=True', node)
+                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
             else:
                 if node.tag.type is None:
                     parser = state.data_types[implicit_type].parser
@@ -1428,7 +1429,7 @@ class BespONDecoder(object):
                     except Exception as e:
                         raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
                     if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
-                        raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set "float_overflow_to_inf"=True', node)
+                        raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
                 else:
                     final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = False
@@ -1462,6 +1463,8 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)
         if m is None:
+            if not self.unquoted_non_ascii and self._unquoted_string_or_key_path_unicode_re.match(line):
+                raise erring.ParseError('Invalid unquoted string or key path (unquoted_non_ascii=False):  "{0}"'.format(line.replace('"', '\\"')), state)
             raise erring.ParseError('Invalid unquoted string or key path:  "{0}"'.format(line.replace('"', '\\"')), state)
         m_end = m.end()
         raw_val = line[:m_end]
@@ -1573,6 +1576,8 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.alias_path_re.match(line)
         if m is None:
+            if not self.unquoted_non_ascii and self._alias_path_unicode_re.match(line):
+                raise erring.ParseError('Invalid alias (unquoted_non_ascii=False):  "{0}"'.format(line.replace('"', '\\"')), state)
             raise erring.ParseError('Invalid alias:  "{0}"'.format(line.replace('"', '\\"')), state)
         m_end = m.end()
         raw_val = line[:m_end]

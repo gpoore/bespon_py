@@ -48,9 +48,9 @@ class BespONEncoder(object):
     '''
     def __init__(self, max_nesting_depth=100):
         if not isinstance(max_nesting_depth, int):
-            raise TypeError('"max_nesting_depth" must be an integer')
+            raise TypeError('max_nesting_depth must be an integer')
         if max_nesting_depth < 0:
-            raise ValueError('"max_nesting_depth" must be >= 0')
+            raise ValueError('max_nesting_depth must be >= 0')
         self.max_nesting_depth = max_nesting_depth
 
         self.dict_indent_per_level = '\x20\x20\x20\x20'

@@ -259,8 +259,8 @@ _RAW_RE_TYPE = [# None type
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_ascii})(?:{path_separator}{unquoted_string_ascii})*'),
-                ('alias_path_below_u0590', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_below_u0590})(?:{path_separator}{unquoted_string_below_u0590})+'),
-                ('alias_path_unicode', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_unicode})(?:{path_separator}{unquoted_string_unicode})+'),
+                ('alias_path_below_u0590', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_below_u0590})(?:{path_separator}{unquoted_string_below_u0590})*'),
+                ('alias_path_unicode', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_unicode})(?:{path_separator}{unquoted_string_unicode})*'),
 
                 # Binary types
                 ('base16', r'''

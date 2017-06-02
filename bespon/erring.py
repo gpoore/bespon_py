@@ -132,26 +132,30 @@ class Bug(DecodingException):
         return self.fmt_msg_with_traceback(self.msg, self.state_or_obj)
 
 
-def SourceDecodeError(DecodingException):
+class SourceDecodeError(DecodingException):
     '''
     Error during decoding of binary source.
     '''
     def __init__(self, err_msg):
         self.err_msg = err_msg
     def __str__(self):
-        return 'Could not decode binary source:\n  {0}'.format(self.err_msg)
+        return 'Could not decode binary source, or received a non-Unicode, non-bytes object:\n  {0}'.format(self.err_msg)
 
 
 class InvalidLiteralError(DecodingException):
     '''
     Code point that is not allowed to appear literally has appeared.
     '''
-    def __init__(self, state_or_obj, code_point, code_point_esc):
+    def __init__(self, state_or_obj, code_point, code_point_esc, comment=None):
         self.state_or_obj = state_or_obj
         self.code_point = code_point
         self.code_point_esc = code_point_esc
+        self.comment = comment
     def __str__(self):
-        msg = 'Invalid literal code point "{0}"'.format(self.code_point_esc)
+        if self.comment is None:
+            msg = 'Invalid literal code point "{0}"'.format(self.code_point_esc)
+        else:
+            msg = 'Invalid literal code point "{0}" ({1})'.format(self.code_point_esc, self.comment)
         return self.fmt_msg_with_traceback(msg, self.state_or_obj)
 
 
