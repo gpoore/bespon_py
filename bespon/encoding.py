@@ -46,12 +46,15 @@ class BespONEncoder(object):
     Encode BespON.  This is a very basic encoder using indentation-style
     syntax.
     '''
-    def __init__(self, max_nesting_depth=100):
+    def __init__(self, max_nesting_depth=100, hex_floats=False):
         if not isinstance(max_nesting_depth, int):
             raise TypeError('max_nesting_depth must be an integer')
         if max_nesting_depth < 0:
             raise ValueError('max_nesting_depth must be >= 0')
         self.max_nesting_depth = max_nesting_depth
+        if hex_floats not in (True, False):
+            raise TypeError('hex_floats must be boolean')
+        self.hex_floats = hex_floats
 
         self.dict_indent_per_level = '\x20\x20\x20\x20'
         self.list_indent_per_level = '\x20\x20'
@@ -119,6 +122,10 @@ class BespONEncoder(object):
     def _encode_float(self, obj, indent, key=False, key_path=False, val=False, num_base=None):
         if key:
             raise TypeError('Floats are not supported as dict keys')
+        if self.hex_floats:
+            if num_base is not None:
+                raise TypeError
+            num_base = 16
         self._last_scalar_bidi_rtl = False
         if num_base is not None and num_base != 10:
             if num_base == 16:
