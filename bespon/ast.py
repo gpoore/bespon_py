@@ -667,6 +667,9 @@ class Ast(object):
         '''
         Register a labeled object for tracking and future alias resolution.
         '''
+        label = obj.tag.label
+        if label in self._labels:
+            raise erring.ParseError('Duplicate label "{0}"'.format(label), obj.tag['label'], self._labels[label].tag['label'])
         self._labels[obj.tag.label] = obj
 
 
