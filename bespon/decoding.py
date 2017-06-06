@@ -58,6 +58,9 @@ BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
 
 NUMBER_START = grammar.LIT_GRAMMAR['number_start']
 INFINITY_WORD = grammar.LIT_GRAMMAR['infinity_word']
+SIGN = grammar.LIT_GRAMMAR['sign']
+ANY_EXPONENT_LETTER = grammar.LIT_GRAMMAR['dec_exponent_letter'] + grammar.LIT_GRAMMAR['hex_exponent_letter']
+IMAGINARY_UNIT = grammar.LIT_GRAMMAR['imaginary_unit']
 
 
 
@@ -1335,7 +1338,10 @@ class BespONDecoder(object):
 
     def _parse_token_number(self, line, state, section=False,
                             len=len, int=int, infinity_word=INFINITY_WORD,
-                            infinity_set=set([float('-inf'), float('inf')])):
+                            infinity_set=set([float('-inf'), float('inf')]),
+                            sign=SIGN,
+                            any_exponent_letter=ANY_EXPONENT_LETTER,
+                            imaginary_unit=IMAGINARY_UNIT):
         '''
         Parse a number (float, int, etc.).
         '''
@@ -1402,6 +1408,65 @@ class BespONDecoder(object):
                 final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
                 raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
+            state.next_scalar_is_keyable = False
+        elif group_type == 'complex' or group_type == 'complex_inf_or_nan':
+            implicit_type = 'complex'
+            for s in sign:
+                second_sign_index = cleaned_val.find(s, 1)
+                if second_sign_index > 0 and cleaned_val[second_sign_index-1] in any_exponent_letter:
+                    second_sign_index = cleaned_val.find(s, second_sign_index+1)
+                if second_sign_index > 0:
+                    break
+            if second_sign_index < 0:
+                cleaned_val_real = '0.0'
+                cleaned_val_imag = cleaned_val
+            else:
+                cleaned_val_real = cleaned_val[:second_sign_index]
+                cleaned_val_imag = cleaned_val[second_sign_index:]
+                if cleaned_val_real[-1] == imaginary_unit:
+                    cleaned_val_real, cleaned_val_imag = cleaned_val_imag, cleaned_val_real
+            if not state.full_ast:
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
+            else:
+                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
+                                      implicit_type, num_base=group_base)
+                node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
+            if node.tag is None or node.tag.type is None:
+                parser = state.data_types[implicit_type].parser
+                try:
+                    float_parser = state.data_types['float'].parser
+                    if group_base == 10:
+                        val_real = float_parser(cleaned_val_real)
+                        val_imag = float_parser(cleaned_val_imag[:-1])
+                    else:
+                        val_real = float_parser.fromhex(cleaned_val_real)
+                        val_imag = float_parser.fromhex(cleaned_val_imag[:-1])
+                    final_val = parser(val_real, val_imag)
+                except Exception as e:
+                    raise erring.ParseError('Error in typing of complex literal:\n  {0}'.format(e), state)
+            else:
+                final_val = self._type_tagged_scalar(state, node, cleaned_val.replace(imaginary_unit, 'j'), num_base=group_base)
+            if ((final_val.real in infinity_set and infinity_word not in cleaned_val_real) or (final_val.imag in infinity_set and infinity_word not in cleaned_val_imag)) and not self.float_overflow_to_inf:
+                raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
+            state.next_scalar_is_keyable = False
+        elif group_type == 'rational':
+            implicit_type = 'rational'
+            if not state.full_ast:
+                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
+            else:
+                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno,
+                                      implicit_type, num_base=group_base)
+                node.raw_val = raw_val
+                state.ast.scalar_nodes.append(node)
+            if node.tag is None or node.tag.type is None:
+                parser = state.data_types[implicit_type].parser
+                try:
+                    final_val = parser(cleaned_val)
+                except Exception as e:
+                    raise erring.ParseError('Error in typing of rational literal:\n  {0}'.format(e), state)
+            else:
+                final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = False
         else:
             raise ValueError

@@ -46,12 +46,18 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                     ('unicode_whitespace', ('\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680' +
                                             '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' +
                                             '\u2028\u2029\u202f\u205f\u3000')),
-                    # Reserved words
+                    # Keywords
                     ('none_type', 'none'),
                     ('bool_true', 'true'),
                     ('bool_false', 'false'),
                     ('infinity_word', 'inf'),
                     ('not_a_number_word', 'nan'),
+                    # Math
+                    ('sign', '+-'),
+                    ('dec_exponent_letter', 'eE'),
+                    ('hex_exponent_letter', 'pP'),
+                    ('quaternion_unit', 'ijk'),
+                    ('imaginary_unit', 'i'),
                     # Other
                     ('bom', '\uFEFF')]
 
@@ -156,55 +162,57 @@ _RAW_RE_TYPE = [# None type
                 ('bool_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['bool_true'], LIT_GRAMMAR['bool_false'])),
 
                 # Basic numeric elements
-                ('sign', '[+-]'),
+                ('sign', '[{0}]'.format(re.escape(LIT_GRAMMAR['sign']))),
                 ('opt_sign_indent', '(?:{sign}{indent}*)?'),
                 ('zero', '0'),
                 ('nonzero_dec_digit', '[1-9]'),
                 ('dec_digit', '[0-9]'),
-                ('dec_digits_underscores', '{dec_digit}+(?:_{dec_digit}+)*'),
+                ('underscore_dec_digits', '(?:_{dec_digit}+)'),
                 ('lower_hex_digit', '[0-9a-f]'),
-                ('lower_hex_digits_underscores', '{lower_hex_digit}+(?:_{lower_hex_digit}+)*'),
+                ('underscore_lower_hex_digits', '(?:_{lower_hex_digit}+)'),
                 ('upper_hex_digit', '[0-9A-F]'),
-                ('upper_hex_digits_underscores', '{upper_hex_digit}+(?:_{upper_hex_digit}+)*'),
+                ('underscore_upper_hex_digits', '(?:_{upper_hex_digit}+)'),
                 ('oct_digit', '[0-7]'),
-                ('oct_digits_underscores', '{oct_digit}+(?:_{oct_digit}+)*'),
+                ('underscore_oct_digits', '(?:_{oct_digit}+)'),
                 ('bin_digit', '[01]'),
-                ('bin_digits_underscores', '{bin_digit}+(?:_{bin_digit}+)*'),
+                ('underscore_bin_digits', '(?:_{bin_digit}+)'),
 
                 # Number types
                 # Integers
-                ('dec_integer', '{opt_sign_indent}(?:{zero}|{nonzero_dec_digit}{dec_digit}*(?:_{dec_digit}+)*)'),
-                ('hex_prefix', '{opt_sign_indent}0x_?'),
-                ('hex_integer_value', '(?:{lower_hex_digits_underscores}|{upper_hex_digits_underscores})'),
-                ('hex_integer', '{hex_prefix}{hex_integer_value}'),
-                ('oct_prefix', '{opt_sign_indent}0o_?'),
-                ('oct_integer_value', '{oct_digits_underscores}'),
-                ('oct_integer', '{oct_prefix}{oct_integer_value}'),
-                ('bin_prefix', '{opt_sign_indent}0b_?'),
-                ('bin_integer_value', '{bin_digits_underscores}'),
-                ('bin_integer', '{bin_prefix}{bin_integer_value}'),
+                ('positive_dec_integer', '(?:{zero}|{nonzero_dec_digit}{dec_digit}*{underscore_dec_digits}*)'),
+                ('hex_prefix', '0x_?'),
+                ('hex_integer_value', '(?:{lower_hex_digit}+{underscore_lower_hex_digits}*|{upper_hex_digit}+{underscore_upper_hex_digits}*)'),
+                ('positive_hex_integer', '{hex_prefix}{hex_integer_value}'),
+                ('oct_prefix', '0o_?'),
+                ('oct_integer_value', '{oct_digit}+{underscore_oct_digits}*'),
+                ('positive_oct_integer', '{oct_prefix}{oct_integer_value}'),
+                ('bin_prefix', '0b_?'),
+                ('bin_integer_value', '{bin_digit}+{underscore_bin_digits}*'),
+                ('positive_bin_integer', '{bin_prefix}{bin_integer_value}'),
                 # Any integer -- order is important due to base prefixes
-                ('integer', '(?:{hex_integer}|{oct_integer}|{bin_integer}|{dec_integer})'),
+                ('positive_integer', '(?:{positive_hex_integer}|{positive_oct_integer}|{positive_bin_integer}|{positive_dec_integer})'),
+                ('integer', '{opt_sign_indent}{positive_integer}'),
                 # Floats
-                ('dec_exponent', '[eE]{sign}?{dec_digits_underscores}'),
+                ('dec_exponent_letter', '[{0}]'.format(LIT_GRAMMAR['dec_exponent_letter'])),
+                ('dec_exponent', '{dec_exponent_letter}{sign}?{dec_digit}+{underscore_dec_digits}*'),
                 ('decimal_point', '\\.'),
-                ('dec_fraction_and_or_exponent', '(?:{decimal_point}{dec_digits_underscores}(?:_?{dec_exponent})?|_?{dec_exponent})'),
-                ('dec_float', '{dec_integer}{dec_fraction_and_or_exponent}'),
-                ('hex_exponent', '[pP]{sign}?{dec_digits_underscores}'),
+                ('dec_fraction_and_or_exponent', '(?:{decimal_point}{dec_digit}+{underscore_dec_digits}*(?:_?{dec_exponent})?|_?{dec_exponent})'),
+                ('positive_dec_float', '{positive_dec_integer}{dec_fraction_and_or_exponent}'),
+                ('hex_exponent_letter', '[{0}]'.format(LIT_GRAMMAR['hex_exponent_letter'])),
+                ('hex_exponent', '{hex_exponent_letter}{sign}?{dec_digit}+{underscore_dec_digits}*'),
                 ('hex_float_value', '''
-                                    (?: {lower_hex_digits_underscores} (?:{decimal_point}{lower_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent}) |
-                                        {upper_hex_digits_underscores} (?:{decimal_point}{upper_hex_digits_underscores}(?:_?{hex_exponent})? | _?{hex_exponent})
+                                    (?: {lower_hex_digit}+{underscore_lower_hex_digits}* (?:{decimal_point}{lower_hex_digit}+{underscore_lower_hex_digits}*(?:_?{hex_exponent})? | _?{hex_exponent}) |
+                                        {upper_hex_digit}+{underscore_upper_hex_digits}* (?:{decimal_point}{upper_hex_digit}+{underscore_upper_hex_digits}*(?:_?{hex_exponent})? | _?{hex_exponent})
                                     )
                                     '''.replace('\x20', '').replace('\n', '')),
-                ('hex_float', '{hex_prefix}{hex_float_value}'),
+                ('positive_hex_float', '{hex_prefix}{hex_float_value}'),
                 ('infinity_word', LIT_GRAMMAR['infinity_word']),
-                ('infinity', '{opt_sign_indent}{infinity_word}'),
                 ('not_a_number_word', LIT_GRAMMAR['not_a_number_word']),
-                ('not_a_number', '{opt_sign_indent}{not_a_number_word}'),
-                ('inf_or_nan', '{opt_sign_indent}(?:{infinity_word}|{not_a_number_word})'),
+                ('inf_or_nan_word', '(?:{infinity_word}|{not_a_number_word})'),
                 ('float_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['infinity_word'], LIT_GRAMMAR['not_a_number_word'])),
                 # Any float -- order is important due to base prefixes
-                ('float', '(?:{hex_float}|{inf_or_nan}|{dec_float})'),
+                ('positive_float', '(?:{positive_hex_float}|{positive_dec_float}|{inf_or_nan_word})'),
+                ('float', '{opt_sign_indent}{positive_float}'),
                 # General number -- order is important due to exponent parts
                 ('number', '(?:{float}|{integer})'),
                 # Efficient number pattern with named groups.  The order is
@@ -212,14 +220,61 @@ _RAW_RE_TYPE = [# None type
                 # the `0` in the `0<letter>` prefix doesn't trigger a
                 # premature match for integer zero.
                 ('number_named_groups', r'''
-                                         {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
-                                         (?P<int_8>{oct_integer}) | (?P<int_2>{bin_integer}) |
-                                         (?P<int_10>{dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? |
-                                         (?P<float_inf_or_nan_10>{inf_or_nan})
+                                         {opt_sign_indent}
+                                         (?: {hex_prefix} (?: (?P<float_16>{hex_float_value}) | (?P<int_16>{hex_integer_value}) ) |
+                                             (?P<int_8>{positive_oct_integer}) | (?P<int_2>{positive_bin_integer}) |
+                                             (?P<int_10>{positive_dec_integer}) (?P<float_10>{dec_fraction_and_or_exponent})? |
+                                             (?P<float_inf_or_nan_10>{inf_or_nan_word})
+                                         )
+                                         '''.replace('\x20', '').replace('\n', '')),
+                # Quaternion
+                # This leaves open the possibility of quaternion literals,
+                # while providing what is necessary for complex literals
+                # (by reserving both "i" and "j" for numeric use, it could
+                # reduce accidental use of the wrong one for complex numbers)
+                ('quaternion_unit', '[{0}]'.format(LIT_GRAMMAR['quaternion_unit'])),
+                ('quaternion_unit_reserved_word', '[{0}{1}]'.format(LIT_GRAMMAR['quaternion_unit'], LIT_GRAMMAR['quaternion_unit'].upper())),
+                # Complex
+                ('imaginary_unit', LIT_GRAMMAR['imaginary_unit']),
+                ('dec_complex_float_continue', r'''
+                                                (?: {imaginary_unit} (?: {indent}* {opt_sign_indent} (?:{positive_dec_float}|{inf_or_nan_word}) )? |
+                                                    {indent}* {opt_sign_indent} (?:{positive_dec_float}|{inf_or_nan_word}) {imaginary_unit})
+                                                '''.replace('\x20', '').replace('\n', '')),
+                ('hex_complex_float_continue', r'''
+                                                (?: {imaginary_unit} (?: {indent}* {opt_sign_indent} (?:{positive_hex_float}|{inf_or_nan_word}) )? |
+                                                    {indent}* {opt_sign_indent} (?:{positive_hex_float}|{inf_or_nan_word}) {imaginary_unit})
+                                                '''.replace('\x20', '').replace('\n', '')),
+                ('inf_or_nan_word_complex_float_continue', r'''
+                                                (?: {imaginary_unit} (?: {indent}* {opt_sign_indent} (?:{positive_dec_float}|{positive_hex_float}|{inf_or_nan_word}) )? |
+                                                    {indent}* {opt_sign_indent} (?:{positive_dec_float}|{positive_hex_float}|{inf_or_nan_word}) {imaginary_unit})
+                                                '''.replace('\x20', '').replace('\n', '')),
+                ('inf_or_nan_word_complex_hex_float_continue', r'''
+                                                (?: {imaginary_unit} (?: {indent}* {opt_sign_indent} {positive_hex_float} )? |
+                                                    {indent}* {opt_sign_indent} {positive_hex_float} {imaginary_unit})
+                                                '''.replace('\x20', '').replace('\n', '')),
+                ('dec_complex_float', r'''
+                                       {opt_sign_indent}
+                                       (?: {positive_dec_float} {dec_complex_float_continue} |
+                                           {positive_hex_float} {hex_complex_float_continue} |
+                                           {inf_or_nan_word} {inf_or_nan_word_complex_float_continue}
+                                       )
+                                       '''.replace('\x20', '').replace('\n', '')),
+                # Rational
+                ('rational_continue', '{indent}*/{indent}*{positive_dec_integer}'),
+                ('positive_rational', '{positive_dec_integer}{rational_continue}'),
+                ('rational', '{opt_sign_indent}{positive_rational}'),
+                # Efficient extended number pattern with named groups.
+                ('extended_number_named_groups', r'''
+                                         {opt_sign_indent}
+                                         (?: {hex_prefix} (?: (?P<float_16>{hex_float_value})(?P<complex_16>{hex_complex_float_continue})? | (?P<int_16>{hex_integer_value}) ) |
+                                             (?P<int_8>{positive_oct_integer}) | (?P<int_2>{positive_bin_integer}) |
+                                             (?P<int_10>{positive_dec_integer}) (?: (?P<rational_10>{rational_continue})|(?P<float_10>{dec_fraction_and_or_exponent})(?P<complex_10>{dec_complex_float_continue})? )? |
+                                             (?P<float_inf_or_nan_10>{inf_or_nan_word}) (?: (?P<complex_inf_or_nan_10>{dec_complex_float_continue})|(?P<complex_inf_or_nan_16>{inf_or_nan_word_complex_hex_float_continue}) )?
+                                         )
                                          '''.replace('\x20', '').replace('\n', '')),
 
                 # Reserved words
-                ('reserved_word', '(?:{none_type_reserved_word}|{bool_reserved_word}|{float_reserved_word})'),
+                ('reserved_word', '(?:{none_type_reserved_word}|{bool_reserved_word}|(?:{float_reserved_word}){quaternion_unit_reserved_word}?)'),
 
                 # Unquoted strings
                 ('unquoted_start_ascii', '{xid_start_ascii}'),

@@ -17,6 +17,7 @@ import sys
 import collections
 import base64
 import re
+import fractions
 from . import grammar
 
 # pylint:  disable=C0103, W0622, E0602
@@ -50,23 +51,23 @@ class DataType(object):
                       (list-like), and returns the corresponding collection.
                       In the collection case, the function must also return
                       an empty object if no arguments are provided.
-        tagable:      Whether the type may be used in a tag to provide
+        typeable:     Whether the type may be used in a tag to provide
                       explicit typing.
     '''
     __slots__ = ['name', 'basetype', 'basetype_set', 'mutable',
-                 'ascii_bytes', 'escapes', 'number', 'parser', 'tagable']
+                 'ascii_bytes', 'escapes', 'number', 'parser', 'typeable']
     def __init__(self, name=None, basetype=None,
                  ascii_bytes=False, mutable=False, number=False, parser=None,
-                 tagable=True):
+                 typeable=True):
         if not all(isinstance(x, str) for x in (name, basetype)):
             raise TypeError
-        if not all(x in (True, False) for x in (ascii_bytes, mutable, number, tagable)):
+        if not all(x in (True, False) for x in (ascii_bytes, mutable, number, typeable)):
             raise TypeError
         if not hasattr(parser, '__call__'):
             raise TypeError
         if basetype not in ('dict', 'list', 'scalar'):
             raise ValueError
-        if basetype != 'scalar' and (ascii_bytes or number or not tagable):
+        if basetype != 'scalar' and (ascii_bytes or number or not typeable):
             raise ValueError
         self.name = name
         self.basetype = basetype
@@ -75,7 +76,7 @@ class DataType(object):
         self.mutable = mutable
         self.number = number
         self.parser = parser
-        self.tagable = tagable
+        self.typeable = typeable
 
 
 
@@ -113,18 +114,19 @@ def _base64_parser(b, whitespace_bytes_re=WHITESPACE_BYTES_RE,
 # leaves parser functions operating on quoted or unquoted strings.  These are
 # given the parsed strings, and are responsible for their own validation
 # internally.  The Base16 and Base64 parsers are an example.
-CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: None, tagable=False),
-              'bool': DataType(name='bool', basetype='scalar', parser=lambda x: x == 'true', tagable=False),
+CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: None, typeable=False),
+              'bool': DataType(name='bool', basetype='scalar', parser=lambda x: x == 'true', typeable=False),
               'str': DataType(name='str', basetype='scalar', parser=str),
-              'int': DataType(name='int', basetype='scalar', number=True, parser=int, tagable=False),
-              'float': DataType(name='float', basetype='scalar', number=True, parser=float, tagable=False),
+              'int': DataType(name='int', basetype='scalar', number=True, parser=int),
+              'float': DataType(name='float', basetype='scalar', number=True, parser=float),
               'bytes': DataType(name='bytes', basetype='scalar', ascii_bytes=True, parser=lambda x: x),
               'base16': DataType(name='b16', basetype='scalar', ascii_bytes=True, parser=_base16_parser),
               'base64': DataType(name='b64', basetype='scalar', ascii_bytes=True, parser=_base64_parser),
               'dict': DataType(name='dict', basetype='dict', mutable=True, parser=dict),
               'list': DataType(name='list', basetype='list', mutable=True, parser=list)}
 
-# #### TO DO:  Complex and rational numbers, etc.?
-EXTENDED_TYPES = {'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict),
+EXTENDED_TYPES = {'complex': DataType(name='complex', basetype='scalar', number=True, parser=complex),
+                  'rational': DataType(name='rational', basetype='scalar', number=True, parser=fractions.Fraction),
+                  'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict),
                   'set': DataType(name='set', basetype='list', mutable=True, parser=set),
                   'tuple': DataType(name='tuple', basetype='list', parser=tuple)}

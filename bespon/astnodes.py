@@ -860,7 +860,7 @@ class TagNode(collections.OrderedDict):
                 self['type'] = obj
                 val = obj.final_val
                 data_type = data_types[val]
-                if not data_type.tagable:
+                if not data_type.typeable:
                     raise erring.ParseError('Type "{0}" cannot be set via tags; it is only an implicit type'.format(val), obj)
                 self.type = val
                 self.compatible_basetypes = data_type.basetype_set
