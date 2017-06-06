@@ -1434,10 +1434,10 @@ class BespONDecoder(object):
                             final_val = parser.fromhex(cleaned_val)
                     except Exception as e:
                         raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
-                    if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
-                        raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
                 else:
                     final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
+                if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
+                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
             state.next_scalar_is_keyable = False
         else:
             raise ValueError
@@ -1516,7 +1516,9 @@ class BespONDecoder(object):
             try:
                 implicit_type = self._reserved_word_types[raw_val]
             except KeyError:
-                raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(raw_val.lower()), state)
+                if raw_val.lower() in self._reserved_word_types:
+                    raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(raw_val.lower()), state)
+                raise erring.ParseError('Invalid use of reserved word "{0}"'.format(raw_val), state)
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
