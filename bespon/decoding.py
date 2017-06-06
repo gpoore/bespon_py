@@ -424,7 +424,10 @@ class BespONDecoder(object):
         self._alias_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['alias_path_below_u0590'])
         self._alias_path_unicode_re = re.compile(grammar.RE_GRAMMAR['alias_path_unicode'])
 
-        self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
+        if not self.extended_data_types:
+            self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
+        else:
+            self._number_re = re.compile(grammar.RE_GRAMMAR['extended_number_named_groups'])
 
         # Dict for looking up types of valid reserved words
         self._reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
@@ -948,20 +951,16 @@ class BespONDecoder(object):
                                   'str', delim=delim, continuation_indent=continuation_indent)
             node.raw_val = content_lines
             state.ast.scalar_nodes.append(node)
-        if node.tag is None:
+        if node.tag is None or node.tag.type is None:
             node.final_val = content
+        elif not state.data_types[node.tag.type].ascii_bytes:
+            node.final_val = self._type_tagged_scalar(state, node, content)
         else:
-            if node.tag.type is None:
-                node.final_val = content
-            else:
-                if not state.data_types[node.tag.type].ascii_bytes:
-                    node.final_val = self._type_tagged_scalar(state, node, content)
-                else:
-                    try:
-                        content_bytes = content.encode('ascii')
-                    except Exception as e:
-                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                    node.final_val = self._type_tagged_scalar(state, node, content_bytes)
+            try:
+                content_bytes = content.encode('ascii')
+            except Exception as e:
+                raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+            node.final_val = self._type_tagged_scalar(state, node, content_bytes)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -1014,7 +1013,7 @@ class BespONDecoder(object):
                                   'str', delim=delim, continuation_indent=continuation_indent)
             node.raw_val = content_lines
             state.ast.scalar_nodes.append(node)
-        if node.tag is None:
+        if node.tag is None or node.tag.type is None:
             if '\\' not in content:
                 content_esc = content
             else:
@@ -1023,39 +1022,28 @@ class BespONDecoder(object):
                 except Exception as e:
                     raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
             node.final_val = content_esc
-        else:
-            if node.tag.type is None:
-                if '\\' not in content:
-                    content_esc = content
-                else:
-                    try:
-                        content_esc = self._unescape_unicode(content)
-                    except Exception as e:
-                        raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
-                node.final_val = content_esc
+        elif not state.data_types[node.tag.type].ascii_bytes:
+            if '\\' not in content:
+                content_esc = content
             else:
-                if not state.data_types[node.tag.type].ascii_bytes:
-                    if '\\' not in content:
-                        content_esc = content
-                    else:
-                        try:
-                            content_esc = self._unescape_unicode(content)
-                        except Exception as e:
-                            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
-                    node.final_val = self._type_tagged_scalar(state, node, content_esc)
-                else:
-                    try:
-                        content_bytes = content.encode('ascii')
-                    except Exception as e:
-                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                    if b'\\' not in content_bytes:
-                        content_bytes_esc = content_bytes
-                    else:
-                        try:
-                            content_bytes_esc = self._unescape_bytes(content_bytes)
-                        except Exception as e:
-                            raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
-                    node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
+                try:
+                    content_esc = self._unescape_unicode(content)
+                except Exception as e:
+                    raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+            node.final_val = self._type_tagged_scalar(state, node, content_esc)
+        else:
+            try:
+                content_bytes = content.encode('ascii')
+            except Exception as e:
+                raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+            if b'\\' not in content_bytes:
+                content_bytes_esc = content_bytes
+            else:
+                try:
+                    content_bytes_esc = self._unescape_bytes(content_bytes)
+                except Exception as e:
+                    raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
+            node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
         state.next_scalar = node
         state.next_scalar_is_keyable = True
         state.next_cache = True
@@ -1242,15 +1230,14 @@ class BespONDecoder(object):
                 content_lines_dedent[-1] = content_lines_dedent_last_line
                 if node.tag.type is None:
                     node.final_val = content
+                elif not state.data_types[node.tag.type].ascii_bytes:
+                    node.final_val = self._type_tagged_scalar(state, node, content)
                 else:
-                    if not state.data_types[node.tag.type].ascii_bytes:
-                        node.final_val = self._type_tagged_scalar(state, node, content)
-                    else:
-                        try:
-                            content_bytes = content.encode('ascii')
-                        except Exception as e:
-                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                        node.final_val = self._type_tagged_scalar(state, node, content_bytes)
+                    try:
+                        content_bytes = content.encode('ascii')
+                    except Exception as e:
+                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                    node.final_val = self._type_tagged_scalar(state, node, content_bytes)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
@@ -1295,27 +1282,26 @@ class BespONDecoder(object):
                     except Exception as e:
                         raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
                     node.final_val = content_esc
+                elif not state.data_types[node.tag.type].ascii_bytes:
+                    try:
+                        content_esc = self._unescape_unicode(content, newline=tag_newline)
+                    except Exception as e:
+                        raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
+                    node.final_val = self._type_tagged_scalar(state, node, content_esc)
                 else:
-                    if not state.data_types[node.tag.type].ascii_bytes:
-                        try:
-                            content_esc = self._unescape_unicode(content, newline=tag_newline)
-                        except Exception as e:
-                            raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
-                        node.final_val = self._type_tagged_scalar(state, node, content_esc)
-                    else:
-                        try:
-                            content_bytes = content.encode('ascii')
-                        except Exception as e:
-                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                        # For ASCII bytes types, "newline" value is checked
-                        # for compatibility in tag, so there's no need for a
-                        # check here.
-                        tag_newline_bytes = tag_newline.encode('ascii')
-                        try:
-                            content_bytes_esc = self._unescape_bytes(content_bytes, newline=tag_newline_bytes)
-                        except Exception as e:
-                            raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
-                        node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
+                    try:
+                        content_bytes = content.encode('ascii')
+                    except Exception as e:
+                        raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                    # For ASCII bytes types, "newline" value is checked
+                    # for compatibility in tag, so there's no need for a
+                    # check here.
+                    tag_newline_bytes = tag_newline.encode('ascii')
+                    try:
+                        content_bytes_esc = self._unescape_bytes(content_bytes, newline=tag_newline_bytes)
+                    except Exception as e:
+                        raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
+                    node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
             state.next_scalar = node
             state.next_scalar_is_keyable = True
             state.next_cache = True
@@ -1382,7 +1368,7 @@ class BespONDecoder(object):
                                       implicit_type, num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
-            if node.tag is None:
+            if node.tag is None or node.tag.type is None:
                 parser = state.data_types[implicit_type].parser
                 try:
                     if group_base == 10:
@@ -1392,17 +1378,7 @@ class BespONDecoder(object):
                 except Exception as e:
                     raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), node)
             else:
-                if node.tag.type is None:
-                    parser = state.data_types[implicit_type].parser
-                    try:
-                        if group_base == 10:
-                            final_val = parser(cleaned_val)
-                        else:
-                            final_val = parser(cleaned_val, group_base)
-                    except Exception as e:
-                        raise erring.ParseError('Error in typing of integer literal:\n  {0}'.format(e), node)
-                else:
-                    final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
+                final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
             state.next_scalar_is_keyable = True
         elif group_type == 'float' or group_type == 'float_inf_or_nan' or (group_type == 'int' and not self.integers):
             implicit_type = 'float'
@@ -1413,7 +1389,7 @@ class BespONDecoder(object):
                                       implicit_type, num_base=group_base)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
-            if node.tag is None:
+            if node.tag is None or node.tag.type is None:
                 parser = state.data_types[implicit_type].parser
                 try:
                     if group_base == 10:
@@ -1422,22 +1398,10 @@ class BespONDecoder(object):
                         final_val = parser.fromhex(cleaned_val)
                 except Exception as e:
                     raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
-                if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
-                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
             else:
-                if node.tag.type is None:
-                    parser = state.data_types[implicit_type].parser
-                    try:
-                        if group_base == 10:
-                            final_val = parser(cleaned_val)
-                        else:
-                            final_val = parser.fromhex(cleaned_val)
-                    except Exception as e:
-                        raise erring.ParseError('Error in typing of float literal:\n  {0}'.format(e), state)
-                else:
-                    final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
-                if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
-                    raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
+                final_val = self._type_tagged_scalar(state, node, cleaned_val, num_base=group_base)
+            if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
+                raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
             state.next_scalar_is_keyable = False
         else:
             raise ValueError
@@ -1489,22 +1453,18 @@ class BespONDecoder(object):
                 node = FullScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
-            if node.tag is None:
+            if node.tag is None or node.tag.type is None:
                 final_val = raw_val
+            elif not state.data_types[node.tag.type].ascii_bytes:
+                final_val = self._type_tagged_scalar(state, node, raw_val)
             else:
-                if node.tag.type is None:
-                    final_val = raw_val
-                else:
-                    if not state.data_types[node.tag.type].ascii_bytes:
-                        final_val = self._type_tagged_scalar(state, node, raw_val)
-                    else:
-                        # Could get an encoding error if non-ASCII unquoted
-                        # string are enabled
-                        try:
-                            raw_val_bytes = raw_val.encode('ascii')
-                        except Exception as e:
-                            raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
-                        final_val = self._type_tagged_scalar(state, node, raw_val_bytes)
+                # Could get an encoding error if non-ASCII unquoted
+                # string are enabled
+                try:
+                    raw_val_bytes = raw_val.encode('ascii')
+                except Exception as e:
+                    raise erring.ParseError('Failed to encode string as ASCII in preparation for tag typing:\n  {0}'.format(e), node, node.tag['type'])
+                final_val = self._type_tagged_scalar(state, node, raw_val_bytes)
             node.final_val = final_val
             state.next_scalar = node
             state.next_scalar_is_keyable = True
@@ -1525,7 +1485,7 @@ class BespONDecoder(object):
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
-            if node.tag is None:
+            if node.tag is None or node.tag.type is None:
                 try:
                     final_val = state.data_types[implicit_type].parser(raw_val)
                 except Exception as e:
@@ -1534,13 +1494,7 @@ class BespONDecoder(object):
                 # No need to check for type with ascii_bytes=True, because
                 # all reserved words either cannot be typed with tags (none,
                 # bool), or must be numeric (float)
-                if node.tag.type is None:
-                    try:
-                        final_val = state.data_types[implicit_type].parser(raw_val)
-                    except Exception as e:
-                        raise erring.ParseError('Error in typing of reserved word "{0}":\n  {1}'.format(raw_val, e), state)
-                else:
-                    final_val = self._type_tagged_scalar(state, node, raw_val)
+                final_val = self._type_tagged_scalar(state, node, raw_val)
             node.final_val = final_val
             state.next_scalar = node
             if implicit_type != 'float':
@@ -1608,7 +1562,10 @@ class BespONDecoder(object):
     def _type_tagged_scalar(self, state, scalar_obj, processed_val, num_base=None):
         tag = scalar_obj.tag
         data_type = state.data_types[tag.type]
-        if num_base is not None and not data_type.number:
+        if num_base is None:
+            if data_type.number:
+                raise erring.ParseError('Cannot apply numeric type "{0}" to object that is not a numeric literal'.format(tag.type), scalar_obj, tag['type'])
+        elif not data_type.number:
             raise erring.ParseError('Cannot apply non-numeric type "{0}" to numeric literal'.format(tag.type), scalar_obj, tag['type'])
         try:
             final_val = data_type.parser(processed_val)
