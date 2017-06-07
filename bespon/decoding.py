@@ -1627,16 +1627,16 @@ class BespONDecoder(object):
         return line
 
 
-    def _type_tagged_scalar(self, state, scalar_obj, processed_val, num_base=None):
-        tag = scalar_obj.tag
+    def _type_tagged_scalar(self, state, scalar_node, processed_val, num_base=None):
+        tag = scalar_node.tag
         data_type = state.data_types[tag.type]
         if num_base is None:
             if data_type.number:
-                raise erring.ParseError('Cannot apply numeric type "{0}" to object that is not a numeric literal'.format(tag.type), scalar_obj, tag['type'])
+                raise erring.ParseError('Cannot apply numeric type "{0}" to object that is not a numeric literal'.format(tag.type), scalar_node, tag['type'])
         elif not data_type.number:
-            raise erring.ParseError('Cannot apply non-numeric type "{0}" to numeric literal'.format(tag.type), scalar_obj, tag['type'])
+            raise erring.ParseError('Cannot apply non-numeric type "{0}" to numeric literal'.format(tag.type), scalar_node, tag['type'])
         try:
             final_val = data_type.parser(processed_val)
         except Exception as e:
-            raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(tag.type, e), scalar_obj, scalar_obj.tag)
+            raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(tag.type, e), scalar_node, scalar_node.tag)
         return final_val

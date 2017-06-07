@@ -72,17 +72,17 @@ class Ast(object):
         __nonzero__ = __bool__
 
 
-    def _indentation_climb_to_indent(self, state_or_scalar_obj, pos, len=len):
+    def _indentation_climb_to_indent(self, state_or_scalar_node, pos, len=len):
         '''
         Starting at `pos`, climb to a higher level in the AST with less
-        indentation that is potentially compatible with `state_or_scalar_obj`.
+        indentation that is potentially compatible with `state_or_scalar_node`.
         For use in indentation-style syntax.
         '''
         # `state` has no `external_indent`, but most AST nodes do
         try:
-            len_indent = len(state_or_scalar_obj.external_indent)
+            len_indent = len(state_or_scalar_node.external_indent)
         except AttributeError:
-            len_indent = len(state_or_scalar_obj.indent)
+            len_indent = len(state_or_scalar_node.indent)
         root = self.root
         parent = pos.parent
         section_pos = self.section_pos
@@ -169,51 +169,51 @@ class Ast(object):
         try to find an appropriate pre-existing dict or attempt to create one.
         '''
         state = self.state
-        scalar_obj = state.next_scalar
-        if state.lineno != scalar_obj.last_lineno:
-            if not (state.inline and state.lineno == scalar_obj.last_lineno + 1):
+        scalar_node = state.next_scalar
+        if state.lineno != scalar_node.last_lineno:
+            if not (state.inline and state.lineno == scalar_node.last_lineno + 1):
                 raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in non-inline mode, and no later than the following line in inline mode'.format(assign_key_val), state)
-            if state.last_line_comment_lineno == scalar_obj.last_lineno:
+            if state.last_line_comment_lineno == scalar_node.last_lineno:
                 raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
             if not state.indent.startswith(state.inline_indent):
                 raise erring.IndentationError(state)
         state.next_scalar = None
         state.next_cache = False
         if state.full_ast:
-            scalar_obj.assign_key_val_lineno = state.lineno
-            scalar_obj.assign_key_val_colno = state.colno
-        if scalar_obj.basetype == 'key_path':
-            self._append_key_path(scalar_obj)
+            scalar_node.assign_key_val_lineno = state.lineno
+            scalar_node.assign_key_val_colno = state.colno
+        if scalar_node.basetype == 'key_path':
+            self._append_key_path(scalar_node)
             return
         if not state.next_scalar_is_keyable:
-            raise erring.ParseError('Object is not a valid key for a dict-like object', scalar_obj)
-        if scalar_obj.tag is not None and scalar_obj.tag.label is not None:
-            raise erring.ParseError('Labeling dict keys is not supported', scalar_obj)
+            raise erring.ParseError('Object is not a valid key for a dict-like object', scalar_node)
+        if scalar_node.tag is not None and scalar_node.tag.label is not None:
+            raise erring.ParseError('Labeling dict keys is not supported', scalar_node)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
-        if scalar_obj.inline:
-            pos.check_append_scalar_key(scalar_obj)
+        if scalar_node.inline:
+            pos.check_append_scalar_key(scalar_node)
         elif pos is self.section_pos:
             # If in a section, need to create a dict immediately
             # below it.  If section content is indented, there is no
             # danger of accidentally creating an extra dict due to
             # improper key indentation, because in that case the section
             # dict wouldn't be open.
-            dict_obj = DictlikeNode(scalar_obj)
-            self._append_key_path_collection(dict_obj)
-            dict_obj.check_append_scalar_key(scalar_obj)
-        elif scalar_obj.external_indent == pos.indent and pos.basetype == 'dict':
+            dict_node = DictlikeNode(scalar_node)
+            self._append_key_path_collection(dict_node)
+            dict_node.check_append_scalar_key(scalar_node)
+        elif scalar_node.external_indent == pos.indent and pos.basetype == 'dict':
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb_to_start(pos)
-            pos.check_append_scalar_key(scalar_obj)
-        elif len(scalar_obj.external_indent) >= len(pos.indent):
-            dict_obj = DictlikeNode(scalar_obj)
+            pos.check_append_scalar_key(scalar_node)
+        elif len(scalar_node.external_indent) >= len(pos.indent):
+            dict_node = DictlikeNode(scalar_node)
             # No need to set `._open=True`; irrelevant in non-inline mode.
-            self._append_collection(dict_obj)
-            dict_obj.check_append_scalar_key(scalar_obj)
+            self._append_collection(dict_node)
+            dict_node.check_append_scalar_key(scalar_node)
         else:
-            pos = self._indentation_climb_to_indent(scalar_obj, pos)
-            pos.check_append_scalar_key(scalar_obj)
+            pos = self._indentation_climb_to_indent(scalar_node, pos)
+            pos.check_append_scalar_key(scalar_node)
 
 
     def append_scalar_val(self):
@@ -225,18 +225,18 @@ class Ast(object):
         # dict value, the key would have taken care of the AST, and if it is
         # a list element, the list opener `*` would have done the same thing.
         state = self.state
-        scalar_obj = state.next_scalar
+        scalar_node = state.next_scalar
         state.next_scalar = None
         state.next_cache = False
-        if not scalar_obj._resolved:
-            self._unresolved_alias_nodes.append(scalar_obj)
+        if not scalar_node._resolved:
+            self._unresolved_alias_nodes.append(scalar_node)
         if self.section_pos is not self.pos:
-            self.pos.check_append_scalar_val(scalar_obj)
+            self.pos.check_append_scalar_val(scalar_node)
         else:
-            self.pos.check_append_key_path_scalar_val(scalar_obj)
+            self.pos.check_append_key_path_scalar_val(scalar_node)
 
 
-    def _append_collection(self, collection_obj):
+    def _append_collection(self, collection_node):
         '''
         Append a collection.
         '''
@@ -244,19 +244,19 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        self._unresolved_collection_nodes.append(collection_obj)
+        self._unresolved_collection_nodes.append(collection_node)
         if self.section_pos is not self.pos:
-            self.pos.check_append_collection(collection_obj)
+            self.pos.check_append_collection(collection_node)
         else:
-            self.pos.check_append_key_path_collection(collection_obj)
+            self.pos.check_append_key_path_collection(collection_node)
         # Wait to check nesting depth until after appending, because nesting
         # depth is inherited from parent, and parent is set during appending.
-        if collection_obj.nesting_depth > self.max_nesting_depth:
-            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
-        self.pos = collection_obj
+        if collection_node.nesting_depth > self.max_nesting_depth:
+            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_node)
+        self.pos = collection_node
 
 
-    def _append_key_path_collection(self, collection_obj):
+    def _append_key_path_collection(self, collection_node):
         '''
         Append a collection created within a key path.
         '''
@@ -264,11 +264,11 @@ class Ast(object):
         # inline mode, that would be taken care of by closing delimiters.
         # In indentation mode, keys and list element openers `*` can trigger
         # climbing the AST based on indentation.
-        self._unresolved_collection_nodes.append(collection_obj)
-        self.pos.check_append_key_path_collection(collection_obj)
-        if collection_obj.nesting_depth > self.max_nesting_depth:
-            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_obj)
-        self.pos = collection_obj
+        self._unresolved_collection_nodes.append(collection_node)
+        self.pos.check_append_key_path_collection(collection_node)
+        if collection_node.nesting_depth > self.max_nesting_depth:
+            raise erring.ParseError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth), collection_node)
+        self.pos = collection_node
 
 
     def start_inline_dict(self, DictlikeNode=astnodes.DictlikeNode):
@@ -282,9 +282,9 @@ class Ast(object):
         # No need to check indentation, since the dict-like object inherits
         # indentation, and thus indentation will be checked when it is
         # appended to the AST.
-        dict_obj = DictlikeNode(state)
-        dict_obj._open = True
-        self._append_collection(dict_obj)
+        dict_node = DictlikeNode(state)
+        dict_node._open = True
+        self._append_collection(dict_node)
 
 
     def end_inline_dict(self):
@@ -333,11 +333,11 @@ class Ast(object):
             state.inline = True
             state.inline_indent = state.indent
         if not state.in_tag:
-            list_obj = ListlikeNode(state)
+            list_node = ListlikeNode(state)
         else:
-            list_obj = AliasListNode(state)
-        list_obj._open = True
-        self._append_collection(list_obj)
+            list_node = AliasListNode(state)
+        list_node._open = True
+        self._append_collection(list_node)
 
 
     def end_inline_list(self):
@@ -470,8 +470,8 @@ class Ast(object):
         pos = self.pos
         if pos is self.section_pos:
             ListlikeNode(state)
-            list_obj._open = True
-            self._append_key_path_collection(list_obj)
+            list_node._open = True
+            self._append_key_path_collection(list_node)
         elif pos.basetype == 'list' and state.indent == pos.indent:
             if pos._open:
                 raise erring.ParseError('Cannot start a new list element while a previous element is missing', state)
@@ -479,9 +479,9 @@ class Ast(object):
             pos.last_lineno = state.lineno
             pos.last_colno = state.colno
         elif len(state.indent) >= len(pos.indent):
-            list_obj = ListlikeNode(state)
-            list_obj._open = True
-            self._append_collection(list_obj)
+            list_node = ListlikeNode(state)
+            list_node._open = True
+            self._append_collection(list_node)
         else:
             pos = self._indentation_climb_to_indent(state, pos)
             if pos.basetype == 'list' and state.indent == pos.indent:
@@ -502,14 +502,14 @@ class Ast(object):
         type declaration.
         '''
         state = self.state
-        dict_obj = DictlikeNode(state)
+        dict_node = DictlikeNode(state)
         if self.pos is self.section_pos:
-            self._append_key_path_collection(dict_obj)
+            self._append_key_path_collection(dict_node)
         else:
-            self._append_collection(dict_obj)
+            self._append_collection(dict_node)
 
 
-    def _append_key_path(self, kp_obj,
+    def _append_key_path(self, kp_node,
                          open_indentation_list=OPEN_INDENTATION_LIST,
                          DictlikeNode=astnodes.DictlikeNode,
                          ListlikeNode=astnodes.ListlikeNode, len=len):
@@ -518,63 +518,63 @@ class Ast(object):
         '''
         state = self.state
         if state.in_tag:
-            raise erring.ParseError('Key paths are not valid in tags', kp_obj)
+            raise erring.ParseError('Key paths are not valid in tags', kp_node)
         pos = self.pos
-        if kp_obj.inline:
+        if kp_node.inline:
             initial_pos = pos
         elif pos is self.section_pos:
-            dict_obj = DictlikeNode(kp_obj)
-            self._append_collection(dict_obj)
-            initial_pos = dict_obj
-        elif kp_obj.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
+            dict_node = DictlikeNode(kp_node)
+            self._append_collection(dict_node)
+            initial_pos = dict_node
+        elif kp_node.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb_to_start(pos)
             initial_pos = pos
-        elif len(kp_obj.external_indent) >= len(pos.indent):
+        elif len(kp_node.external_indent) >= len(pos.indent):
             if not pos._open:
-                raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', kp_obj)
-            dict_obj = DictlikeNode(kp_obj)
-            self._append_collection(dict_obj)
-            initial_pos = dict_obj
+                raise erring.ParseError('Cannot start a new dict-like object here; check for incorrect indentation or unintended values', kp_node)
+            dict_node = DictlikeNode(kp_node)
+            self._append_collection(dict_node)
+            initial_pos = dict_node
         else:
-            pos = self._indentation_climb_to_indent(kp_obj, pos)
+            pos = self._indentation_climb_to_indent(kp_node, pos)
             if not pos.basetype == 'dict':
-                raise erring.IndentationError(kp_obj)
+                raise erring.IndentationError(kp_node)
             initial_pos = pos
         pos = initial_pos
-        for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
+        for kp_elem, next_kp_elem in zip(kp_node[:-1], kp_node[1:]):
             if pos.basetype == 'dict' and kp_elem.final_val in pos:
-                key_obj = pos.key_nodes[kp_elem.final_val]
+                key_node = pos.key_nodes[kp_elem.final_val]
                 pos = pos[kp_elem.final_val]
                 if state.full_ast:
-                    if key_obj.key_path_occurrences is None:
-                        key_obj.key_path_occurrences = [kp_elem]
+                    if key_node.key_path_occurrences is None:
+                        key_node.key_path_occurrences = [kp_elem]
                     else:
-                        key_obj.key_path_occurrences.append(kp_elem)
+                        key_node.key_path_occurrences.append(kp_elem)
                 if not pos._key_path_traversable:
                     raise erring.ParseError('Key path encountered an object that already exists, or a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
             else:
                 pos.check_append_key_path_scalar_key(kp_elem)
                 if next_kp_elem == open_indentation_list:
-                    collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
+                    collection_node = ListlikeNode(kp_node, key_path_parent=initial_pos, _key_path_traversable=True)
                 else:
-                    collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
-                self._append_key_path_collection(collection_obj)
-                pos = collection_obj
+                    collection_node = DictlikeNode(kp_node, key_path_parent=initial_pos, _key_path_traversable=True)
+                self._append_key_path_collection(collection_node)
+                pos = collection_node
                 if initial_pos._key_path_scope is None:
-                    initial_pos._key_path_scope = [collection_obj]
+                    initial_pos._key_path_scope = [collection_node]
                 else:
-                    initial_pos._key_path_scope.append(collection_obj)
-        if kp_obj[-1] == open_indentation_list:
+                    initial_pos._key_path_scope.append(collection_node)
+        if kp_node[-1] == open_indentation_list:
             if pos.basetype != 'list':
-                raise erring.ParseError('Key path cannot open list; incompatible with pre-existing object', kp_obj, pos)
+                raise erring.ParseError('Key path cannot open list; incompatible with pre-existing object', kp_node, pos)
             pos._open = True
         else:
-            pos.check_append_key_path_scalar_key(kp_obj[-1])
+            pos.check_append_key_path_scalar_key(kp_node[-1])
         self.pos = pos
 
 
-    def start_section(self, section_obj,
+    def start_section(self, section_node,
                       open_indentation_list=OPEN_INDENTATION_LIST,
                       DictlikeNode=astnodes.DictlikeNode,
                       ListlikeNode=astnodes.ListlikeNode):
@@ -584,71 +584,71 @@ class Ast(object):
         state = self.state
         if state.inline:
             # This covers the case of being in a tag
-            raise erring.ParseError('Sections are not allowed in inline mode', section_obj)
-        if not section_obj.at_line_start or section_obj.indent != '':
-            raise erring.ParseError('Sections must begin at the start of a line, with no indentation', section_obj)
+            raise erring.ParseError('Sections are not allowed in inline mode', section_node)
+        if not section_node.at_line_start or section_node.indent != '':
+            raise erring.ParseError('Sections must begin at the start of a line, with no indentation', section_node)
         pos = self.pos
         root = self.root
         if self._first_section is None:
-            self._first_section = section_obj
+            self._first_section = section_node
         elif self._first_section._end_delim != self._last_section._end_delim:
             if self._first_section._end_delim:
-                raise erring.ParseError('Cannot start a section when a previous section is missing an end delimiter; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
+                raise erring.ParseError('Cannot start a section when a previous section is missing an end delimiter; section end delimiters must be used for all sections, or not at all', section_node, self._last_section)
             else:
-                raise erring.ParseError('Cannot start a section when a previous section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', section_obj, self._last_section)
-        self._last_section = section_obj
+                raise erring.ParseError('Cannot start a section when a previous section has an end delimiter, unlike preceding sections; section end delimiters must be used for all sections, or not at all', section_node, self._last_section)
+        self._last_section = section_node
         if pos is root:
-            if section_obj.key_path is not None and section_obj.key_path[0] == open_indentation_list:
-                obj = ListlikeNode(section_obj)
+            if section_node.key_path is not None and section_node.key_path[0] == open_indentation_list:
+                collection_node = ListlikeNode(section_node)
             else:
-                obj = DictlikeNode(section_obj)
-            self._append_collection(obj)
-            initial_pos = obj
+                collection_node = DictlikeNode(section_node)
+            self._append_collection(collection_node)
+            initial_pos = collection_node
         elif pos.parent is root:
             initial_pos = pos
             if initial_pos.external_indent != '':
-                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
+                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_node, initial_pos)
         else:
             pos = self._section_climb_to_root(pos)
             initial_pos = pos
             if initial_pos.external_indent != '':
-                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_obj, initial_pos)
+                raise erring.ParseError('Sections must begin at the start of a line, with no indentation, but this is inconsistent with an existing top-level object', section_node, initial_pos)
         pos = initial_pos
-        if section_obj.key_path is not None:
-            kp_obj = section_obj.key_path
-            if len(kp_obj) == 1:
+        if section_node.key_path is not None:
+            kp_node = section_node.key_path
+            if len(kp_node) == 1:
                 if pos.basetype != 'list':
-                    raise erring.ParseError('Key path is incompatible with previously created object', section_obj.scalar, pos)
+                    raise erring.ParseError('Key path is incompatible with previously created object', section_node.scalar, pos)
                 pos._open = True
             else:
-                for kp_elem, next_kp_elem in zip(kp_obj[:-1], kp_obj[1:]):
+                for kp_elem, next_kp_elem in zip(kp_node[:-1], kp_node[1:]):
                     if pos.basetype != 'dict':
                         raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
                     if kp_elem.final_val in pos:
                         pos = pos[kp_elem.final_val]
-                        key_obj = pos.index
+                        key_node = pos.index
                         if state.full_ast:
-                            if key_obj.key_path_occurrences is None:
-                                key_obj.key_path_occurrences = [kp_elem]
+                            if key_node.key_path_occurrences is None:
+                                key_node.key_path_occurrences = [kp_elem]
                             else:
-                                key_obj.key_path_occurrences.append(kp_elem)
+                                key_node.key_path_occurrences.append(kp_elem)
                         if not pos._key_path_traversable:
                             raise erring.ParseError('Key path cannot pass through a pre-existing node that was created outside of the current scope and is now locked', kp_elem, pos)
                     else:
                         pos.check_append_key_path_scalar_key(kp_elem)
                         if next_kp_elem == open_indentation_list:
-                            collection_obj = ListlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
+                            collection_node = ListlikeNode(kp_node, key_path_parent=initial_pos, _key_path_traversable=True)
                         else:
-                            collection_obj = DictlikeNode(kp_obj, key_path_parent=initial_pos, _key_path_traversable=True)
-                        self._append_key_path_collection(collection_obj)
-                        pos = collection_obj
-                if kp_obj[-1] == open_indentation_list:
+                            collection_node = DictlikeNode(kp_node, key_path_parent=initial_pos, _key_path_traversable=True)
+                        self._append_key_path_collection(collection_node)
+                        pos = collection_node
+                if kp_node[-1] == open_indentation_list:
                     pos._open = True
                 else:
-                    pos.check_append_key_path_scalar_key(kp_obj[-1])
+                    pos.check_append_key_path_scalar_key(kp_node[-1])
                 self.pos = pos
         else:
-            pos.check_append_key_path_scalar_key(section_obj.scalar)
+            pos.check_append_key_path_scalar_key(section_node.scalar)
         self.section_pos = pos
 
 
@@ -665,14 +665,14 @@ class Ast(object):
         self._section_climb_to_root(self.pos)
 
 
-    def register_label(self, obj):
+    def register_label(self, node):
         '''
         Register a labeled object for tracking and future alias resolution.
         '''
-        label = obj.tag.label
+        label = node.tag.label
         if label in self._labels:
-            raise erring.ParseError('Duplicate label "{0}"'.format(label), obj.tag['label'], self._labels[label].tag['label'])
-        self._labels[obj.tag.label] = obj
+            raise erring.ParseError('Duplicate label "{0}"'.format(label), node.tag['label'], self._labels[label].tag['label'])
+        self._labels[node.tag.label] = node
 
 
     def _resolve(self, home_alias=grammar.LIT_GRAMMAR['home_alias'],
