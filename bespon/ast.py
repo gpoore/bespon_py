@@ -187,6 +187,8 @@ class Ast(object):
             return
         if not state.next_scalar_is_keyable:
             raise erring.ParseError('Object is not a valid key for a dict-like object', scalar_obj)
+        if scalar_obj.tag is not None and scalar_obj.tag.label is not None:
+            raise erring.ParseError('Labeling dict keys is not supported', scalar_obj)
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if scalar_obj.inline:
