@@ -280,7 +280,7 @@ class BespONDecoder(object):
     __slots__ = ['literal_non_ascii', 'unquoted_non_ascii',
                  'integers', 'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
-                 'extended_data_types',
+                 'extended_types',
                  '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
@@ -307,8 +307,8 @@ class BespONDecoder(object):
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
-        extended_data_types = kwargs.pop('extended_data_types', False)
-        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_non_ascii, integers, float_overflow_to_inf, extended_data_types)):
+        extended_types = kwargs.pop('extended_types', False)
+        if any(x not in (True, False) for x in (literal_non_ascii, unquoted_non_ascii, integers, float_overflow_to_inf, extended_types)):
             raise TypeError
         if not literal_non_ascii and unquoted_non_ascii:
             raise ValueError('Setting literal_non_ascii=False is incompatible with unquoted_non_ascii=True')
@@ -321,7 +321,7 @@ class BespONDecoder(object):
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
         self.float_overflow_to_inf = float_overflow_to_inf
-        self.extended_data_types = extended_data_types
+        self.extended_types = extended_types
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)
@@ -336,7 +336,7 @@ class BespONDecoder(object):
 
         # Parser and type info access
         data_types = load_types.CORE_TYPES.copy()
-        if self.extended_data_types:
+        if self.extended_types:
             data_types.update(load_types.EXTENDED_TYPES)
         self._data_types = data_types
 
@@ -427,7 +427,7 @@ class BespONDecoder(object):
         self._alias_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['alias_path_below_u0590'])
         self._alias_path_unicode_re = re.compile(grammar.RE_GRAMMAR['alias_path_unicode'])
 
-        if not self.extended_data_types:
+        if not self.extended_types:
             self._number_re = re.compile(grammar.RE_GRAMMAR['number_named_groups'])
         else:
             self._number_re = re.compile(grammar.RE_GRAMMAR['extended_number_named_groups'])
@@ -1409,6 +1409,9 @@ class BespONDecoder(object):
             if final_val in infinity_set and infinity_word not in cleaned_val and not self.float_overflow_to_inf:
                 raise erring.ParseError('Non-inf float value became inf due to float precision; to allow this, set float_overflow_to_inf=True', node)
             state.next_scalar_is_keyable = False
+        # Don't need to check for self.extended_types == True when working
+        # with complex and rational, because the corresponding match groups
+        # are only enabled (via regex pattern selection) when that is the case
         elif group_type == 'complex' or group_type == 'complex_inf_or_nan':
             implicit_type = 'complex'
             for s in sign:
