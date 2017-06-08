@@ -5,14 +5,14 @@
 
 
 The ``bespon`` package for Python encodes and decodes data in the
-`BespON <https://bespon.github.io>`_ format.
+`BespON <https://bespon.org>`_ format.
 
 
 
 Basic usage
 ===========
 
-Data is loaded in a manner analogous to the ``json`` package:
+Data is loaded in a manner analogous to Python's ``json`` module:
 
 * ``bespon.load(<file-like object>)``
 * ``bespon.loads(<string or bytes>)``
@@ -24,7 +24,8 @@ Similarly, dumping data to a file or string:
 
 At the moment, only dumping in indentation-style syntax is possible.  Support
 for other styles may be added in the future.  Only dicts, lists, Unicode
-strings, floats, ints, bools, and None are currently supported for dumping.
+strings, byte strings, floats, ints, bools, and ``None`` are currently
+supported for dumping.
 
 
 
@@ -90,7 +91,46 @@ data types and for more general data manipulation will be added in the future.
 
 
 
+Advanced loading and dumping
+============================
+
+The loading and dumping functions support several keyword arguments to
+customize data handling.
+
+**Loading**
+
+* ``extended_types`` (boolean, default ``False``):  Enable preliminary support
+  for ``set``, ``tuple``, and ``odict`` tagged collections.  Enable
+  preliminary support for complex number literals and rational number
+  literals.  Complex numbers currently use the general form ``1.0+2.0i``,
+  where the real part is optional, the imaginary unit is represented with
+  ``i``, and numbers must be floats (either in decimal or hex form).  Rational
+  numbers use the form ``1/2``, where the numerator and denominator must
+  both be decimal integers, and any sign must come before the fraction.
+* ``float_overflow_to_inf`` (boolean, default ``False``):  Whether
+  non-``inf`` floats are permitted to overflow into `inf` without raising an
+  error.
+* ``integers`` (boolean, default ``True``):  Whether integers are permitted.
+  Otherwise they are interpreted as floats.
+* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
+  identifier-style strings are allowed unquoted.
+* ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
+  points are allowed to appear literally in the source (without being
+  represented via backslash-escapes).
+* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
+  depth for collections.
+
+**Dumping**
+
+* ``hex_floats`` (boolean, default ``False``):  Whether floats are
+  dumped in hex form.
+* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
+  depth of collections.
+
+
+
 Spec conformance
 ================
 
-The ``bespon`` package passes the `BespON test suite <https://github.com/bespon/bespon_tests>`_.
+The ``bespon`` package passes the
+`BespON test suite <https://github.com/bespon/bespon_tests>`_.
