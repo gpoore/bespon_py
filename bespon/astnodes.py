@@ -254,7 +254,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
             else:
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
-                if self.basetype in ('dict', 'list'):
+                if self.basetype in ('dict', 'list') and not self.inline:
                     raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
             self.external_indent = tag_node.indent
             self.external_at_line_start = tag_node.at_line_start
@@ -281,7 +281,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
             else:
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
-                if self.basetype in ('dict', 'list'):
+                if self.basetype in ('dict', 'list') and not self.inline:
                     raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
             self.external_indent = doc_comment_node.indent
             self.external_at_line_start = doc_comment_node.at_line_start
