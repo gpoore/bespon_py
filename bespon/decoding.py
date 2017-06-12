@@ -1637,7 +1637,10 @@ class BespONDecoder(object):
 
     def _type_tagged_scalar(self, state, scalar_node, processed_val, num_base=None):
         tag = scalar_node.tag
-        data_type = state.data_types[tag.type]
+        data_types = state.data_types
+        data_type = data_types[tag.type]
+        if not data_types[scalar_node.implicit_type].typeable:
+            raise erring.ParseError('Object with implicit type "{0}" cannot be explicitly typed'.format(scalar_node.implicit_type), scalar_node, tag['type'])
         if num_base is None:
             if data_type.number:
                 raise erring.ParseError('Cannot apply numeric type "{0}" to object that is not a numeric literal'.format(tag.type), scalar_node, tag['type'])
