@@ -23,6 +23,8 @@ if sys.version_info.major == 2:
     str = unicode
 
 
+MAX_NESTING_DEPTH = grammar.PARAMS['max_nesting_depth']
+
 NONE_TYPE = grammar.LIT_GRAMMAR['none_type']
 BOOL_TRUE = grammar.LIT_GRAMMAR['bool_true']
 BOOL_FALSE = grammar.LIT_GRAMMAR['bool_false']
@@ -46,7 +48,7 @@ class BespONEncoder(object):
     Encode BespON.  This is a very basic encoder using indentation-style
     syntax.
     '''
-    def __init__(self, max_nesting_depth=100, hex_floats=False):
+    def __init__(self, max_nesting_depth=MAX_NESTING_DEPTH, hex_floats=False):
         if not isinstance(max_nesting_depth, int):
             raise TypeError('max_nesting_depth must be an integer')
         if max_nesting_depth < 0:

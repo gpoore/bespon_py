@@ -35,6 +35,8 @@ elif sys.version_info.major == 2:
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 
 
+
+
 def basic_unicode_escape(code_point):
     '''
     Basic backslash-escape.  Useful for creating error messages, etc.
@@ -52,10 +54,10 @@ class Escape(object):
     Replace code points and bytes in Unicode strings and byte strings with
     their escaped equivalents when they cannot be represented literally.
     '''
-    def __init__(self, only_ascii=False, brace_escapes=True, x_escapes=True):
-        if not all(opt in (True, False) for opt in (only_ascii, brace_escapes, x_escapes)):
+    def __init__(self, only_ascii_source=False, brace_escapes=True, x_escapes=True):
+        if not all(opt in (True, False) for opt in (only_ascii_source, brace_escapes, x_escapes)):
             raise TypeError
-        self.only_ascii = only_ascii
+        self.only_ascii_source = only_ascii_source
         self.brace_escapes = brace_escapes
         self.x_escapes = x_escapes
 
@@ -91,7 +93,7 @@ class Escape(object):
         # Code points other than invalid literals are put first, since they
         # will typically come up more frequently.
         pattern_dict = {'always_escaped_ascii': grammar.RE_GRAMMAR['always_escaped_ascii'],
-                        'always_escaped_unicode': grammar.RE_GRAMMAR['always_escaped_ascii'] if self.only_ascii else grammar.RE_GRAMMAR['always_escaped_unicode'],
+                        'always_escaped_unicode': grammar.RE_GRAMMAR['always_escaped_ascii'] if self.only_ascii_source else grammar.RE_GRAMMAR['always_escaped_unicode'],
                         'backslash': grammar.RE_GRAMMAR['backslash'],
                         'singlequote': grammar.RE_GRAMMAR['escaped_string_singlequote_delim'],
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
@@ -267,23 +269,33 @@ class Unescape(object):
     with their unescaped equivalents.
     '''
     def __init__(self):
-        # Dicts for unescaping start with all short escapes; factory
-        # functions generate additional escapes as requested.  The bytes dict
-        # is largely prepopulated, but can't be fully prepopulated because
-        # of `\<spaces><newline>` escapes.
-        self._unescape_unicode_dict = tooling.keydefaultdict(self._unescape_unicode_char, grammar.SHORT_BACKSLASH_UNESCAPES)
-        self._unescape_bytes_dict = tooling.keydefaultdict(self._unescape_byte)
-        self._unescape_bytes_dict.update({'\\x{0:02x}'.format(n).encode('ascii'): chr(n).encode('latin1') for n in range(256)})
-        self._unescape_bytes_dict.update({k.encode('ascii'): v.encode('ascii') for k, v in grammar.SHORT_BACKSLASH_UNESCAPES.items()})
-
-        # Regexes for finding escaped code points and bytes
         unescape_unicode = grammar.RE_GRAMMAR['unicode_escape']
         unescape_bytes = grammar.RE_GRAMMAR['bytes_escape']
         newline = grammar.RE_GRAMMAR['newline']
+        sentinel_codepoint = grammar.LIT_GRAMMAR['terminal_sentinel']
+        sentinel = grammar.RE_GRAMMAR['terminal_sentinel']
+
+        # Dicts for unescaping start with all short escapes; factory functions
+        # generate additional escapes as requested.  The bytes dict is largely
+        # prepopulated, but can't be fully prepopulated because of
+        # `\<spaces><newline>` escapes.  The sentinel is needed to deal with
+        # `indent` (can't use `^` for detecting the start of a line and adding
+        # indentation, because empty matches are only substituted when not
+        # adjacent to a previous match).
+        self._unescape_unicode_dict = tooling.keydefaultdict(self._unescape_unicode_char, grammar.SHORT_BACKSLASH_UNESCAPES)
+        self._unescape_unicode_dict[sentinel_codepoint] = ''
+        self._unescape_bytes_dict = tooling.keydefaultdict(self._unescape_byte)
+        self._unescape_bytes_dict.update({'\\x{0:02x}'.format(n).encode('ascii'): chr(n).encode('latin1') for n in range(256)})
+        self._unescape_bytes_dict.update({k.encode('ascii'): v.encode('ascii') for k, v in grammar.SHORT_BACKSLASH_UNESCAPES.items()})
+        self._unescape_bytes_dict[sentinel_codepoint.encode('ascii')] = b''
+
+        # Regexes for finding escaped code points and bytes
         self._unescape_unicode_re = re.compile(unescape_unicode)
         self._unescape_unicode_or_replace_newline_re = re.compile('{0}|{1}'.format(newline, unescape_unicode))
+        self._unescape_unicode_or_indent_or_replace_newline_re = re.compile('{0}{1}?|{1}|{2}'.format(newline, sentinel, unescape_unicode))
         self._unescape_bytes_re = re.compile(unescape_bytes.encode('ascii'))
         self._unescape_bytes_or_replace_newline_re = re.compile('{0}|{1}'.format(newline, unescape_bytes).encode('ascii'))
+        self._unescape_bytes_or_indent_or_replace_newline_re = re.compile('{0}{1}?|{1}|{2}'.format(newline, sentinel, unescape_bytes).encode('ascii'))
 
 
     @staticmethod
@@ -346,27 +358,42 @@ class Unescape(object):
         return v
 
 
-    def unescape_unicode(self, s, newline=None, _default_newline=NEWLINE):
+    def unescape_unicode(self, s, newline=None, indent=None,
+                         _default_newline=NEWLINE,
+                         _sentinel=grammar.LIT_GRAMMAR['terminal_sentinel']):
         '''
         Within a string, replace all backslash escapes with the
         corresponding code points.
         '''
         d = self._unescape_unicode_dict
-        if newline is None or newline == _default_newline:
-            return self._unescape_unicode_re.sub(lambda m: d[m.group(0)], s)
+        if indent is None or indent == '':
+            if newline is None or newline == _default_newline:
+                r = self._unescape_unicode_re
+            else:
+                d[_default_newline] = newline
+                r = self._unescape_unicode_or_replace_newline_re
         else:
-            d[_default_newline] = newline
-            return self._unescape_unicode_or_replace_newline_re.sub(lambda m: d[m.group(0)], s)
+            d[_default_newline] = newline + indent
+            d[_default_newline+_sentinel] = newline
+            r = self._unescape_unicode_or_indent_or_replace_newline_re
+        return r.sub(lambda m: d[m.group()], s)
 
 
-    def unescape_bytes(self, b, newline=None, _default_newline=NEWLINE.encode('latin1')):
+    def unescape_bytes(self, b, newline=None, indent=None,
+                       _default_newline=NEWLINE.encode('latin1'),
+                       _sentinel=grammar.LIT_GRAMMAR['terminal_sentinel'].encode('ascii')):
         '''
         Within a binary string, replace all backslash escapes with the
         corresponding bytes.
         '''
         d = self._unescape_bytes_dict
-        if newline is None or newline == _default_newline:
-            return self._unescape_bytes_re.sub(lambda m: d[m.group(0)], b)
+        if indent is None or indent == b'':
+            if newline is None or newline == _default_newline:
+                r = self._unescape_bytes_re
+            else:
+                r = self._unescape_bytes_or_replace_newline_re
         else:
-            d[_default_newline] = newline
-            return self._unescape_bytes_or_replace_newline_re.sub(lambda m: d[m.group(0)], b)
+            d[_default_newline] = newline + indent
+            d[_default_newline+_sentinel] = newline
+            r = self._unescape_bytes_or_indent_or_replace_newline_re
+        return r.sub(lambda m: d[m.group()], b)

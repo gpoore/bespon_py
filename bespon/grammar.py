@@ -31,6 +31,10 @@ from . import re_patterns
 #    while rtl checks may be omitted.
 #  * Use of "unicode" suffix in a variable name indicates that the full range
 #    of Unicode code points in 0x00-0x10FFFF is covered.
+#  * Use of "bytes" suffix in a variable name indicates that it is an ASCII
+#    representation of a byte string.  Such variables are manipulated as
+#    Unicode strings so that things like the `.format()` method are available,
+#    but must always be encoded with ASCII before being used.
 
 
 # Assemble literal grammar
@@ -59,7 +63,17 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                     ('quaternion_unit', 'ijk'),
                     ('imaginary_unit', 'i'),
                     # Other
-                    ('bom', '\uFEFF')]
+                    ('bom', '\uFEFF'),
+                    # Need to be able to add a sentinel to the end of a string
+                    # during backslash-escape processing with custom `indent`.
+                    # A code point that is invalid as a literal is needed,
+                    # ideally in the ASCII range.  Almost anything could be
+                    # used.  The end-of-text character (ETX) was chosen
+                    # because it has the right meaning and is safer than null
+                    # in the event of a bug that allows a sentinel to escape
+                    # into data (which shouldn't happen for an implementation
+                    # that passes the test suite).
+                    ('terminal_sentinel', '\u0003')]
 
 _RAW_LIT_SPECIAL = [# Special code points
                     ('comment_delim', '#'),
@@ -105,7 +119,8 @@ LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GR
 # Assemble regex grammar
 _RAW_RE_GRAMMAR = [('backslash', '\\\\'),
                    ('line_terminator_ascii', '[{0}]'.format(re.escape(LIT_GRAMMAR['line_terminator_ascii']))),
-                   ('line_terminator_unicode', '[{0}]'.format(re.escape(LIT_GRAMMAR['line_terminator_unicode'])))]
+                   ('line_terminator_unicode', '[{0}]'.format(re.escape(LIT_GRAMMAR['line_terminator_unicode']))),
+                   ('terminal_sentinel', re.escape(LIT_GRAMMAR['terminal_sentinel']))]
 
 def _group_if_needed(pattern):
     if '|' in pattern:
@@ -328,10 +343,10 @@ _RAW_RE_TYPE = [# None type
 _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 
 # Escapes (no string formatting is performed on these, so braces are fine)
-_RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2}})'),
-               ('u_escape', '\\\\u(?:{lower_hex_digit}{{4}}|{upper_hex_digit}{{4}})'),
-               ('U_escape', '\\\\U(?:{lower_hex_digit}{{8}}|{upper_hex_digit}{{8}})'),
-               ('ubrace_escape', '\\\\u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}})\\}}'),
+_RAW_RE_ESC = [('x_escape_pattern', 'x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2}})'),
+               ('u_escape_pattern', 'u(?:{lower_hex_digit}{{4}}|{upper_hex_digit}{{4}})'),
+               ('U_escape_pattern', 'U(?:{lower_hex_digit}{{8}}|{upper_hex_digit}{{8}})'),
+               ('ubrace_escape_pattern', 'u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}})\\}}'),
                # The general escape patterns can include `\<spaces><newline>`,
                # but don't need to be compiled with re.DOTALL because the
                # newlines are specified explicitly and accounted for before
@@ -341,8 +356,8 @@ _RAW_RE_ESC = [('x_escape', '\\\\x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2
                # valid short escapes.  Invalid escapes are caught at that
                # point; the regex pattern just needs to catch everything that
                # could be a valid escape.
-               ('bytes_escape', r'{x_escape}|\\{space}*{newline}|\\.|\\'),
-               ('unicode_escape', r'{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|\\{space}*{newline}|\\.|\\')]
+               ('bytes_escape', r'\\(?:{x_escape_pattern}|{space}*{newline}|.|)'),
+               ('unicode_escape', r'\\(?:{x_escape_pattern}|{u_escape_pattern}|{U_escape_pattern}|{ubrace_escape_pattern}|{space}*{newline}|.|)')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
 _raw_key_not_formatted = set(k for k, v in _RAW_LIT_SPECIAL) | set(k for k, v in _RE_PATTERNS)
@@ -435,4 +450,5 @@ SHORT_BACKSLASH_ESCAPES = {v: k for k, v in SHORT_BACKSLASH_UNESCAPES.items()}
 
 
 # Non-textual parameters
-PARAMS = {'max_delim_length': 3*30}
+PARAMS = {'max_nesting_depth': 100,
+          'max_delim_length': 3*30}

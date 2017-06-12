@@ -34,6 +34,7 @@ if sys.version_info.major == 2:
 
 BOM = grammar.LIT_GRAMMAR['bom']
 MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
+MAX_NESTING_DEPTH = grammar.PARAMS['max_nesting_depth']
 
 NEWLINE = grammar.LIT_GRAMMAR['newline']
 INDENT = grammar.LIT_GRAMMAR['indent']
@@ -61,6 +62,8 @@ INFINITY_WORD = grammar.LIT_GRAMMAR['infinity_word']
 SIGN = grammar.LIT_GRAMMAR['sign']
 ANY_EXPONENT_LETTER = grammar.LIT_GRAMMAR['dec_exponent_letter'] + grammar.LIT_GRAMMAR['hex_exponent_letter']
 IMAGINARY_UNIT = grammar.LIT_GRAMMAR['imaginary_unit']
+
+SENTINEL = grammar.LIT_GRAMMAR['terminal_sentinel']
 
 
 
@@ -305,7 +308,7 @@ class BespONDecoder(object):
         only_ascii_source = kwargs.pop('only_ascii_source', True)
         only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', False)
         integers = kwargs.pop('integers', True)
-        max_nesting_depth = kwargs.pop('max_nesting_depth', 100)
+        max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
         if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted, integers, float_overflow_to_inf, extended_types)):
@@ -1132,6 +1135,7 @@ class BespONDecoder(object):
                                   literal_string_delim=LITERAL_STRING_DELIM,
                                   assign_key_val=ASSIGN_KEY_VAL,
                                   newline=NEWLINE,
+                                  sentinel=SENTINEL,
                                   next=next, len=len):
         '''
         Parse a block quoted string or doc comment.
@@ -1268,26 +1272,29 @@ class BespONDecoder(object):
                     tag_newline = node.tag['newline'].final_val
                 else:
                     tag_newline = newline
+                content_lines_dedent_first_line = content_lines_dedent[0]
+                content_lines_dedent_last_line = content_lines_dedent[-1]
                 if 'indent' in node.tag:
                     tag_indent = node.tag['indent'].final_val
+                    content_lines_dedent[0] = tag_indent + content_lines_dedent_first_line
+                    # Don't use `content_lines_dedent_last_line`, but access
+                    # by index, to account for only a single line
+                    content_lines_dedent[-1] = content_lines_dedent[-1] + newline + sentinel
                 else:
-                    tag_indent = None
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-                if tag_indent is None:
-                    content = newline.join(content_lines_dedent)
-                else:
-                    content = newline.join(tag_indent + x for x in content_lines_dedent)
+                    tag_indent = ''
+                    content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                content = newline.join(content_lines_dedent)
+                content_lines_dedent[0] = content_lines_dedent_first_line
                 content_lines_dedent[-1] = content_lines_dedent_last_line
                 if node.tag.type is None:
                     try:
-                        content_esc = self._unescape_unicode(content, newline=tag_newline)
+                        content_esc = self._unescape_unicode(content, newline=tag_newline, indent=tag_indent)
                     except Exception as e:
                         raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
                     node.final_val = content_esc
                 elif not state.data_types[node.tag.type].ascii_bytes:
                     try:
-                        content_esc = self._unescape_unicode(content, newline=tag_newline)
+                        content_esc = self._unescape_unicode(content, newline=tag_newline, indent=tag_indent)
                     except Exception as e:
                         raise erring.ParseError('Failed to unescape escaped string:\n  {0}'.format(e), node)
                     node.final_val = self._type_tagged_scalar(state, node, content_esc)
@@ -1300,8 +1307,9 @@ class BespONDecoder(object):
                     # for compatibility in tag, so there's no need for a
                     # check here.
                     tag_newline_bytes = tag_newline.encode('ascii')
+                    tag_indent_bytes = tag_indent.encode('ascii')
                     try:
-                        content_bytes_esc = self._unescape_bytes(content_bytes, newline=tag_newline_bytes)
+                        content_bytes_esc = self._unescape_bytes(content_bytes, newline=tag_newline_bytes, indent=tag_indent_bytes)
                     except Exception as e:
                         raise erring.ParseError('Failed to unescape escaped string that is tagged with an ASCII bytes type:\n  {0}'.format(e), node, node.tag['type'])
                     node.final_val = self._type_tagged_scalar(state, node, content_bytes_esc)
