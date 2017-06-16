@@ -204,15 +204,15 @@ else:
 # xid_continue_less_fillers = set([cp for cp, data in unicodetools.ucd.derivedcoreproperties.items() if 'XID_Continue' in data and cp not in hangul_fillers])
 # xid_continue_ascii = set(cp for cp in xid_continue_less_fillers if cp < 128)
 # xid_continue_below_u0590 = set(cp for cp in xid_continue_less_fillers if cp < 0x0590)
-XID_CONTINUE_ASCII = '[0-9A-Z\\\u005Fa-z]'
+XID_CONTINUE_ASCII = '[0-9A-Z_a-z]'
 XID_CONTINUE_BELOW_U0590 = '''
-    [0-9A-Z\\\u005Fa-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
+    [0-9A-Z_a-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
      \\\u02EE\\\u0300-\\\u0374\\\u0376-\\\u0377\\\u037B-\\\u037D\\\u037F\\\u0386-\\\u038A\\\u038C\\\u038E-\\\u03A1\\\u03A3-\\\u03F5\\\u03F7-\\\u0481
      \\\u0483-\\\u0487\\\u048A-\\\u052F\\\u0531-\\\u0556\\\u0559\\\u0561-\\\u0587]
     '''.replace('\x20', '').replace('\n', '')
 if sys.maxunicode == 0xFFFF:
     XID_CONTINUE_LESS_FILLERS = '''
-        [0-9A-Z\\\u005Fa-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
+        [0-9A-Z_a-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
          \\\u02EE\\\u0300-\\\u0374\\\u0376-\\\u0377\\\u037B-\\\u037D\\\u037F\\\u0386-\\\u038A\\\u038C\\\u038E-\\\u03A1\\\u03A3-\\\u03F5\\\u03F7-\\\u0481
          \\\u0483-\\\u0487\\\u048A-\\\u052F\\\u0531-\\\u0556\\\u0559\\\u0561-\\\u0587\\\u0591-\\\u05BD\\\u05BF\\\u05C1-\\\u05C2\\\u05C4-\\\u05C5\\\u05C7
          \\\u05D0-\\\u05EA\\\u05F0-\\\u05F2\\\u0610-\\\u061A\\\u0620-\\\u0669\\\u066E-\\\u06D3\\\u06D5-\\\u06DC\\\u06DF-\\\u06E8\\\u06EA-\\\u06FC\\\u06FF
@@ -314,7 +314,7 @@ if sys.maxunicode == 0xFFFF:
         '''.replace('\x20', '').replace('\n', '')
 else:
     XID_CONTINUE_LESS_FILLERS = '''
-        [0-9A-Z\\\u005Fa-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
+        [0-9A-Z_a-z\\\u00AA\\\u00B5\\\u00B7\\\u00BA\\\u00C0-\\\u00D6\\\u00D8-\\\u00F6\\\u00F8-\\\u02C1\\\u02C6-\\\u02D1\\\u02E0-\\\u02E4\\\u02EC
          \\\u02EE\\\u0300-\\\u0374\\\u0376-\\\u0377\\\u037B-\\\u037D\\\u037F\\\u0386-\\\u038A\\\u038C\\\u038E-\\\u03A1\\\u03A3-\\\u03F5\\\u03F7-\\\u0481
          \\\u0483-\\\u0487\\\u048A-\\\u052F\\\u0531-\\\u0556\\\u0559\\\u0561-\\\u0587\\\u0591-\\\u05BD\\\u05BF\\\u05C1-\\\u05C2\\\u05C4-\\\u05C5\\\u05C7
          \\\u05D0-\\\u05EA\\\u05F0-\\\u05F2\\\u0610-\\\u061A\\\u0620-\\\u0669\\\u066E-\\\u06D3\\\u06D5-\\\u06DC\\\u06DF-\\\u06E8\\\u06EA-\\\u06FC\\\u06FF

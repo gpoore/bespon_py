@@ -269,8 +269,8 @@ class Unescape(object):
     with their unescaped equivalents.
     '''
     def __init__(self):
-        unescape_unicode = grammar.RE_GRAMMAR['unicode_escape']
-        unescape_bytes = grammar.RE_GRAMMAR['bytes_escape']
+        unescape_unicode = grammar.RE_GRAMMAR['escape_valid_or_invalid_unicode']
+        unescape_bytes = grammar.RE_GRAMMAR['escape_valid_or_invalid_bytes']
         newline = grammar.RE_GRAMMAR['newline']
         sentinel_codepoint = grammar.LIT_GRAMMAR['terminal_sentinel']
         sentinel = grammar.RE_GRAMMAR['terminal_sentinel']

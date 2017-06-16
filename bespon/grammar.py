@@ -37,6 +37,29 @@ from . import re_patterns
 #    but must always be encoded with ASCII before being used.
 
 
+# Default short backslash escapes.
+SHORT_BACKSLASH_UNESCAPES = {'\\\\': '\\',
+                             "\\'": "'",
+                             '\\"': '"',
+                             '\\a': '\a',
+                             '\\b': '\b',
+                             '\\e': '\x1B',
+                             '\\f': '\f',
+                             '\\n': '\n',
+                             '\\r': '\r',
+                             '\\t': '\t',
+                             '\\v': '\v'}
+
+SHORT_BACKSLASH_ESCAPES = {v: k for k, v in SHORT_BACKSLASH_UNESCAPES.items()}
+
+
+# Non-textual general parameters
+PARAMS = {'max_nesting_depth': 100,
+          'max_delim_length': 3*30}
+
+
+
+
 # Assemble literal grammar
 _RAW_LIT_GRAMMAR = [# Whitespace
                     ('tab', '\t'),
@@ -146,6 +169,15 @@ _RE_PATTERNS = [('ascii_alpha', '[A-Za-z]'),
                 ('private_use', _group_if_needed(re_patterns.PRIVATE_USE))]
 _RAW_RE_GRAMMAR.extend(_RE_PATTERNS)
 
+#
+_RAW_RE_CP_GROUPS = [('unquoted_start_ascii', '_*{xid_start_ascii}'),
+                     ('unquoted_start_below_u0590', '_*{xid_start_below_u0590}'),
+                     ('unquoted_start_unicode', '_*{xid_start_less_fillers}'),
+                     ('unquoted_continue_ascii', '{xid_continue_ascii}'),
+                     ('unquoted_continue_below_u0590', '{xid_continue_below_u0590}'),
+                     ('unquoted_continue_unicode', '{xid_continue_less_fillers}')]
+_RAW_RE_GRAMMAR.extend(_RAW_RE_CP_GROUPS)
+
 # Whitespace
 _RAW_RE_WS = [('space', re.escape(LIT_GRAMMAR['space'])),
               ('indent', '[{0}]'.format(re.escape(LIT_GRAMMAR['indent']))),
@@ -226,10 +258,16 @@ _RAW_RE_TYPE = [# None type
                 ('inf_or_nan_word', '(?:{infinity_word}|{not_a_number_word})'),
                 ('float_reserved_word', _capitalization_permutations_pattern(LIT_GRAMMAR['infinity_word'], LIT_GRAMMAR['not_a_number_word'])),
                 # Any float -- order is important due to base prefixes
-                ('positive_float', '(?:{positive_hex_float}|{positive_dec_float}|{inf_or_nan_word})'),
-                ('float', '{opt_sign_indent}{positive_float}'),
+                ('positive_float_ascii', '(?:{positive_hex_float}|{positive_dec_float}|{inf_or_nan_word}(?!{unquoted_continue_ascii}))'),
+                ('positive_float_below_u0590', '(?:{positive_hex_float}|{positive_dec_float}|{inf_or_nan_word}(?!{unquoted_continue_below_u0590}))'),
+                ('positive_float_unicode', '(?:{positive_hex_float}|{positive_dec_float}|{inf_or_nan_word}(?!{unquoted_continue_unicode}))'),
+                ('float_ascii', '{opt_sign_indent}{positive_float_ascii}'),
+                ('float_below_u0590', '{opt_sign_indent}{positive_float_below_u0590}'),
+                ('float_unicode', '{opt_sign_indent}{positive_float_unicode}'),
                 # General number -- order is important due to exponent parts
-                ('number', '(?:{float}|{integer})'),
+                ('number_ascii', '(?:{float_ascii}|{integer})'),
+                ('number_below_u0590', '(?:{float_below_u0590}|{integer})'),
+                ('number_unicode', '(?:{float_unicode}|{integer})'),
                 # Efficient number pattern with named groups.  The order is
                 # important.  Hex, octal, and binary must come first, so that
                 # the `0` in the `0<letter>` prefix doesn't trigger a
@@ -288,19 +326,16 @@ _RAW_RE_TYPE = [# None type
                                          )
                                          '''.replace('\x20', '').replace('\n', '')),
 
-                # Reserved words
+                # Keywords and reserved words
+                ('keyword', '(?:{none_type}|{bool_true}|{bool_false}|{infinity_word}|{not_a_number_word})'),
+                ('non_number_keyword', '(?:{none_type}|{bool_true}|{bool_false})'),
+                ('extended_keyword', '(?:{none_type}|{bool_true}|{bool_false}|{infinity_word}{imaginary_unit}?|{not_a_number_word}{imaginary_unit}?)'),
                 ('reserved_word', '(?:{none_type_reserved_word}|{bool_reserved_word}|(?:{float_reserved_word}){quaternion_unit_reserved_word}?)'),
 
                 # Unquoted strings
-                ('unquoted_start_ascii', '{xid_start_ascii}'),
-                ('unquoted_start_below_u0590', '{xid_start_below_u0590}'),
-                ('unquoted_start_unicode', '{xid_start_less_fillers}'),
-                ('unquoted_continue_ascii', '{xid_continue_ascii}'),
-                ('unquoted_continue_below_u0590', '{xid_continue_below_u0590}'),
-                ('unquoted_continue_unicode', '{xid_continue_less_fillers}'),
-                ('unquoted_string_ascii', '_*{unquoted_start_ascii}{unquoted_continue_ascii}*'),
-                ('unquoted_string_below_u0590', '_*{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
-                ('unquoted_string_unicode', '_*{unquoted_start_unicode}{unquoted_continue_unicode}*'),
+                ('unquoted_string_ascii', '{unquoted_start_ascii}{unquoted_continue_ascii}*'),
+                ('unquoted_string_below_u0590', '{unquoted_start_below_u0590}{unquoted_continue_below_u0590}*'),
+                ('unquoted_string_unicode', '{unquoted_start_unicode}{unquoted_continue_unicode}*'),
                 ('unquoted_string_or_list_ascii', '(?:{unquoted_string_ascii}|{open_indentation_list}(?!{path_separator}))'),
                 ('unquoted_string_or_list_below_u0590', '(?:{unquoted_string_below_u0590}|{open_indentation_list}(?!{path_separator}))'),
                 ('unquoted_string_or_list_unicode', '(?:{unquoted_string_unicode}|{open_indentation_list}(?!{path_separator}))'),
@@ -343,10 +378,12 @@ _RAW_RE_TYPE = [# None type
 _RAW_RE_GRAMMAR.extend(_RAW_RE_TYPE)
 
 # Escapes (no string formatting is performed on these, so braces are fine)
-_RAW_RE_ESC = [('x_escape_pattern', 'x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2}})'),
-               ('u_escape_pattern', 'u(?:{lower_hex_digit}{{4}}|{upper_hex_digit}{{4}})'),
-               ('U_escape_pattern', 'U(?:{lower_hex_digit}{{8}}|{upper_hex_digit}{{8}})'),
-               ('ubrace_escape_pattern', 'u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}})\\}}'),
+_RAW_RE_ESC = [('short_escapes_codepoint', '[{0}]'.format(re.escape(''.join(e[1] for e in SHORT_BACKSLASH_UNESCAPES)))),
+               ('not_short_escapes_codepoint', '[^{0}]'.format(re.escape(''.join(e[1] for e in SHORT_BACKSLASH_UNESCAPES)))),
+               ('x_escape', 'x(?:{lower_hex_digit}{{2}}|{upper_hex_digit}{{2}})'),
+               ('u_escape', 'u(?:{lower_hex_digit}{{4}}|{upper_hex_digit}{{4}})'),
+               ('U_escape', 'U(?:{lower_hex_digit}{{8}}|{upper_hex_digit}{{8}})'),
+               ('ubrace_escape', 'u\\{{(?:{lower_hex_digit}{{1,6}}|{upper_hex_digit}{{1,6}})\\}}'),
                # The general escape patterns can include `\<spaces><newline>`,
                # but don't need to be compiled with re.DOTALL because the
                # newlines are specified explicitly and accounted for before
@@ -356,8 +393,10 @@ _RAW_RE_ESC = [('x_escape_pattern', 'x(?:{lower_hex_digit}{{2}}|{upper_hex_digit
                # valid short escapes.  Invalid escapes are caught at that
                # point; the regex pattern just needs to catch everything that
                # could be a valid escape.
-               ('bytes_escape', r'\\(?:{x_escape_pattern}|{space}*{newline}|.|)'),
-               ('unicode_escape', r'\\(?:{x_escape_pattern}|{u_escape_pattern}|{U_escape_pattern}|{ubrace_escape_pattern}|{space}*{newline}|.|)')]
+               ('escape_valid_or_invalid_bytes', r'\\(?:{x_escape}|{space}*{newline}|.|)'),
+               ('escape_valid_bytes', r'\\(?:{x_escape}|{space}*{newline}|{short_escapes_codepoint})'),
+               ('escape_valid_or_invalid_unicode', r'\\(?:{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|{space}*{newline}|.|)'),
+               ('escape_valid', r'\\(?:{x_escape}|{u_escape}|{U_escape}|{ubrace_escape}|{space}*{newline}|{short_escapes_codepoint})')]
 _RAW_RE_GRAMMAR.extend(_RAW_RE_ESC)
 
 _raw_key_not_formatted = set(k for k, v in _RAW_LIT_SPECIAL) | set(k for k, v in _RE_PATTERNS)
@@ -372,8 +411,7 @@ for k, v in _RAW_RE_GRAMMAR:
 
 
 
-# Other grammar-related elements
-
+# Functions for generating grammar-based regex patterns and compiled regexes
 def gen_closing_delim_pattern(delim,
                               escaped_string_singlequote_delim=LIT_GRAMMAR['escaped_string_singlequote_delim'],
                               escaped_string_doublequote_delim=LIT_GRAMMAR['escaped_string_doublequote_delim'],
@@ -431,24 +469,3 @@ def gen_closing_delim_re(delim, gen_closing_delim_pattern=gen_closing_delim_patt
     '''
     p, g = gen_closing_delim_pattern(delim)
     return (re.compile(p), g)
-
-
-# Default short backslash escapes.
-SHORT_BACKSLASH_UNESCAPES = {'\\\\': '\\',
-                             "\\'": "'",
-                             '\\"': '"',
-                             '\\a': '\a',
-                             '\\b': '\b',
-                             '\\e': '\x1B',
-                             '\\f': '\f',
-                             '\\n': '\n',
-                             '\\r': '\r',
-                             '\\t': '\t',
-                             '\\v': '\v'}
-
-SHORT_BACKSLASH_ESCAPES = {v: k for k, v in SHORT_BACKSLASH_UNESCAPES.items()}
-
-
-# Non-textual parameters
-PARAMS = {'max_nesting_depth': 100,
-          'max_delim_length': 3*30}
