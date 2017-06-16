@@ -24,12 +24,12 @@ class DecodingException(BespONException):
     '''
     Base decoding exception.
     '''
-    def fmt_msg_with_traceback(self, msg, state_or_obj, other_objs=None, unresolved_cache=False):
-        source_name = state_or_obj._state.source_name
+    def fmt_msg_with_traceback(self, msg, state_or_node, other_nodes=None, unresolved_cache=False):
+        source_name = state_or_node._state.source_name
         if unresolved_cache:
-            if not hasattr(state_or_obj, 'next_cache'):
-                raise Bug('Invalid error message', state_or_obj)
-            state = state_or_obj
+            if not hasattr(state_or_node, 'next_cache'):
+                raise Bug('Invalid error message', state_or_node)
+            state = state_or_node
             if state.next_doc_comment is not None:
                 cache_obj = state.next_doc_comment
                 cache_name = 'doc comment'
@@ -67,13 +67,13 @@ class DecodingException(BespONException):
                                                                                                       cache_obj.last_lineno,
                                                                                                       cache_obj.last_colno)
         else:
-            if other_objs is None:
+            if other_nodes is None:
                 other_traceback = ''
             else:
-                if not isinstance(other_objs, list):
-                    other_objs = [other_objs]
+                if not isinstance(other_nodes, list):
+                    other_nodes = [other_nodes]
                 other_obj_locs = []
-                for other_obj in other_objs:
+                for other_obj in other_nodes:
                     if other_obj.first_lineno == other_obj.last_lineno:
                         if other_obj.first_colno == other_obj.last_colno:
                             loc = '{0}:{1}'.format(other_obj.first_lineno, other_obj.first_colno)
@@ -90,14 +90,14 @@ class DecodingException(BespONException):
                     other_traceback = ', in relation to objects at {0} and {1}'.format(other_obj_locs[0], other_obj_locs[1])
                 else:
                     other_traceback = ', in relation to objects at ' + ', '.join(other_obj_locs[:-1]) + ', and ' + other_obj_locs[-1]
-            if hasattr(state_or_obj, 'next_cache'):
-                first_lineno = last_lineno = state_or_obj.lineno
-                first_colno = last_colno = state_or_obj.colno
+            if hasattr(state_or_node, 'next_cache'):
+                first_lineno = last_lineno = state_or_node.lineno
+                first_colno = last_colno = state_or_node.colno
             else:
-                first_lineno = state_or_obj.first_lineno
-                first_colno = state_or_obj.first_colno
-                last_lineno = state_or_obj.last_lineno
-                last_colno = state_or_obj.last_colno
+                first_lineno = state_or_node.first_lineno
+                first_colno = state_or_node.first_colno
+                last_lineno = state_or_node.last_lineno
+                last_colno = state_or_node.last_colno
             if first_lineno == last_lineno:
                 if first_colno == last_colno:
                     traceback = 'In "{0}" at line {1}:{2}{3}:'.format(source_name,
@@ -125,11 +125,11 @@ class Bug(DecodingException):
     or are introduced in the future, a more informative error message is
     produced, with traceback information from the data.
     '''
-    def __init__(self, msg, state_or_obj):
+    def __init__(self, msg, state_or_node):
         self.msg = msg
-        self.state_or_obj = state_or_obj
+        self.state_or_node = state_or_node
     def __str__(self):
-        return self.fmt_msg_with_traceback(self.msg, self.state_or_obj)
+        return self.fmt_msg_with_traceback(self.msg, self.state_or_node)
 
 
 class SourceDecodeError(DecodingException):
@@ -146,8 +146,8 @@ class InvalidLiteralError(DecodingException):
     '''
     Code point that is not allowed to appear literally has appeared.
     '''
-    def __init__(self, state_or_obj, code_point, code_point_esc, comment=None):
-        self.state_or_obj = state_or_obj
+    def __init__(self, state_or_node, code_point, code_point_esc, comment=None):
+        self.state_or_node = state_or_node
         self.code_point = code_point
         self.code_point_esc = code_point_esc
         self.comment = comment
@@ -156,7 +156,7 @@ class InvalidLiteralError(DecodingException):
             msg = 'Invalid literal code point "{0}"'.format(self.code_point_esc)
         else:
             msg = 'Invalid literal code point "{0}" ({1})'.format(self.code_point_esc, self.comment)
-        return self.fmt_msg_with_traceback(msg, self.state_or_obj)
+        return self.fmt_msg_with_traceback(msg, self.state_or_node)
 
 
 class UnknownEscapeError(DecodingException):
@@ -174,21 +174,21 @@ class ParseError(DecodingException):
     '''
     General error during parsing.
     '''
-    def __init__(self, msg, state_or_obj, other_obj=None, unresolved_cache=False):
+    def __init__(self, msg, state_or_node, other_obj=None, unresolved_cache=False):
         self.msg = msg
-        self.state_or_obj = state_or_obj
+        self.state_or_node = state_or_node
         self.other_obj = other_obj
         self.unresolved_cache = unresolved_cache
     def __str__(self):
-        return self.fmt_msg_with_traceback(self.msg, self.state_or_obj, self.other_obj, self.unresolved_cache)
+        return self.fmt_msg_with_traceback(self.msg, self.state_or_node, self.other_obj, self.unresolved_cache)
 
 
 class IndentationError(DecodingException):
     '''
     Error in relative indentation
     '''
-    def __init__(self, state_or_obj):
+    def __init__(self, state_or_node):
         self.msg = 'Inconsistent relative indentation'
-        self.state_or_obj = state_or_obj
+        self.state_or_node = state_or_node
     def __str__(self):
-        return self.fmt_msg_with_traceback(self.msg, self.state_or_obj)
+        return self.fmt_msg_with_traceback(self.msg, self.state_or_node)
