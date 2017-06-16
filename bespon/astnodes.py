@@ -93,13 +93,13 @@ class SourceNode(object):
                                        'root', 'full_ast'])
 
     def __init__(self, state):
-        self._state = state
         self.source_name = state.source_name
         self.source_include_depth = state.source_include_depth
         self.source_initial_nesting_depth = state.source_initial_nesting_depth
         self.nesting_depth = state.source_initial_nesting_depth
         self.full_ast = state.full_ast
 
+        self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
         self.inline = state.inline
@@ -138,6 +138,7 @@ class RootNode(list):
         self._open = True
         self._resolved = False
 
+        self._state = source._state
         self.indent = source.indent
         self.at_line_start = source.at_line_start
         self.inline = source.inline
@@ -588,6 +589,7 @@ class DictlikeNode(collections.OrderedDict):
         self.key_nodes = {}
 
         state = state_or_scalar_node._state
+        self._state = state
         if state_or_scalar_node is state:
             self.indent = state.indent
             self.at_line_start = state.at_line_start
