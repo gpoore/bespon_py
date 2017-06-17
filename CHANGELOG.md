@@ -1,6 +1,17 @@
 # `bespon` Change Log
 
 
+## v0.2.1 (2017-06-16)
+
+* Fixed bugs with decoder options `only_ascii_source` and
+  `only_ascii_unquoted`.
+* Prevent explicit typing of `none`, `true`, and `false`.
+* Tag keyword `indent` no longer affects text after an escaped newline.
+* Fixed bug that prevented inline collections from being tagged if not at line
+  start.
+* `RootNode` and `DictlikeNode` now have `_state` attribute.
+* Improved grammar.
+
 
 ## v0.2.0 (2017-06-08)
 
@@ -21,7 +32,7 @@
 
 ## v0.1.1 (2017-04-07)
 
-* Added MANIFEST.in to include README.rst in sdist.
+* Added `MANIFEST.in` to include `README.rst` in sdist.
 
 
 ## v0.1.0 (2017-04-07)
