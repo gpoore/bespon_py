@@ -204,8 +204,8 @@ class State(object):
             self.colno = index - newline_index
         code_point = source_raw_string[index]
         code_point_esc = self.escape_unicode(code_point)
-        if not decoder.only_ascii_source and not decoder._not_valid_unicode_re.search(source_raw_string):
-            raise erring.InvalidLiteralError(self, code_point, code_point_esc, comment='only_ascii_source=False')
+        if decoder.only_ascii_source and not decoder._not_valid_unicode_re.search(source_raw_string):
+            raise erring.InvalidLiteralError(self, code_point, code_point_esc, comment='only_ascii_source=True')
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
 
 
@@ -234,17 +234,17 @@ class State(object):
         m_not_valid_ascii = decoder._not_valid_ascii_re.search(source_raw_string, bom_offset)
         if m_not_valid_ascii is None:
             return
-        if not decoder.only_ascii_source:
+        if decoder.only_ascii_source:
             self._traceback_not_valid_literal(source_raw_string, m_not_valid_ascii.start(), decoder)
         self.source_only_ascii = False
-        if decoder.only_ascii_unquoted:
+        if not decoder.only_ascii_unquoted:
             self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_below_u0590_re
             self.alias_path_re = decoder._alias_path_below_u0590_re
         m_not_valid_below_u0590 = decoder._not_valid_below_u0590_re.search(source_raw_string, m_not_valid_ascii.start())
         if m_not_valid_below_u0590 is None:
             return
         self.source_only_below_u0590 = False
-        if decoder.only_ascii_unquoted:
+        if not decoder.only_ascii_unquoted:
             self.unquoted_string_or_key_path_re = decoder._unquoted_string_or_key_path_unicode_re
             self.alias_path_re = decoder._alias_path_unicode_re
         m_bidi_rtl_or_not_valid_unicode = decoder._bidi_rtl_or_not_valid_unicode_re.search(source_raw_string, m_not_valid_below_u0590.start())
@@ -305,16 +305,16 @@ class BespONDecoder(object):
         # Process args
         if args:
             raise TypeError('Explicit keyword arguments are required')
-        only_ascii_source = kwargs.pop('only_ascii_source', True)
-        only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', False)
+        only_ascii_source = kwargs.pop('only_ascii_source', False)
+        only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', True)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
         if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted, integers, float_overflow_to_inf, extended_types)):
             raise TypeError
-        if not only_ascii_source and only_ascii_unquoted:
-            raise ValueError('Setting only_ascii_source=False is incompatible with only_ascii_unquoted=True')
+        if only_ascii_source and not only_ascii_unquoted:
+            raise ValueError('Setting only_ascii_source=True is incompatible with only_ascii_unquoted=False')
         if not isinstance(max_nesting_depth, int):
             raise TypeError('max_nesting_depth must be an integer')
         if max_nesting_depth < 0:
@@ -1505,16 +1505,16 @@ class BespONDecoder(object):
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
             if state.inline or state.next_scalar.last_lineno == state.lineno:
-                if not state.unquoted_string_or_key_path_re.match(line):
-                    if not self._unquoted_string_or_key_path_unicode_re.match(line):
-                        raise erring.ParseError('Invalid character kept a prior scalar from being resolved', state, unresolved_cache=True)
-                    raise erring.ParseError('Invalid character kept a prior scalar from being resolved (only_ascii_unquoted=False)', state, unresolved_cache=True)
-                raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
+                if state.unquoted_string_or_key_path_re.match(line):
+                    raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
+                if self.only_ascii_unquoted and self._unquoted_string_or_key_path_unicode_re.match(line):
+                    raise erring.ParseError('Invalid character kept a prior scalar from being resolved (only_ascii_unquoted=True)', state, unresolved_cache=True)
+                raise erring.ParseError('Invalid character kept a prior scalar from being resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.unquoted_string_or_key_path_re.match(line)
         if m is None:
-            if not self.only_ascii_unquoted and self._unquoted_string_or_key_path_unicode_re.match(line):
-                raise erring.ParseError('Invalid unquoted string or key path (only_ascii_unquoted=False):  "{0}"'.format(line.replace('"', '\\"')), state)
+            if self.only_ascii_unquoted and self._unquoted_string_or_key_path_unicode_re.match(line):
+                raise erring.ParseError('Invalid unquoted string or key path (only_ascii_unquoted=True):  "{0}"'.format(line.replace('"', '\\"')), state)
             raise erring.ParseError('Invalid unquoted string or key path:  "{0}"'.format(line.replace('"', '\\"')), state)
         m_end = m.end()
         raw_val = line[:m_end]
@@ -1618,8 +1618,8 @@ class BespONDecoder(object):
             state.ast.append_scalar_val()
         m = state.alias_path_re.match(line)
         if m is None:
-            if not self.only_ascii_unquoted and self._alias_path_unicode_re.match(line):
-                raise erring.ParseError('Invalid alias (only_ascii_unquoted=False):  "{0}"'.format(line.replace('"', '\\"')), state)
+            if self.only_ascii_unquoted and self._alias_path_unicode_re.match(line):
+                raise erring.ParseError('Invalid alias (only_ascii_unquoted=True):  "{0}"'.format(line.replace('"', '\\"')), state)
             raise erring.ParseError('Invalid alias:  "{0}"'.format(line.replace('"', '\\"')), state)
         m_end = m.end()
         raw_val = line[:m_end]
