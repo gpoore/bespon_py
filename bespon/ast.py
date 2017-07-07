@@ -41,7 +41,7 @@ class Ast(object):
                  'scalar_nodes', 'line_comments',
                  '_unresolved_collection_nodes',
                  '_unresolved_alias_nodes',
-                 '_in_tag_cached_pos',
+                 '_in_tag_cached_pos', '_in_tag_cached_doc_comment',
                  '_first_section', '_last_section',
                  '_labels']
 
@@ -59,6 +59,7 @@ class Ast(object):
         self._unresolved_collection_nodes = []
         self._unresolved_alias_nodes = []
         self._in_tag_cached_pos = None
+        self._in_tag_cached_doc_comment = None
         self._first_section = None
         self._last_section = None
         self._labels = {}
@@ -391,6 +392,9 @@ class Ast(object):
             raise erring.ParseError('Cannot nest tags; encountered "{0}" before a previous tag was complete'.format(START_TAG), state, state.next_tag)
         state.in_tag = True
         self._in_tag_cached_pos = self.pos
+        self._in_tag_cached_doc_comment = state.next_doc_comment
+        state.next_doc_comment = None
+        state.next_cache = False
         external_inline = state.inline
         if not external_inline:
             state.inline = True
@@ -423,6 +427,7 @@ class Ast(object):
         else:
             self._unresolved_collection_nodes.append(pos)
         state.inline = pos.external_inline
+        state.next_doc_comment = self._in_tag_cached_doc_comment
         state.next_tag = pos
         state.next_cache = True
         self.pos = self._in_tag_cached_pos
