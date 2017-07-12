@@ -99,8 +99,14 @@ customize data handling.
 
 **Loading**
 
+* ``circular_references`` (boolean, default ``False``):  Enable aliases to
+  create circular references.
+* ``custom_parsers`` (dict, default ``None``):  Replace the default parser
+  for a specified type with a custom parser.  For example, using
+  ``custom_parsers={'int': float}`` would cause all integers to be parsed
+  with the ``float()`` function.
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
-  for ``set``, ``tuple``, and ``odict`` tagged collections.  Enable
+  for ``set`` and ``odict`` tagged collections.  Enable
   preliminary support for complex number literals and rational number
   literals.  Complex numbers currently use the general form ``1.0+2.0i``,
   where the real part is optional, the imaginary unit is represented with
@@ -108,7 +114,7 @@ customize data handling.
   numbers use the form ``1/2``, where the numerator and denominator must
   both be decimal integers, and any sign must come before the fraction.
 * ``float_overflow_to_inf`` (boolean, default ``False``):  Whether
-  non-``inf`` floats are permitted to overflow into `inf` without raising an
+  non-``inf`` floats are permitted to overflow into ``inf`` without raising an
   error.
 * ``integers`` (boolean, default ``True``):  Whether integers are permitted.
   Otherwise they are interpreted as floats.
@@ -117,6 +123,8 @@ customize data handling.
 * ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
   points are allowed to appear literally in the source (without being
   represented via backslash-escapes).
+* ``python_types`` (boolean, default ``False``):  Enable preliminary support
+  for Python-specific data types.  Currently this only supports ``tuple``.
 * ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
   depth for collections.
 
