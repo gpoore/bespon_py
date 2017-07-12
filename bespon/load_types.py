@@ -128,5 +128,6 @@ CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: 
 EXTENDED_TYPES = {'complex': DataType(name='complex', basetype='scalar', number=True, parser=complex),
                   'rational': DataType(name='rational', basetype='scalar', number=True, parser=fractions.Fraction),
                   'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict),
-                  'set': DataType(name='set', basetype='list', mutable=True, parser=set),
-                  'tuple': DataType(name='tuple', basetype='list', parser=tuple)}
+                  'set': DataType(name='set', basetype='list', mutable=True, parser=set)}
+
+PYTHON_TYPES = {'tuple': DataType(name='tuple', basetype='list', parser=tuple)}

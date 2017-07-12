@@ -287,7 +287,7 @@ class BespONDecoder(object):
                  'circular_references', 'integers',
                  'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
-                 'extended_types',
+                 'extended_types', 'python_types',
                  '_data_types',
                  '_escape_unicode',
                  '_unescape', '_unescape_unicode', '_unescape_bytes',
@@ -316,7 +316,11 @@ class BespONDecoder(object):
         max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
-        if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted, circular_references, integers, float_overflow_to_inf, extended_types)):
+        python_types = kwargs.pop('python_types', False)
+        if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted,
+                                                circular_references,
+                                                integers, float_overflow_to_inf,
+                                                extended_types, python_types)):
             raise TypeError
         if only_ascii_source and not only_ascii_unquoted:
             raise ValueError('Setting only_ascii_source=True is incompatible with only_ascii_unquoted=False')
@@ -331,6 +335,7 @@ class BespONDecoder(object):
         self.max_nesting_depth = max_nesting_depth
         self.float_overflow_to_inf = float_overflow_to_inf
         self.extended_types = extended_types
+        self.python_types = python_types
 
         custom_parsers = kwargs.pop('custom_parsers', None)
         custom_types = kwargs.pop('custom_types', None)
@@ -347,6 +352,8 @@ class BespONDecoder(object):
         data_types = load_types.CORE_TYPES.copy()
         if self.extended_types:
             data_types.update(load_types.EXTENDED_TYPES)
+        if self.python_types:
+            data_types.update(load_types.PYTHON_TYPES)
         self._data_types = data_types
 
 
