@@ -23,9 +23,9 @@ Similarly, dumping data to a file or string:
 * ``bespon.dumps(<obj>)``
 
 At the moment, only dumping in indentation-style syntax is possible.  Support
-for other styles may be added in the future.  Only dicts, lists, Unicode
+for other styles is under development.  Only dicts, lists, Unicode
 strings, byte strings, floats, ints, bools, and ``None`` are currently
-supported for dumping.
+supported for dumping.  Loading supports additional data types.
 
 
 
@@ -99,20 +99,22 @@ customize data handling.
 
 **Loading**
 
-* ``circular_references`` (boolean, default ``False``):  Enable aliases to
+* ``aliases`` (boolean, default ``True``):  Allow aliases.
+* ``circular_references`` (boolean, default ``False``):  Allow aliases to
   create circular references.
 * ``custom_parsers`` (dict, default ``None``):  Replace the default parser
   for a specified type with a custom parser.  For example, using
   ``custom_parsers={'int': float}`` would cause all integers to be parsed
   with the ``float()`` function.
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
-  for ``set`` and ``odict`` tagged collections.  Enable
-  preliminary support for complex number literals and rational number
-  literals.  Complex numbers currently use the general form ``1.0+2.0i``,
-  where the real part is optional, the imaginary unit is represented with
-  ``i``, and numbers must be floats (either in decimal or hex form).  Rational
-  numbers use the form ``1/2``, where the numerator and denominator must
-  both be decimal integers, and any sign must come before the fraction.
+  for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
+  3]``).  Enable preliminary support for complex number literals and rational
+  number literals.  Complex numbers currently use the general form
+  ``1.0+2.0i``, where the real part is optional, the imaginary unit is
+  represented with ``i``, and numbers must be floats (either in decimal or hex
+  form).  Rational numbers use the form ``1/2``, where the numerator and
+  denominator must both be decimal integers, and any sign must come before the
+  fraction.
 * ``float_overflow_to_inf`` (boolean, default ``False``):  Whether
   non-``inf`` floats are permitted to overflow into ``inf`` without raising an
   error.

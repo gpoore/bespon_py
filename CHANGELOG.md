@@ -1,6 +1,20 @@
 # `bespon` Change Log
 
 
+## v0.3.0 (2017-07-12)
+
+* Added decoder options `aliases`, `circular_references`, `custom_parsers`,
+  and `python_types`.
+* Decoder now disables circular references by default.  They may be enabled
+  with new option `circular_references`.
+* More powerful alias support, particularly for alias paths passing through
+  inherited keys.
+* Moved decoder `tuple` support from option `extended_types` to new option
+  `python_types`.
+* Complex numbers starting with `inf` or `nan` now work with decoder.
+* Fixed bug in doc comment-tag interaction.
+
+
 ## v0.2.1 (2017-06-16)
 
 * Fixed bugs with decoder options `only_ascii_source` and
