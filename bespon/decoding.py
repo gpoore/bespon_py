@@ -338,8 +338,10 @@ class BespONDecoder(object):
         self.python_types = python_types
 
         custom_parsers = kwargs.pop('custom_parsers', None)
+        if custom_parsers is not None and not isinstance(custom_parsers, dict):
+            raise TypeError('custom_parsers must be a dict mapping type names to parsing functions')
         custom_types = kwargs.pop('custom_types', None)
-        if not all(x is None for x in (custom_parsers, custom_types)):
+        if custom_types is not None:
             raise NotImplementedError
         self.custom_parsers = custom_parsers
         self.custom_types = custom_types
@@ -354,6 +356,11 @@ class BespONDecoder(object):
             data_types.update(load_types.EXTENDED_TYPES)
         if self.python_types:
             data_types.update(load_types.PYTHON_TYPES)
+        if custom_parsers is not None:
+            if not all(k in data_types for k in custom_parsers):
+                raise ValueError('Unknown data type(s) {0}'.format(', '.join(k for k in custom_parsers if k not in data_types)))
+            for k, v in custom_parsers.items():
+                data_types[k].parser = v
         self._data_types = data_types
 
 
