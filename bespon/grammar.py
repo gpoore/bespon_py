@@ -349,15 +349,15 @@ _RAW_RE_TYPE = [# None type
                 ('key_path_unicode', '{unquoted_string_unicode}{key_path_continue_unicode}+'),
 
                 # Unquoted strings and key paths
-                ('unquoted_string_or_key_path_named_group_ascii', r'''
+                ('unquoted_string_or_key_path_named_groups_ascii', r'''
                         (?P<reserved_word>{reserved_word}(?!{unquoted_continue_ascii}|{path_separator})) |
                         (?P<unquoted_string>{unquoted_string_ascii}) (?P<key_path>{key_path_continue_ascii}+)?
                         '''.replace('\x20', '').replace('\n', '')),
-                ('unquoted_string_or_key_path_named_group_below_u0590', r'''
+                ('unquoted_string_or_key_path_named_groups_below_u0590', r'''
                         (?P<reserved_word>{reserved_word}(?!{unquoted_continue_below_u0590}|{path_separator})) |
                         (?P<unquoted_string>{unquoted_string_below_u0590}) (?P<key_path>{key_path_continue_below_u0590}+)?
                         '''.replace('\x20', '').replace('\n', '')),
-                ('unquoted_string_or_key_path_named_group_unicode', r'''
+                ('unquoted_string_or_key_path_named_groups_unicode', r'''
                         (?P<reserved_word>{reserved_word}(?!{unquoted_continue_unicode}|{path_separator})) |
                         (?P<unquoted_string>{unquoted_string_unicode}) (?P<key_path>{key_path_continue_unicode}+)?
                         '''.replace('\x20', '').replace('\n', '')),

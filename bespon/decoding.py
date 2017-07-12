@@ -443,9 +443,9 @@ class BespONDecoder(object):
         # delimiters are valid.
         self._closing_delim_re_dict = tooling.keydefaultdict(lambda delim: grammar.gen_closing_delim_re(delim))
 
-        self._unquoted_string_or_key_path_ascii_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_ascii'])
-        self._unquoted_string_or_key_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_below_u0590'])
-        self._unquoted_string_or_key_path_unicode_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_group_unicode'])
+        self._unquoted_string_or_key_path_ascii_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_groups_ascii'])
+        self._unquoted_string_or_key_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_groups_below_u0590'])
+        self._unquoted_string_or_key_path_unicode_re = re.compile(grammar.RE_GRAMMAR['unquoted_string_or_key_path_named_groups_unicode'])
         self._alias_path_ascii_re = re.compile(grammar.RE_GRAMMAR['alias_path_ascii'])
         self._alias_path_below_u0590_re = re.compile(grammar.RE_GRAMMAR['alias_path_below_u0590'])
         self._alias_path_unicode_re = re.compile(grammar.RE_GRAMMAR['alias_path_unicode'])
@@ -461,6 +461,9 @@ class BespONDecoder(object):
                                      grammar.LIT_GRAMMAR['bool_false']: 'bool',
                                      grammar.LIT_GRAMMAR['infinity_word']: 'float',
                                      grammar.LIT_GRAMMAR['not_a_number_word']: 'float'}
+        if self.extended_types:
+            self._reserved_word_types[grammar.LIT_GRAMMAR['infinity_word']+grammar.LIT_GRAMMAR['imaginary_unit']] = 'complex'
+            self._reserved_word_types[grammar.LIT_GRAMMAR['not_a_number_word']+grammar.LIT_GRAMMAR['imaginary_unit']] = 'complex'
 
 
     @staticmethod
@@ -1575,6 +1578,13 @@ class BespONDecoder(object):
                 if raw_val.lower() in self._reserved_word_types:
                     raise erring.ParseError('Invalid capitalization of reserved word "{0}"'.format(raw_val.lower()), state)
                 raise erring.ParseError('Invalid use of reserved word "{0}"'.format(raw_val), state)
+            if self.extended_types and (implicit_type == 'float' or implicit_type == 'complex'):
+                # Handle the case of `inf...` or `nan...` when complex numbers
+                # are enabled.  This could be done by creating a different
+                # regex for extended types that would capture the full complex
+                # number, but that would involve duplicating what already
+                # exists elsewhere (underscore handling, etc.).
+                return self._parse_token_number(raw_val+line, state)
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
