@@ -284,7 +284,7 @@ class BespONDecoder(object):
     issues due to shared state within the `Decoder` itself.
     '''
     __slots__ = ['only_ascii_source', 'only_ascii_unquoted',
-                 'circular_references', 'integers',
+                 'aliases', 'circular_references', 'integers',
                  'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
                  'extended_types', 'python_types',
@@ -311,6 +311,7 @@ class BespONDecoder(object):
             raise TypeError('Explicit keyword arguments are required')
         only_ascii_source = kwargs.pop('only_ascii_source', False)
         only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', True)
+        aliases = kwargs.pop('aliases', True)
         circular_references = kwargs.pop('circular_references', False)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
@@ -318,7 +319,7 @@ class BespONDecoder(object):
         extended_types = kwargs.pop('extended_types', False)
         python_types = kwargs.pop('python_types', False)
         if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted,
-                                                circular_references,
+                                                aliases, circular_references,
                                                 integers, float_overflow_to_inf,
                                                 extended_types, python_types)):
             raise TypeError
@@ -330,6 +331,7 @@ class BespONDecoder(object):
             raise ValueError('max_nesting_depth must be >= 0')
         self.only_ascii_source = only_ascii_source
         self.only_ascii_unquoted = only_ascii_unquoted
+        self.aliases = aliases
         self.circular_references = circular_references
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
@@ -1640,6 +1642,8 @@ class BespONDecoder(object):
 
     def _parse_token_alias_prefix(self, line, state, AliasNode=AliasNode):
         state.colno = state.len_full_line_plus_one - len(line)
+        if not self.aliases:
+            raise erring.ParseError('Aliases are not enabled (aliases=False)', state)
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
