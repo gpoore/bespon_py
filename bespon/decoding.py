@@ -111,7 +111,8 @@ class State(object):
                  'bidi_rtl_last_scalar_last_line',
                  'newline_re', 'unquoted_string_or_key_path_re',
                  'alias_path_re', 'number_re',
-                 'escape_unicode', 'unescape_unicode', 'unescape_bytes']
+                 'escape_unicode', 'unescape_unicode', 'unescape_bytes',
+                 'circular_references']
     def __init__(self, decoder, source_raw_string,
                  source_name=None, source_include_depth=0,
                  source_initial_nesting_depth=0,
@@ -177,6 +178,8 @@ class State(object):
         self.escape_unicode = decoder._escape_unicode
         self.unescape_unicode = decoder._unescape_unicode
         self.unescape_bytes = decoder._unescape_bytes
+
+        self.circular_references = decoder.circular_references
 
         self._check_literals_set_code_point_attrs(source_raw_string, decoder)
         self.source_lines = source_raw_string.splitlines()
@@ -281,7 +284,8 @@ class BespONDecoder(object):
     issues due to shared state within the `Decoder` itself.
     '''
     __slots__ = ['only_ascii_source', 'only_ascii_unquoted',
-                 'integers', 'custom_parsers', 'custom_types',
+                 'circular_references', 'integers',
+                 'custom_parsers', 'custom_types',
                  'max_nesting_depth', 'float_overflow_to_inf',
                  'extended_types',
                  '_data_types',
@@ -307,11 +311,12 @@ class BespONDecoder(object):
             raise TypeError('Explicit keyword arguments are required')
         only_ascii_source = kwargs.pop('only_ascii_source', False)
         only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', True)
+        circular_references = kwargs.pop('circular_references', False)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
-        if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted, integers, float_overflow_to_inf, extended_types)):
+        if any(x not in (True, False) for x in (only_ascii_source, only_ascii_unquoted, circular_references, integers, float_overflow_to_inf, extended_types)):
             raise TypeError
         if only_ascii_source and not only_ascii_unquoted:
             raise ValueError('Setting only_ascii_source=True is incompatible with only_ascii_unquoted=False')
@@ -321,6 +326,7 @@ class BespONDecoder(object):
             raise ValueError('max_nesting_depth must be >= 0')
         self.only_ascii_source = only_ascii_source
         self.only_ascii_unquoted = only_ascii_unquoted
+        self.circular_references = circular_references
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
         self.float_overflow_to_inf = float_overflow_to_inf

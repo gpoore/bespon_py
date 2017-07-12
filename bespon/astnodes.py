@@ -56,7 +56,7 @@ _node_common_slots = ['_state',
                       'last_lineno', 'last_colno',
                       '_resolved', 'final_val']
 
-_node_data_slots = ['doc_comment', 'tag', 'extra_dependents',
+_node_data_slots = ['doc_comment', 'tag',
                     'external_indent',
                     'external_at_line_start',
                     'external_first_lineno',
@@ -68,7 +68,8 @@ _node_collection_slots = ['nesting_depth', 'parent', 'index',
                           'key_path_parent', '_key_path_traversable',
                           '_key_path_scope',
                           '_open',
-                          '_unresolved_dependency_count']
+                          '_unresolved_dependency_count',
+                          'extra_dependents']
 
 
 
@@ -316,7 +317,6 @@ class ScalarNode(object):
         self.last_lineno = last_lineno
         self.last_colno = last_colno
         self._resolved = True
-        self.extra_dependents = None
         if not state.next_cache:
             self.doc_comment = None
             self.tag = None
@@ -756,7 +756,8 @@ class TagNode(collections.OrderedDict):
                   '_next_key', '_awaiting_val', 'key_nodes',
                   'type', 'label',
                   'compatible_basetypes',
-                  'block_scalar', 'collection_config'])
+                  'block_scalar',
+                  'collection_config', 'collection_config_nodes'])
 
     def __init__(self, state, first_lineno, first_colno, external_inline,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -769,6 +770,7 @@ class TagNode(collections.OrderedDict):
         self.label = None
         self.block_scalar = False
         self.collection_config = False
+        self.collection_config_nodes = None
         self._unresolved_dependency_count = 0
         self._open = False
         self._awaiting_val = False
@@ -1001,7 +1003,7 @@ class AliasNode(object):
     basetype = 'alias'
     __slots__ = (_node_common_slots + _node_data_slots +
                  ['parent', 'index', 'target_root', 'target_path',
-                  'target_node', 'target_label'])
+                  'target_node', 'target_label', 'extra_dependents'])
     def __init__(self, state, alias_raw_val, path_separator=PATH_SEPARATOR,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals):
         self._state = state
@@ -1045,8 +1047,7 @@ class KeyPathNode(list):
     basetype = 'key_path'
     __slots__ = (_node_common_slots + _node_data_slots +
                  ['external_indent', 'external_at_line_start',
-                  'external_first_lineno', 'resolved',
-                  'extra_dependents', 'raw_val',
+                  'external_first_lineno', 'resolved', 'raw_val',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
 
     def __init__(self, state, key_path_raw_val,
@@ -1069,7 +1070,6 @@ class KeyPathNode(list):
         self.first_colno = state.colno
         self.last_colno = state.colno + len(key_path_raw_val) - 1
         self._resolved = False
-        self.extra_dependents = None
         if not state.next_cache:
             self.doc_comment = None
             self.tag = None
@@ -1155,4 +1155,3 @@ class SectionNode(object):
         self.first_lineno = self.last_lineno = self.external_first_lineno = state.lineno
         self.first_colno = self.last_colno = self.external_first_colno = state.colno
         self._resolved = False
-        self.extra_dependents = None
