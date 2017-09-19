@@ -97,15 +97,44 @@ Advanced loading and dumping
 The loading and dumping functions support several keyword arguments to
 customize data handling.
 
+
 **Loading**
 
 * ``aliases`` (boolean, default ``True``):  Allow aliases.
+
 * ``circular_references`` (boolean, default ``False``):  Allow aliases to
   create circular references.
+
 * ``custom_parsers`` (dict, default ``None``):  Replace the default parser
   for a specified type with a custom parser.  For example, using
   ``custom_parsers={'int': float}`` would cause all integers to be parsed
   with the ``float()`` function.
+
+* ``custom_types`` (``bespon.LoadType`` instance, or list or tuple of
+  ``bespon.LoadType``):  Enable preliminary support for custom types.
+  ``bespon.LoadType`` takes up to five named arguments (for examples, see the
+  definitions of built-in types at the end of ``load_types.py``):
+
+  * ``name`` (string):  Type name.
+
+  * ``compatible_implicit_types`` (string, or set or list or tuple of
+    strings):  Names of built-in implicit types with which the type being
+    defined is compatible.  Implicit types include ``none``, ``bool``,
+    ``int``, ``float``, ``str``, ``complex``, ``rational``, ``dict``, and
+    ``list``.
+
+  * ``parser`` (function):  Function that converts a string (for scalar types)
+    or dict or list (collection types) into an instance of the type being
+    defined.
+
+  * ``ascii_bytes`` (boolean, default ``False``):  For types based on strings.
+    Determines whether the raw string is encoded into binary as an ASCII byte
+    string before being passed to the parser function.  If this is done, only
+    bytes-compatible backslash escapes are allowed in the string.
+
+  * ``mutable`` (boolean, default ``False``):  For collection types.
+    Specifies whether instances are mutable after being created.  Mutable collections have greater flexibility in terms of circular references.
+
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
   for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
   3]``).  Enable preliminary support for complex number literals and rational
@@ -115,20 +144,27 @@ customize data handling.
   form).  Rational numbers use the form ``1/2``, where the numerator and
   denominator must both be decimal integers, and any sign must come before the
   fraction.
+
 * ``float_overflow_to_inf`` (boolean, default ``False``):  Whether
   non-``inf`` floats are permitted to overflow into ``inf`` without raising an
   error.
+
 * ``integers`` (boolean, default ``True``):  Whether integers are permitted.
   Otherwise they are interpreted as floats.
+
 * ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
   identifier-style strings are allowed unquoted.
+
 * ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
   points are allowed to appear literally in the source (without being
   represented via backslash-escapes).
+
 * ``python_types`` (boolean, default ``False``):  Enable preliminary support
   for Python-specific data types.  Currently this only supports ``tuple``.
+
 * ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
   depth for collections.
+
 
 **Dumping**
 

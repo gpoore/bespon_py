@@ -54,7 +54,9 @@ class LoadType(object):
         if not isinstance(name, str):
             raise TypeError
         if not isinstance(compatible_implicit_types, set):
-            if not (isinstance(compatible_implicit_types, list) or isinstance(compatible_implicit_types, tuple)):
+            if isinstance(compatible_implicit_types, str):
+                compatible_implicit_types = [compatible_implicit_types]
+            elif not (isinstance(compatible_implicit_types, list) or isinstance(compatible_implicit_types, tuple)):
                 raise TypeError
             compatible_implicit_types = set(compatible_implicit_types)
         if compatible_implicit_types - IMPLICIT_TYPES:
@@ -116,27 +118,27 @@ def _base64_parser(b, whitespace_bytes_re=WHITESPACE_BYTES_RE,
 # given the parsed strings, and are responsible for their own validation
 # internally.  The Base16 and Base64 parsers are an example.
 CORE_TYPES = {x.name: x for x in [
-    LoadType(name='none', compatible_implicit_types=['none'], parser=lambda x: None),
-    LoadType(name='bool', compatible_implicit_types=['bool'], parser=lambda x: x == 'true'),
-    LoadType(name='int', compatible_implicit_types=['int'], parser=int),
-    LoadType(name='float', compatible_implicit_types=['float'], parser=float),
-    LoadType(name='str', compatible_implicit_types=['str'], parser=str),
-    LoadType(name='bytes', compatible_implicit_types=['str'], ascii_bytes=True, parser=lambda x: x),
-    LoadType(name='base16', compatible_implicit_types=['str'], ascii_bytes=True, parser=_base16_parser),
-    LoadType(name='base64', compatible_implicit_types=['str'], ascii_bytes=True, parser=_base64_parser),
-    LoadType(name='dict', compatible_implicit_types=['dict'], mutable=True, parser=dict),
-    LoadType(name='list', compatible_implicit_types=['list'], mutable=True, parser=list)
+    LoadType(name='none', compatible_implicit_types='none', parser=lambda x: None),
+    LoadType(name='bool', compatible_implicit_types='bool', parser=lambda x: x == 'true'),
+    LoadType(name='int', compatible_implicit_types='int', parser=int),
+    LoadType(name='float', compatible_implicit_types='float', parser=float),
+    LoadType(name='str', compatible_implicit_types='str', parser=str),
+    LoadType(name='bytes', compatible_implicit_types='str', ascii_bytes=True, parser=lambda x: x),
+    LoadType(name='base16', compatible_implicit_types='str', ascii_bytes=True, parser=_base16_parser),
+    LoadType(name='base64', compatible_implicit_types='str', ascii_bytes=True, parser=_base64_parser),
+    LoadType(name='dict', compatible_implicit_types='dict', mutable=True, parser=dict),
+    LoadType(name='list', compatible_implicit_types='list', mutable=True, parser=list)
 ]}
 
 EXTENDED_TYPES = {x.name: x for x in [
-    LoadType(name='complex', compatible_implicit_types=['complex'], parser=complex),
-    LoadType(name='rational', compatible_implicit_types=['rational'], parser=fractions.Fraction),
-    LoadType(name='odict', compatible_implicit_types=['dict'], mutable=True, parser=collections.OrderedDict),
-    LoadType(name='set', compatible_implicit_types=['list'], mutable=True, parser=set)
+    LoadType(name='complex', compatible_implicit_types='complex', parser=complex),
+    LoadType(name='rational', compatible_implicit_types='rational', parser=fractions.Fraction),
+    LoadType(name='odict', compatible_implicit_types='dict', mutable=True, parser=collections.OrderedDict),
+    LoadType(name='set', compatible_implicit_types='list', mutable=True, parser=set)
 ]}
 
 PYTHON_TYPES = {x.name: x for x in [
-    LoadType(name='tuple', compatible_implicit_types=['list'], parser=tuple)
+    LoadType(name='tuple', compatible_implicit_types='list', parser=tuple)
 ]}
 
 STANDARD_TYPES = {}
