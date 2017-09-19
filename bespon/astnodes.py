@@ -20,6 +20,7 @@ from __future__ import (division, print_function, absolute_import,
 import collections
 import itertools
 from . import grammar
+from . import load_types
 from . import erring
 
 
@@ -49,7 +50,7 @@ _reserved_word_types = {grammar.LIT_GRAMMAR['none_type']: 'none',
 
 
 
-_node_common_slots = ['_state',
+_node_common_slots = ['implicit_type', '_state',
                       'indent', 'at_line_start',
                       'inline', 'inline_indent',
                       'first_lineno', 'first_colno',
@@ -87,13 +88,12 @@ class SourceNode(object):
     begins and ends (source), versus where the actual data begins and ends
     (root).  For example, there may be comments before or after the data.
     '''
-    basetype = 'source'
-
     __slots__ = (_node_common_slots + ['source_name', 'source_include_depth',
                                        'source_initial_nesting_depth', 'nesting_depth',
                                        'root', 'full_ast'])
 
     def __init__(self, state):
+        self.implicit_type = 'source'
         self.source_name = state.source_name
         self.source_include_depth = state.source_include_depth
         self.source_initial_nesting_depth = state.source_initial_nesting_depth
@@ -120,14 +120,13 @@ class RootNode(list):
     Lowest level in the AST except for the source node.  A list subclass that
     must ultimately contain only a single element.
     '''
-    basetype = 'root'
-
     __slots__ = (_node_common_slots + _node_collection_slots +
                  ['source_name', 'doc_comment', 'tag', 'end_tag'])
 
     def __init__(self, source, list=list):
         list.__init__(self)
 
+        self.implicit_type = 'root'
         self.source_name = source.source_name
         self.tag = None
         self.end_tag = None
@@ -235,8 +234,8 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
         self.external_first_lineno = doc_comment_node.first_lineno
         self.external_first_colno = doc_comment_node.first_colno
     else:
-        if self.basetype not in tag_node.compatible_basetypes:
-            if not self.inline and 'dict' in tag_node.compatible_basetypes:
+        if self.implicit_type not in tag_node.compatible_implicit_types:
+            if not self.inline and 'dict' in tag_node.compatible_implicit_types:
                 erring.ParseError('Tag is incompatible with object; tags for dict-like objects in indentation-style syntax require an explicit type', tag_node, self)
             raise erring.ParseError('Tag is incompatible with object', tag_node, self)
         if tag_node.block_scalar and not self.block:
@@ -256,7 +255,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
             else:
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
-                if self.basetype in ('dict', 'list') and not self.inline:
+                if self.implicit_type in ('dict', 'list') and not self.inline:
                     raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
             self.external_indent = tag_node.indent
             self.external_at_line_start = tag_node.at_line_start
@@ -283,7 +282,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
             else:
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
-                if self.basetype in ('dict', 'list') and not self.inline:
+                if self.implicit_type in ('dict', 'list') and not self.inline:
                     raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
             self.external_indent = doc_comment_node.indent
             self.external_at_line_start = doc_comment_node.at_line_start
@@ -298,7 +297,6 @@ class ScalarNode(object):
     Scalar object, including quoted (inline, block) and unquoted strings,
     none, bool, int, and float.  Also used to represent doc comments.
     '''
-    basetype = 'scalar'
     __slots__ = _node_common_slots + _node_data_slots + _node_scalar_slots
     def __init__(self, state, first_lineno, first_colno, last_lineno, last_colno,
                  implicit_type, delim=None, block=False,
@@ -332,7 +330,6 @@ class FullScalarNode(object):
     '''
     ScalarNode with extra data for full AST.
     '''
-    basetype = 'scalar'
     __slots__ = (_node_common_slots + _node_data_slots + _node_scalar_slots +
                  ['continuation_indent', 'raw_val', 'num_base',
                   'key_path', 'key_path_occurrences',
@@ -378,7 +375,6 @@ class CommentNode(object):
     '''
     Line comment or doc comment.
     '''
-    basetype = 'comment'
     __slots__ = _node_common_slots + _node_scalar_slots
 
     def __init__(self, state, first_lineno, first_colno, last_lineno, last_colno,
@@ -403,7 +399,6 @@ class FullCommentNode(object):
     '''
     CommentNode with extra data for full AST.
     '''
-    basetype = 'comment'
     __slots__ = (_node_common_slots +
                  ['delim', 'block', 'implicit_type', 'continuation_indent',
                   'raw_val'])
@@ -433,7 +428,6 @@ class ListlikeNode(list):
     '''
     List-like collection.
     '''
-    basetype = 'list'
     __slots__ = (_node_common_slots + _node_data_slots +
                  _node_collection_slots + ['internal_indent'])
 
@@ -443,6 +437,7 @@ class ListlikeNode(list):
                  list=list):
         list.__init__(self)
 
+        self.implicit_type = 'list'
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
@@ -532,7 +527,7 @@ class ListlikeNode(list):
             if self.inline:
                 raise erring.ParseError('Cannot append to a closed list-like object; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), node)
             else:
-                if node.basetype == 'dict':
+                if node.implicit_type == 'dict':
                     erring.ParseError('Cannot start a new dict-like object in a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), node)
                 raise erring.ParseError('Cannot append to a closed list-like object; check for incorrect indentation or missing "{0}"'.format(OPEN_INDENTATION_LIST), node)
         if self.inline:
@@ -570,7 +565,6 @@ class DictlikeNode(collections.OrderedDict):
     '''
     Dict-like collection.
     '''
-    basetype = 'dict'
     __slots__ = (_node_common_slots + _node_data_slots +
                  _node_collection_slots +
                  ['_next_key', '_awaiting_val', 'key_nodes'])
@@ -581,6 +575,7 @@ class DictlikeNode(collections.OrderedDict):
                  OrderedDict=collections.OrderedDict):
         OrderedDict.__init__(self)
 
+        self.implicit_type = 'dict'
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
         self._unresolved_dependency_count = 0
@@ -749,24 +744,24 @@ class TagNode(collections.OrderedDict):
     Tag for explicit typing, configuring collection types, defining labels,
     or setting newlines for string types.
     '''
-    basetype = 'tag'
     __slots__ = (_node_common_slots +
                  ['external_inline',
                   '_open', '_unresolved_dependency_count', 'parent',
                   '_next_key', '_awaiting_val', 'key_nodes',
                   'type', 'label',
-                  'compatible_basetypes',
+                  'compatible_implicit_types',
                   'block_scalar',
                   'collection_config', 'collection_config_nodes'])
 
     def __init__(self, state, first_lineno, first_colno, external_inline,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
                  OrderedDict=collections.OrderedDict,
-                 default_compatible_basetypes = set(['root', 'scalar', 'dict', 'list'])):
+                 default_compatible_implicit_types = load_types.IMPLICIT_TYPES):
         OrderedDict.__init__(self)
 
+        self.implicit_type = 'tag'
         self.type = None
-        self.compatible_basetypes = default_compatible_basetypes
+        self.compatible_implicit_types = default_compatible_implicit_types
         self.label = None
         self.block_scalar = False
         self.collection_config = False
@@ -790,18 +785,18 @@ class TagNode(collections.OrderedDict):
         self._resolved = False
 
 
-    _scalar_compatible_basetypes = set(['scalar'])
-    _collection_compatible_basetypes = set(['dict', 'list'])
-    _dict_compatible_basetypes = set(['dict'])
-    _list_compatible_basetypes = set(['list'])
+    _scalar_compatible_implicit_types = load_types.IMPLICIT_SCALAR_TYPES
+    _collection_compatible_implicit_types = load_types.IMPLICIT_COLLECTION_TYPES
+    _dictlike_compatible_implicit_types = set(['dict'])
+    _listlike_compatible_implicit_types = set(['list'])
 
     _general_keywords = set(['label'])
     _block_scalar_keywords = set(['newline', 'indent'])
     _collection_keywords = set(['init'])
-    _dict_keywords = set(['recmerge', 'default'])
-    _list_keywords = set(['extend'])
-    _any_collection_keywords = _collection_keywords | _dict_keywords | _list_keywords
-    _keywords = _general_keywords | _block_scalar_keywords | _collection_keywords | _dict_keywords | _list_keywords
+    _dictlike_keywords = set(['recmerge', 'default'])
+    _listlike_keywords = set(['extend'])
+    _any_collection_keywords = _collection_keywords | _dictlike_keywords | _listlike_keywords
+    _keywords = _general_keywords | _block_scalar_keywords | _collection_keywords | _dictlike_keywords | _listlike_keywords
 
 
     def check_append_scalar_key(self, node, len=len):
@@ -819,12 +814,12 @@ class TagNode(collections.OrderedDict):
         if key not in self._keywords:
             raise erring.ParseError('Invalid tag keyword "{0}"'.format(key), node)
         if key in self._block_scalar_keywords:
-            if 'scalar' not in self.compatible_basetypes:
+            if 'str' not in self.compatible_implicit_types:
                 raise erring.ParseError('Tag keyword argument "{0}" is incompatible with tag type'.format(key), node)
-            self.compatible_basetypes = self._scalar_compatible_basetypes
+            self.compatible_implicit_types = self._scalar_compatible_implicit_types
             self.block_scalar = True
         elif key in self._collection_keywords:
-            if 'dict' not in self.compatible_basetypes and 'list' not in self.compatible_basetypes:
+            if 'dict' not in self.compatible_implicit_types and 'list' not in self.compatible_implicit_types:
                 raise erring.ParseError('Tag keyword argument "{0}" is incompatible with type'.format(key), node)
             # #### If add copy or deepcopy variants
             # if key[:5] == 'deep_':
@@ -833,18 +828,18 @@ class TagNode(collections.OrderedDict):
             #     other_key = 'deep_' + key
             # if other_key in self:
             #     raise erring.ParseError('Encountered mutually exclusive collection config settings "{0}" and "{1}'.format(key, other_key), obj, self.key_nodes[other_key])
-            if len(self.compatible_basetypes) > 1:
-                self.compatible_basetypes = self._collection_compatible_basetypes
+            if len(self.compatible_implicit_types) > 1:
+                self.compatible_implicit_types = self._collection_compatible_implicit_types
             self.collection_config = True
-        elif key in self._dict_keywords:
-            if 'dict' not in self.compatible_basetypes:
+        elif key in self._dictlike_keywords:
+            if 'dict' not in self.compatible_implicit_types:
                 raise erring.ParseError('Tag keyword argument "{0}" is incompatible with type'.format(key), node)
-            self.compatible_basetypes = self._dict_compatible_basetypes
+            self.compatible_implicit_types = self._dictlike_compatible_implicit_types
             self.collection_config = True
-        elif key in self._list_keywords:
-            if 'list' not in self.compatible_basetypes:
+        elif key in self._listlike_keywords:
+            if 'list' not in self.compatible_implicit_types:
                 raise erring.ParseError('Tag keyword argument "{0}" is incompatible with type'.format(key), node)
-            self.compatible_basetypes = self._list_compatible_basetypes
+            self.compatible_implicit_types = self._listlike_compatible_implicit_types
             self.collection_config = True
         self.key_nodes[key] = node
         self._next_key = key
@@ -860,18 +855,15 @@ class TagNode(collections.OrderedDict):
             raise erring.IndentationError(node)
         if not self._awaiting_val:
             data_types = self._state.data_types
-            if self._open and node.basetype == 'scalar' and node.delim is None and node.final_val in data_types and not self:
+            if self._open and node.implicit_type == 'str' and node.delim is None and node.final_val in data_types and not self:
                 self['type'] = node
                 val = node.final_val
-                data_type = data_types[val]
-                if not data_type.typeable:
-                    raise erring.ParseError('Type "{0}" cannot be set via tags; it is only an implicit type'.format(val), node)
                 self.type = val
-                self.compatible_basetypes = data_type.basetype_set
+                self.compatible_implicit_types = data_types[val].compatible_implicit_types
             else:
                 if not self._open:
                     raise erring.ParseError('Cannot append to a closed tag; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), node)
-                if node.basetype != 'scalar':
+                if node.implicit_type != 'str':
                     raise erring.ParseError('Unexpected object in tag; check for a missing key', node)
                 if node.final_val in data_types or node.final_val in self._state.extended_data_types:
                     if node.final_val not in data_types:
@@ -885,12 +877,12 @@ class TagNode(collections.OrderedDict):
         else:
             key = self._next_key
             if key == 'label':
-                if node.basetype != 'scalar' or node.implicit_type != 'str' or node.delim is not None:
+                if node.implicit_type != 'str' or node.delim is not None:
                     raise erring.ParseError('Label values must be unquoted strings', node)
                 self[key] = node
                 self.label = node.final_val
             elif key in self._block_scalar_keywords:
-                if node.basetype != 'scalar' or node.first_lineno != node.last_lineno:
+                if node.implicit_type != 'str' or node.first_lineno != node.last_lineno:
                     raise erring.ParseError('Keyword argument "{0}" only takes inline string values that are not broken over multiple lines'.format(key), node)
                 val = node.final_val
                 if key == 'newline':
@@ -906,7 +898,7 @@ class TagNode(collections.OrderedDict):
                 else:
                     raise ValueError
             elif key in self._any_collection_keywords:
-                if node.basetype != 'alias':
+                if node.implicit_type != 'alias':
                     raise erring.ParseError('Collection config requires an alias or list of aliases', node)
                 node.parent = self
                 node.index = key
@@ -921,7 +913,7 @@ class TagNode(collections.OrderedDict):
 
 
     def check_append_collection(self, node):
-        if node.basetype != 'alias_list':
+        if node.implicit_type != 'alias_list':
             raise erring.ParseError('Collections are prohibited in tags, except for lists of aliases used in collection config', node)
         if not node.indent.startswith(self.inline_indent):
             raise erring.IndentationError(node)
@@ -947,16 +939,16 @@ class AliasListNode(list):
     '''
     List of alias nodes, for collection config in tags.
     '''
-    basetype = 'alias_list'
     __slots__ = (_node_common_slots + ['nesting_depth', 'parent', 'index',
                                        '_open', '_unresolved_dependency_count'])
 
     def __init__(self, state, list=list):
         list.__init__(self)
 
+        self.implicit_type = 'alias_list'
+        self._state = state
         self._unresolved_dependency_count = 0
 
-        self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
         self.inline = state.inline
@@ -979,7 +971,7 @@ class AliasListNode(list):
             raise erring.ParseError('Cannot append to a closed alias list; check for a missing "{0}"'.format(INLINE_ELEMENT_SEPARATOR), node)
         if not node.external_indent.startswith(self.inline_indent):
             raise erring.IndentationError(node)
-        if node.basetype != 'alias':
+        if node.implicit_type != 'alias':
             raise erring.ParseError('Only aliases are allowed in alias lists', node)
         self.append(node)
         node.parent = self
@@ -1000,12 +992,12 @@ class AliasNode(object):
     '''
     Alias node.
     '''
-    basetype = 'alias'
     __slots__ = (_node_common_slots + _node_data_slots +
                  ['parent', 'index', 'target_root', 'target_path',
                   'target_node', 'target_label', 'extra_dependents'])
     def __init__(self, state, alias_raw_val, path_separator=PATH_SEPARATOR,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals):
+        self.implicit_type = 'alias'
         self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
@@ -1044,7 +1036,6 @@ class KeyPathNode(list):
 
     Used as dict keys or in sections for assigning in nested objects.
     '''
-    basetype = 'key_path'
     __slots__ = (_node_common_slots + _node_data_slots +
                  ['external_indent', 'external_at_line_start',
                   'external_first_lineno', 'resolved', 'raw_val',
@@ -1061,6 +1052,7 @@ class KeyPathNode(list):
                  list=list):
         list.__init__(self)
 
+        self.implicit_type = 'key_path'
         self._state = state
         self.indent = state.indent
         self.at_line_start = state.at_line_start
@@ -1132,10 +1124,10 @@ class SectionNode(object):
     '''
     Section.
     '''
-    basetype = 'section'
     __slots__ = (_node_common_slots + _node_data_slots +
                  ['delim', 'key_path', 'scalar', '_end_delim'])
     def __init__(self, state, delim):
+        self.implicit_type = 'section'
         self.delim = delim
         self.key_path = None
         self.scalar = None

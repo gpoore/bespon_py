@@ -28,55 +28,56 @@ if sys.version_info.major == 2:
 
 
 
-class DataType(object):
-    '''
-    Representation of data types.
+IMPLICIT_CORE_SCALAR_TYPES = set(['none', 'bool', 'int', 'float', 'str'])
+IMPLICIT_EXTENDED_SCALAR_TYPES = set(['complex', 'rational'])
+IMPLICIT_SCALAR_TYPES = IMPLICIT_CORE_SCALAR_TYPES | IMPLICIT_EXTENDED_SCALAR_TYPES
+IMPLICIT_COLLECTION_TYPES = set(['dict', 'list'])
+IMPLICIT_TYPES = IMPLICIT_SCALAR_TYPES | IMPLICIT_COLLECTION_TYPES
 
-    Overview of keyword arguments:
-        ascii_bytes:  The typed string represents binary data using ASCII.
-                      If escapes are used, only bytes-compatible escapes are
-                      allowed.  The string is encoded to binary with the
-                      ASCII codec before being passed to the parser.
-        mutable:      Whether the type is mutable.  Mutable collections are
-                      more convenient to work with when resolving aliases.
-        number:       Number types.  These are only applied to unquoted
-                      strings that match the regex patterns for number
-                      literals.  Custom numeric types that require quoted
-                      strings must use number=False; this option is only for
-                      built-in types.
-        parser:       For scalars, a function that takes a processed string
-                      and converts it to the type.  For collections, a
-                      function that takes an iterable of paired objects
-                      (dict-like) or an iterable of individual objects
-                      (list-like), and returns the corresponding collection.
-                      In the collection case, the function must also return
-                      an empty object if no arguments are provided.
-        typeable:     Whether the type may be used in a tag to provide
-                      explicit typing.
+
+class LoadType(object):
     '''
-    __slots__ = ['name', 'basetype', 'basetype_set', 'mutable',
-                 'ascii_bytes', 'escapes', 'number', 'parser', 'typeable']
-    def __init__(self, name=None, basetype=None,
-                 ascii_bytes=False, mutable=False, number=False, parser=None,
-                 typeable=True):
-        if not all(isinstance(x, str) for x in (name, basetype)):
+    Data type for loading.
+
+    ascii_bytes:  The typed string represents binary data using ASCII. If
+                  escapes are used, only bytes-compatible escapes are allowed.
+                  The string is encoded to binary with the ASCII codec before
+                  being passed to the parser.
+
+    mutable:      Whether a collection is mutable.  Mutable collections are
+                  more convenient to work with when resolving aliases.
+    '''
+    __slots__ = ['name', 'compatible_implicit_types', 'parser',
+                 'ascii_bytes', 'mutable']
+    def __init__(self, name=None, compatible_implicit_types=None, parser=None,
+                 ascii_bytes=False, mutable=False):
+        if not isinstance(name, str):
             raise TypeError
-        if not all(x in (True, False) for x in (ascii_bytes, mutable, number, typeable)):
-            raise TypeError
+        if not isinstance(compatible_implicit_types, set):
+            if not (isinstance(compatible_implicit_types, list) or isinstance(compatible_implicit_types, tuple)):
+                raise TypeError
+            compatible_implicit_types = set(compatible_implicit_types)
+        if compatible_implicit_types - IMPLICIT_TYPES:
+            raise ValueError
         if not hasattr(parser, '__call__'):
             raise TypeError
-        if basetype not in ('dict', 'list', 'scalar'):
+        if not all(x in (True, False) for x in (ascii_bytes, mutable)):
+            raise TypeError
+        if ascii_bytes and ('str' not in compatible_implicit_types or len(compatible_implicit_types) > 1):
             raise ValueError
-        if basetype != 'scalar' and (ascii_bytes or number or not typeable):
+        if mutable and compatible_implicit_types - IMPLICIT_COLLECTION_TYPES:
             raise ValueError
         self.name = name
-        self.basetype = basetype
-        self.basetype_set = set((basetype,))
+        self.compatible_implicit_types = compatible_implicit_types
+        self.parser = parser
         self.ascii_bytes = ascii_bytes
         self.mutable = mutable
-        self.number = number
-        self.parser = parser
-        self.typeable = typeable
+
+    def copy(self):
+        return LoadType(name=self.name,
+                        compatible_implicit_types=self.compatible_implicit_types,
+                        parser=self.parser, ascii_bytes=self.ascii_bytes,
+                        mutable=self.mutable)
 
 
 
@@ -114,20 +115,34 @@ def _base64_parser(b, whitespace_bytes_re=WHITESPACE_BYTES_RE,
 # leaves parser functions operating on quoted or unquoted strings.  These are
 # given the parsed strings, and are responsible for their own validation
 # internally.  The Base16 and Base64 parsers are an example.
-CORE_TYPES = {'none': DataType(name='none', basetype='scalar', parser=lambda x: None, typeable=False),
-              'bool': DataType(name='bool', basetype='scalar', parser=lambda x: x == 'true', typeable=False),
-              'str': DataType(name='str', basetype='scalar', parser=str),
-              'int': DataType(name='int', basetype='scalar', number=True, parser=int),
-              'float': DataType(name='float', basetype='scalar', number=True, parser=float),
-              'bytes': DataType(name='bytes', basetype='scalar', ascii_bytes=True, parser=lambda x: x),
-              'base16': DataType(name='b16', basetype='scalar', ascii_bytes=True, parser=_base16_parser),
-              'base64': DataType(name='b64', basetype='scalar', ascii_bytes=True, parser=_base64_parser),
-              'dict': DataType(name='dict', basetype='dict', mutable=True, parser=dict),
-              'list': DataType(name='list', basetype='list', mutable=True, parser=list)}
+CORE_TYPES = {x.name: x for x in [
+    LoadType(name='none', compatible_implicit_types=['none'], parser=lambda x: None),
+    LoadType(name='bool', compatible_implicit_types=['bool'], parser=lambda x: x == 'true'),
+    LoadType(name='int', compatible_implicit_types=['int'], parser=int),
+    LoadType(name='float', compatible_implicit_types=['float'], parser=float),
+    LoadType(name='str', compatible_implicit_types=['str'], parser=str),
+    LoadType(name='bytes', compatible_implicit_types=['str'], ascii_bytes=True, parser=lambda x: x),
+    LoadType(name='base16', compatible_implicit_types=['str'], ascii_bytes=True, parser=_base16_parser),
+    LoadType(name='base64', compatible_implicit_types=['str'], ascii_bytes=True, parser=_base64_parser),
+    LoadType(name='dict', compatible_implicit_types=['dict'], mutable=True, parser=dict),
+    LoadType(name='list', compatible_implicit_types=['list'], mutable=True, parser=list)
+]}
 
-EXTENDED_TYPES = {'complex': DataType(name='complex', basetype='scalar', number=True, parser=complex),
-                  'rational': DataType(name='rational', basetype='scalar', number=True, parser=fractions.Fraction),
-                  'odict': DataType(name='odict', basetype='dict', mutable=True, parser=collections.OrderedDict),
-                  'set': DataType(name='set', basetype='list', mutable=True, parser=set)}
+EXTENDED_TYPES = {x.name: x for x in [
+    LoadType(name='complex', compatible_implicit_types=['complex'], parser=complex),
+    LoadType(name='rational', compatible_implicit_types=['rational'], parser=fractions.Fraction),
+    LoadType(name='odict', compatible_implicit_types=['dict'], mutable=True, parser=collections.OrderedDict),
+    LoadType(name='set', compatible_implicit_types=['list'], mutable=True, parser=set)
+]}
 
-PYTHON_TYPES = {'tuple': DataType(name='tuple', basetype='list', parser=tuple)}
+PYTHON_TYPES = {x.name: x for x in [
+    LoadType(name='tuple', compatible_implicit_types=['list'], parser=tuple)
+]}
+
+STANDARD_TYPES = {}
+STANDARD_TYPES.update(CORE_TYPES)
+STANDARD_TYPES.update(EXTENDED_TYPES)
+
+ALL_TYPES = {}
+ALL_TYPES.update(STANDARD_TYPES)
+ALL_TYPES.update(PYTHON_TYPES)

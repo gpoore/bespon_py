@@ -89,11 +89,11 @@ class Ast(object):
         section_pos = self.section_pos
         while (len_indent < len(pos.indent) or pos.key_path_parent is not None) and pos is not section_pos and parent is not root:
             if pos._open:
-                if pos.basetype == 'dict':
+                if pos.implicit_type == 'dict':
                     if not pos:
                         raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                # pos.basetype == 'list'
+                # pos.implicit_type == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
@@ -117,11 +117,11 @@ class Ast(object):
         parent = pos.parent
         while parent is not root:
             if pos._open:
-                if pos.basetype == 'dict':
+                if pos.implicit_type == 'dict':
                     if not pos:
                         raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                # pos.basetype == 'list'
+                # pos.implicit_type == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
             parent.last_lineno = pos.last_lineno
             parent.last_colno = pos.last_colno
@@ -144,11 +144,11 @@ class Ast(object):
         last_lineno = pos.last_lineno
         last_colno = pos.last_colno
         if pos._open:
-            if pos.basetype == 'dict':
+            if pos.implicit_type == 'dict':
                 if not pos:
                     raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                 raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-            # pos.basetype == 'list'
+            # pos.implicit_type == 'list'
             raise erring.ParseError('A list-like object ended before an expected value was added', pos)
         while pos is not key_path_parent:
             parent = pos.parent
@@ -183,7 +183,7 @@ class Ast(object):
         if state.full_ast:
             scalar_node.assign_key_val_lineno = state.lineno
             scalar_node.assign_key_val_colno = state.colno
-        if scalar_node.basetype == 'key_path':
+        if scalar_node.implicit_type == 'key_path':
             self._append_key_path(scalar_node)
             return
         if not state.next_scalar_is_keyable:
@@ -203,7 +203,7 @@ class Ast(object):
             dict_node = DictlikeNode(scalar_node)
             self._append_key_path_collection(dict_node)
             dict_node.check_append_scalar_key(scalar_node)
-        elif scalar_node.external_indent == pos.indent and pos.basetype == 'dict':
+        elif scalar_node.external_indent == pos.indent and pos.implicit_type == 'dict':
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb_to_start(pos)
             pos.check_append_scalar_key(scalar_node)
@@ -298,7 +298,7 @@ class Ast(object):
             raise erring.ParseError('Cannot end a dict-like object with "{0}" when not in inline mode'.format(END_INLINE_DICT), state)
         if not state.indent.startswith(state.inline_indent):
             raise erring.IndentationError(state)
-        if pos.basetype != 'dict':
+        if pos.implicit_type != 'dict':
             raise erring.ParseError('Encountered "{0}" when there is no dict-like object to end'.format(END_INLINE_DICT), state)
         if pos._awaiting_val:
             raise erring.ParseError('Missing value; a dict-like object cannot end with an incomplete key-value pair', state)
@@ -351,7 +351,7 @@ class Ast(object):
             raise erring.ParseError('Cannot end a list-like object with "{0}" when not in inline mode'.format(END_INLINE_LIST), state)
         if not state.indent.startswith(state.inline_indent):
             raise erring.IndentationError(state)
-        if pos.basetype == 'list':
+        if pos.implicit_type == 'list':
             if pos.key_path_parent is None:
                 pos.last_lineno = state.lineno
                 pos.last_colno = state.colno
@@ -372,7 +372,7 @@ class Ast(object):
                     kp_elem._key_path_traversable = False
                 pos._key_path_scope = None
                 self.pos = pos.parent
-        elif pos.basetype == 'alias_list':
+        elif pos.implicit_type == 'alias_list':
             pos.last_lineno = state.lineno
             pos.last_colno = state.colno
             # No need to reset `.inline`; tags are always inline
@@ -416,7 +416,7 @@ class Ast(object):
         # climbing key paths, because they're invalid in tags.
         if not state.indent.startswith(state.inline_indent):
             raise erring.IndentationError(state)
-        if pos.basetype != 'tag':
+        if pos.implicit_type != 'tag':
             raise erring.ParseError('Encountered "{0}" when there is no tag to end'.format(END_TAG_WITH_SUFFIX), state)
         if pos._awaiting_val:
             raise erring.ParseError('Missing value; a tag cannot end with an incomplete key-value pair', state)
@@ -477,7 +477,7 @@ class Ast(object):
             ListlikeNode(state)
             list_node._open = True
             self._append_key_path_collection(list_node)
-        elif pos.basetype == 'list' and state.indent == pos.indent:
+        elif pos.implicit_type == 'list' and state.indent == pos.indent:
             if pos._open:
                 raise erring.ParseError('Cannot start a new list element while a previous element is missing', state)
             pos._open = True
@@ -489,7 +489,7 @@ class Ast(object):
             self._append_collection(list_node)
         else:
             pos = self._indentation_climb_to_indent(state, pos)
-            if pos.basetype == 'list' and state.indent == pos.indent:
+            if pos.implicit_type == 'list' and state.indent == pos.indent:
                 # Don't need to check for a list that is already open.
                 # If the list were already open, would still be at the level
                 # of the list in the AST, and never would have ended up here,
@@ -531,7 +531,7 @@ class Ast(object):
             dict_node = DictlikeNode(kp_node)
             self._append_collection(dict_node)
             initial_pos = dict_node
-        elif kp_node.external_indent == pos.indent and (pos.basetype == 'dict' or pos.key_path_parent is not None):
+        elif kp_node.external_indent == pos.indent and (pos.implicit_type == 'dict' or pos.key_path_parent is not None):
             if pos.key_path_parent is not None:
                 pos = self._key_path_climb_to_start(pos)
             initial_pos = pos
@@ -543,12 +543,12 @@ class Ast(object):
             initial_pos = dict_node
         else:
             pos = self._indentation_climb_to_indent(kp_node, pos)
-            if not pos.basetype == 'dict':
+            if not pos.implicit_type == 'dict':
                 raise erring.IndentationError(kp_node)
             initial_pos = pos
         pos = initial_pos
         for kp_elem, next_kp_elem in zip(kp_node[:-1], kp_node[1:]):
-            if pos.basetype == 'dict' and kp_elem.final_val in pos:
+            if pos.implicit_type == 'dict' and kp_elem.final_val in pos:
                 key_node = pos.key_nodes[kp_elem.final_val]
                 pos = pos[kp_elem.final_val]
                 if state.full_ast:
@@ -571,7 +571,7 @@ class Ast(object):
                 else:
                     initial_pos._key_path_scope.append(collection_node)
         if kp_node[-1] == open_indentation_list:
-            if pos.basetype != 'list':
+            if pos.implicit_type != 'list':
                 raise erring.ParseError('Key path cannot open list; incompatible with pre-existing object', kp_node, pos)
             pos._open = True
         else:
@@ -622,12 +622,12 @@ class Ast(object):
         if section_node.key_path is not None:
             kp_node = section_node.key_path
             if len(kp_node) == 1:
-                if pos.basetype != 'list':
+                if pos.implicit_type != 'list':
                     raise erring.ParseError('Key path is incompatible with previously created object', section_node.scalar, pos)
                 pos._open = True
             else:
                 for kp_elem, next_kp_elem in zip(kp_node[:-1], kp_node[1:]):
-                    if pos.basetype != 'dict':
+                    if pos.implicit_type != 'dict':
                         raise erring.ParseError('Key path is incompatible with previously created object', kp_elem, pos)
                     if kp_elem.final_val in pos:
                         pos = pos[kp_elem.final_val]
@@ -723,10 +723,10 @@ class Ast(object):
                     if node._unresolved_dependency_count > 0:
                         remaining_unresolved_collection_nodes.append(node)
                     else:
-                        basetype = node.basetype
-                        if basetype == 'dict':
+                        implicit_type = node.implicit_type
+                        if implicit_type == 'dict':
                             if node.tag is None or node.tag.type is None:
-                                node_type = basetype
+                                node_type = implicit_type
                             else:
                                 node_type = node.tag.type
                             parser = data_types[node_type].parser
@@ -735,9 +735,9 @@ class Ast(object):
                             else:
                                 node.final_val = parser((k, v.final_val) for k, v in node.items())
                             node.parent._unresolved_dependency_count -= 1
-                        elif basetype == 'list':
+                        elif implicit_type == 'list':
                             if node.tag is None or node.tag.type is None:
-                                node_type = basetype
+                                node_type = implicit_type
                             else:
                                 node_type = node.tag.type
                             parser = data_types[node_type].parser
@@ -763,18 +763,18 @@ class Ast(object):
                 if target_label in labels:
                     node.target_root = labels[target_label]
                 elif target_label == home_alias:
-                    if root[0].basetype not in ('dict', 'list'):
+                    if root[0].implicit_type not in ('dict', 'list'):
                         # This can actually happen; for example, "$~"
                         raise erring.ParseError('Cannot alias the top level of the data structure when the top level is not a dict-like or list-like object', node, root[0])
                     node.target_root = root[0]
                 elif target_label == self_alias:
                     parent = node.parent
-                    parent_basetype = parent.basetype
-                    if parent_basetype in ('dict', 'list'):
+                    parent_implicit_type = parent.implicit_type
+                    if parent_implicit_type in ('dict', 'list'):
                         node.target_root = parent
-                    elif parent_basetype == 'tag':
+                    elif parent_implicit_type == 'tag':
                         node.target_root = parent.parent
-                    elif parent_basetype == 'alias_list':
+                    elif parent_implicit_type == 'alias_list':
                         node.target_root = parent.parent.parent
                     else:
                         raise ValueError
@@ -786,10 +786,10 @@ class Ast(object):
                     node.target_node = node.target_root
 
             for node in unresolved_collection_nodes:
-                basetype = node.basetype
-                if basetype in ('dict', 'list'):
+                implicit_type = node.implicit_type
+                if implicit_type in ('dict', 'list'):
                     if node.tag is None or node.tag.type is None:
-                        node_type = basetype
+                        node_type = implicit_type
                     else:
                         node_type = node.tag.type
                     data_type = data_types[node_type]
@@ -809,7 +809,7 @@ class Ast(object):
                         pos = node.target_root
                         awaiting_resolution = False
                         for tp_elem in node.target_path:
-                            if pos.basetype != 'dict':
+                            if pos.implicit_type != 'dict':
                                 raise erring.ParseError('An alias path cannot pass through anything but a dict-like object', node, pos)
                             # In resolving at alias, can go through nodes that
                             # have not been resolved, as long as they do not
@@ -835,7 +835,7 @@ class Ast(object):
                             node.target_node = pos
                     if node.target_node is not None:
                         target_node = node.target_node
-                        if target_node._resolved or (target_node.basetype in ('dict', 'list') and target_node.final_val is not None):
+                        if target_node._resolved or (target_node.implicit_type in ('dict', 'list') and target_node.final_val is not None):
                             node.final_val = target_node.final_val
                             node.parent._unresolved_dependency_count -= 1
                             node._resolved = True
@@ -847,8 +847,8 @@ class Ast(object):
                     if node._unresolved_dependency_count > 0:
                         remaining_unresolved_collection_nodes.append(node)
                     else:
-                        basetype = node.basetype
-                        if basetype == 'dict':
+                        implicit_type = node.implicit_type
+                        if implicit_type == 'dict':
                             if node.final_val is None:
                                 # if `final_val` is None, must have type
                                 node_type = node.tag.type
@@ -862,7 +862,7 @@ class Ast(object):
                             else:
                                 node.final_val.update({k: v.final_val for k, v in node.tag.collection_config_nodes.items()})
                             node.parent._unresolved_dependency_count -= 1
-                        elif basetype == 'list':
+                        elif implicit_type == 'list':
                             if node.final_val is None:
                                 node_type = node.tag.type
                                 parser = data_types[node_type].parser
@@ -883,18 +883,18 @@ class Ast(object):
                                 else:
                                     final_val.update([v.final_val for v in node.tag.collection_config_nodes])
                             node.parent._unresolved_dependency_count -= 1
-                        elif basetype == 'tag':
+                        elif implicit_type == 'tag':
                             if node.collection_config:
                                 parent = node.parent
-                                parent_basetype = parent.basetype
-                                if parent_basetype == 'dict':
+                                parent_implicit_type = parent.implicit_type
+                                if parent_implicit_type == 'dict':
                                     self._resolve_dict_config(parent, node)
-                                elif parent_basetype == 'list':
+                                elif parent_implicit_type == 'list':
                                     self._resolve_list_config(parent, node)
                                 else:
                                     raise TypeError
                             node.parent._unresolved_dependency_count -= 1
-                        elif basetype == 'alias_list':
+                        elif implicit_type == 'alias_list':
                             # Doesn't need a `final_val`
                             node.parent._unresolved_dependency_count -= 1
                         else:
@@ -929,14 +929,15 @@ class Ast(object):
 
 
     def _circular_references_exist(self, node, new_ids, cleared_ids,
+                                   reference_check_implicit_types=set(['alias', 'dict', 'list']),
                                    id=id, any=any):
         '''
         Check for circular references as a result of aliases.
         '''
-        basetype = node.basetype
-        if basetype == 'scalar':
+        implicit_type = node.implicit_type
+        if implicit_type not in reference_check_implicit_types:
             return False
-        if basetype == 'alias':
+        if implicit_type == 'alias':
             return self._circular_references_exist(node.target_node, new_ids, cleared_ids)
         id_node = id(node)
         if id_node in new_ids:
@@ -949,11 +950,10 @@ class Ast(object):
             node_nodes = node
         else:
             node_nodes = tag.collection_config_nodes
-        if basetype == 'dict':
+        if implicit_type == 'dict':
             return any(self._circular_references_exist(v, new_ids, cleared_ids) for v in node_nodes.values())
-        if basetype == 'list':
+        if implicit_type == 'list':
             return any(self._circular_references_exist(v, new_ids, cleared_ids) for v in node_nodes)
-        raise TypeError
 
 
     def _resolve_dict_config(self, dict_node, dict_tag,
@@ -964,11 +964,11 @@ class Ast(object):
         config_nodes = OrderedDict()
         if 'init' in dict_tag:
             init_aliases = dict_tag['init']
-            if init_aliases.basetype == 'alias':
+            if init_aliases.implicit_type == 'alias':
                 init_aliases = (init_aliases,)
             for init_alias in init_aliases:
                 target_node = init_alias.target_node
-                if target_node.basetype != 'dict':
+                if target_node.implicit_type != 'dict':
                     raise erring.ParseError('Alias type is incompatible with dict-like object', init_alias, target_node)
                 target_tag = target_node.tag
                 if target_tag is None or not target_tag.collection_config:
@@ -1006,11 +1006,11 @@ class Ast(object):
             raise NotImplementedError
         if 'default' in dict_tag:
             default_aliases = dict_tag['default']
-            if default_aliases.basetype == 'alias':
+            if default_aliases.implicit_type == 'alias':
                 default_aliases = (default_aliases,)
             for default_alias in default_aliases:
                 target_node = default_alias.target_node
-                if target_node.basetype != 'dict':
+                if target_node.implicit_type != 'dict':
                     raise erring.ParseError('Alias type is incompatible with dict-like object', default_alias, target_node)
                 target_tag = target_node.tag
                 if target_tag is None or not target_tag.collection_config:
@@ -1030,11 +1030,11 @@ class Ast(object):
         config_nodes = []
         if 'init' in list_tag:
             init_aliases = list_tag['init']
-            if init_aliases.basetype == 'alias':
+            if init_aliases.implicit_type == 'alias':
                 init_aliases = (init_aliases,)
             for init_alias in init_aliases:
                 target_node = init_alias.target_node
-                if target_node.basetype != 'list':
+                if target_node.implicit_type != 'list':
                     raise erring.ParseError('Alias type is incompatible with dict-like object', init_alias, target_node)
                 target_tag = target_node.tag
                 if target_tag is None or not target_tag.collection_config:
@@ -1044,11 +1044,11 @@ class Ast(object):
         config_nodes.extend(list_node)
         if 'extend' in list_tag:
             extend_aliases = list_tag['extend']
-            if extend_aliases.basetype == 'alias':
+            if extend_aliases.implicit_type == 'alias':
                 extend_aliases = (extend_aliases,)
             for extend_alias in extend_aliases:
                 target_node = extend_alias.target_node
-                if target_node.basetype != 'list':
+                if target_node.implicit_type != 'list':
                     raise erring.ParseError('Alias type is incompatible with dict-like object', extend_alias, target_node)
                 target_tag = target_node.tag
                 if target_tag is None or not target_tag.collection_config:
@@ -1077,23 +1077,23 @@ class Ast(object):
             raise erring.ParseError('Data ended before a tag or doc comment was resolved', state, unresolved_cache=True)
         if pos.inline:
             if pos is not root:
-                if pos.basetype == 'dict':
+                if pos.implicit_type == 'dict':
                     raise erring.ParseError('An inline dict-like object never ended; missing "{0}"'.format(END_INLINE_DICT), pos)
-                if pos.basetype == 'list':
+                if pos.implicit_type == 'list':
                     raise erring.ParseError('An inline list-like object never ended; missing "{0}"'.format(END_INLINE_LIST), pos)
-                if pos.basetype == 'tag':
+                if pos.implicit_type == 'tag':
                     raise erring.ParseError('A tag never ended; missing "{0}" and any necessary following object'.format(END_TAG_WITH_SUFFIX), pos)
-                raise erring.ParseError('An inline object with unexpected basetype {0} never ended'.format(pos.basetype), pos)
+                raise erring.ParseError('An inline object with unexpected implicit type {0} never ended'.format(pos.implicit_type), pos)
             if not state.source_inline:
                 raise erring.Bug('Data that started in non-inline mode ended in inline mode', state)
         elif pos is not root:
             while pos is not root:
                 if pos._open:
-                    if pos.basetype == 'dict':
+                    if pos.implicit_type == 'dict':
                         if not pos:
                             raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
                         raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
-                    # pos.basetype == 'list'
+                    # pos.implicit_type == 'list'
                     raise erring.ParseError('A list-like object ended before an expected value was added', pos)
                 parent = pos.parent
                 parent.last_lineno = pos.last_lineno

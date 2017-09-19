@@ -17,4 +17,5 @@ from .version import __version__, __version_info__
 
 from .loading import load, loads
 from .dumping import dump, dumps
+from .load_types import LoadType
 from .roundtrip import load_roundtrip_ast, loads_roundtrip_ast

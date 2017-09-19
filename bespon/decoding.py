@@ -344,7 +344,15 @@ class BespONDecoder(object):
             raise TypeError('custom_parsers must be a dict mapping type names to parsing functions')
         custom_types = kwargs.pop('custom_types', None)
         if custom_types is not None:
-            raise NotImplementedError
+            if isinstance(custom_types, load_types.LoadType):
+                custom_types = [custom_types]
+            else:
+                if not (isinstance(custom_types, list) or isinstance(custom_types, tuple)):
+                    raise TypeError('custom_types must be a list or tuple of LoadType objects')
+                if not all(isinstance(v, load_types.LoadType) for v in custom_types):
+                    raise ValueError('custom_types must be a sequence of LoadType objects')
+            if any(x.name in load_types.ALL_TYPES for x in custom_types):
+                raise ValueError('Cannot override built-in type definitions; use custom_parsers to override parsing for built-in types')
         self.custom_parsers = custom_parsers
         self.custom_types = custom_types
 
@@ -353,16 +361,22 @@ class BespONDecoder(object):
 
 
         # Parser and type info access
-        data_types = load_types.CORE_TYPES.copy()
+        # Copies of all LoadType objects are used, so that modification won't
+        # affect other decoder instances.
+        data_types = {}
+        data_types.update({k: v.copy() for k, v in load_types.CORE_TYPES.items()})
         if self.extended_types:
-            data_types.update(load_types.EXTENDED_TYPES)
+            data_types.update({k: v.copy() for k, v in load_types.EXTENDED_TYPES.items()})
         if self.python_types:
-            data_types.update(load_types.PYTHON_TYPES)
+            data_types.update({k: v.copy() for k, v in load_types.PYTHON_TYPES.items()})
         if custom_parsers is not None:
             if not all(k in data_types for k in custom_parsers):
-                raise ValueError('Unknown data type(s) {0}'.format(', '.join(k for k in custom_parsers if k not in data_types)))
+                raise ValueError('Unknown or disabled data type(s) {0}'.format(', '.join(k for k in custom_parsers if k not in data_types)))
             for k, v in custom_parsers.items():
                 data_types[k].parser = v
+        if custom_types is not None:
+            for x in custom_types:
+                data_types[x.name] = x
         self._data_types = data_types
 
 
@@ -758,7 +772,7 @@ class BespONDecoder(object):
         state.ast.end_tag()
         # Account for end tag suffix with `[2:]`
         line = line[2:]
-        if 'dict' not in state.next_tag.compatible_basetypes or state.inline or len(state.next_tag.compatible_basetypes) > 1:
+        if 'dict' not in state.next_tag.compatible_implicit_types or state.inline or len(state.next_tag.compatible_implicit_types) > 1:
             state.at_line_start = False
             return line
         # If dealing with a tag that could create a dict-like object in
@@ -1125,21 +1139,19 @@ class BespONDecoder(object):
             state.next_scalar = None
             state.next_cache = False
         node.last_colno = next_scalar.last_colno
-        if next_scalar.basetype == 'scalar':
+        if next_scalar.implicit_type == 'key_path':
+            node.key_path = next_scalar
+        else:
             if not state.next_scalar_is_keyable:
                 raise erring.ParseError('Invalid scalar type for a key', node)
             node.scalar = next_scalar
-        elif next_scalar.basetype == 'key_path':
-            node.key_path = next_scalar
-        else:
-            raise erring.ParseError('Unexpected section type', node)
         state.ast.start_section(node)
         line_lstrip_ws = line.lstrip(whitespace)
         if line_lstrip_ws == '':
             return self._parse_line_goto_next('', state)
         if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
             return self._parse_token_line_comment(line_lstrip_ws, state)
-        if next_scalar.basetype == 'key_path' and len(next_scalar) == 1 and line[:1] == PATH_SEPARATOR:
+        if next_scalar.implicit_type == 'key_path' and len(next_scalar) == 1 and line[:1] == PATH_SEPARATOR:
             raise erring.ParseError('When a "{0}" is used in a section, it must be the last element in a key path, or the only element'.format(open_indentation_list), state)
         raise erring.ParseError('Unexpected content after start of section', state)
 
@@ -1670,18 +1682,8 @@ class BespONDecoder(object):
 
 
     def _type_tagged_scalar(self, state, scalar_node, processed_val, num_base=None):
-        tag = scalar_node.tag
-        data_types = state.data_types
-        data_type = data_types[tag.type]
-        if not data_types[scalar_node.implicit_type].typeable:
-            raise erring.ParseError('Object with implicit type "{0}" cannot be explicitly typed'.format(scalar_node.implicit_type), scalar_node, tag['type'])
-        if num_base is None:
-            if data_type.number:
-                raise erring.ParseError('Cannot apply numeric type "{0}" to object that is not a numeric literal'.format(tag.type), scalar_node, tag['type'])
-        elif not data_type.number:
-            raise erring.ParseError('Cannot apply non-numeric type "{0}" to numeric literal'.format(tag.type), scalar_node, tag['type'])
         try:
-            final_val = data_type.parser(processed_val)
+            final_val = state.data_types[scalar_node.tag.type].parser(processed_val)
         except Exception as e:
-            raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(tag.type, e), scalar_node, scalar_node.tag)
+            raise erring.ParseError('Applying explicit type "{0}" to scalar object failed:\n  {1}'.format(scalar_node.tag.type, e), scalar_node, scalar_node.tag)
         return final_val
