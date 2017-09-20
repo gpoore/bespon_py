@@ -200,12 +200,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
     but would risk logic not staying in sync.
     '''
     doc_comment_node = state.next_doc_comment
-    state.next_doc_comment = None
     tag_node = state.next_tag
-    state.next_tag = None
-    state.next_cache = False
-    self.doc_comment = doc_comment_node
-    self.tag = tag_node
 
     # If there is no tag or doc comment, the external appearance of the object
     # is identical to that of the object itself; that case is handled in
@@ -219,12 +214,16 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
     # is that the rules are simple, relatively intuitive, and minimal while
     # still preventing ambiguity.
     if tag_node is None:
+        self.doc_comment = doc_comment_node
+        self.tag = None
+        state.next_doc_comment = None
+        state.next_cache = False
         if doc_comment_node.inline:
             if not self.indent.startswith(doc_comment_node.inline_indent):
                 raise erring.IndentationError(self)
         elif doc_comment_node.at_line_start:
             if not self.at_line_start:
-                raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_node, self)
+                raise erring.ParseError('In indentation-style syntax, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_node, self)
             if doc_comment_node.indent != self.indent:
                 raise erring.ParseError('Inconsistent indentation between doc comment and object', doc_comment_node, self)
         elif self.at_line_start and (len(self.indent) <= len(doc_comment_node.indent) or not self.indent.startswith(doc_comment_node.indent)):
@@ -233,13 +232,14 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
         self.external_at_line_start = doc_comment_node.at_line_start
         self.external_first_lineno = doc_comment_node.first_lineno
         self.external_first_colno = doc_comment_node.first_colno
-    else:
-        if self.implicit_type not in tag_node.compatible_implicit_types:
-            if not self.inline and 'dict' in tag_node.compatible_implicit_types:
-                erring.ParseError('Tag is incompatible with object; tags for dict-like objects in indentation-style syntax require an explicit type', tag_node, self)
-            raise erring.ParseError('Tag is incompatible with object', tag_node, self)
+    elif self.implicit_type in tag_node.compatible_implicit_types:
         if tag_node.block_scalar and not self.block:
             raise erring.ParseError('Tag has a "newline" or "indent" argument, but is applied to a scalar with no literal line breaks', tag_node, self)
+        self.doc_comment = doc_comment_node
+        self.tag = tag_node
+        state.next_tag = None
+        state.next_doc_comment = None
+        state.next_cache = False
         tag_node.parent = self
         if not tag_node._resolved:
             self._unresolved_dependency_count += 1
@@ -256,7 +256,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
                 if self.implicit_type in ('dict', 'list') and not self.inline:
-                    raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
+                    raise erring.ParseError('The tag for an indentation-style collection must be at the start of a line', tag_node)
             self.external_indent = tag_node.indent
             self.external_at_line_start = tag_node.at_line_start
             self.external_first_lineno = tag_node.first_lineno
@@ -269,7 +269,7 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
                     raise erring.IndentationError(self)
             elif doc_comment_node.at_line_start:
                 if not tag_node.at_line_start:
-                    raise erring.ParseError('In non-inline mode, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_node, tag_node)
+                    raise erring.ParseError('In indentation-style syntax, a doc comment that starts at the beginning of a line cannot be followed immediately by the start of another object; a doc comment cannot set the indentation level', doc_comment_node, tag_node)
                 if doc_comment_node.indent != tag_node.indent:
                     raise erring.ParseError('Inconsistent indentation between doc comment and tag', doc_comment_node, tag_node)
                 if not self.indent.startswith(tag_node.indent):
@@ -283,11 +283,23 @@ def _set_tag_doc_comment_externals(self, state, block=False, len=len):
                 if self.at_line_start and (len(self.indent) <= len(tag_node.indent) or not self.indent.startswith(tag_node.indent)):
                     raise erring.IndentationError(self)
                 if self.implicit_type in ('dict', 'list') and not self.inline:
-                    raise erring.ParseError('The tag for a non-inline collection must be at the start of a line', tag_node)
+                    raise erring.ParseError('The tag for an indentation-style collection must be at the start of a line', tag_node)
             self.external_indent = doc_comment_node.indent
             self.external_at_line_start = doc_comment_node.at_line_start
             self.external_first_lineno = doc_comment_node.first_lineno
             self.external_first_colno = doc_comment_node.first_colno
+    elif not self.inline and 'dict' in tag_node.compatible_implicit_types:
+        if tag_node.type is None:
+            raise erring.ParseError('Tag is incompatible with object; tags for dict-like objects in indentation-style syntax require an explicit type', tag_node, self)
+        state.ast.start_explicit_indentation_dict()
+        self.doc_comment = None
+        self.tag = None
+        self.external_indent = self.indent
+        self.external_at_line_start = self.at_line_start
+        self.external_first_lineno = self.first_lineno
+        self.external_first_colno = self.first_colno
+    else:
+        raise erring.ParseError('Tag is incompatible with object', tag_node, self)
 
 
 
@@ -626,12 +638,12 @@ class DictlikeNode(collections.OrderedDict):
                 raise erring.IndentationError(node)
         else:
             # Indentation dict-like objects are always open, so there is no
-            # test for that.  In contrast, non-inline list-like objects
+            # test for that.  In contrast, indentation-style list-like objects
             # must be explicitly opened with `*`.
             if self._awaiting_val:
                 raise erring.ParseError('Missing value; cannot add a key until the previous key has been given a value', node, self.key_nodes[self._next_key])
             if not node.external_at_line_start:
-                raise erring.ParseError('A key must be at the start of the line in non-inline mode', node)
+                raise erring.ParseError('A key must be at the start of the line in indentation-style syntax', node)
             if node.external_indent != self.indent:
                 raise erring.IndentationError(node)
             # Set `_open` so that dict-like and list-like objects share a
@@ -1016,7 +1028,7 @@ class AliasNode(object):
             self.external_first_lineno = self.first_lineno
             self.external_first_colno = self.first_colno
         else:
-            set_tag_doc_comment_externals(self, state, block)
+            set_tag_doc_comment_externals(self, state)
 
         alias_path = alias_raw_val[1:].split(path_separator)
         self.target_root = None

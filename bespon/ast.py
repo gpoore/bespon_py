@@ -91,7 +91,7 @@ class Ast(object):
             if pos._open:
                 if pos.implicit_type == 'dict':
                     if not pos:
-                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
+                        raise erring.ParseError('An indentation-style dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
                 # pos.implicit_type == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
@@ -119,7 +119,7 @@ class Ast(object):
             if pos._open:
                 if pos.implicit_type == 'dict':
                     if not pos:
-                        raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
+                        raise erring.ParseError('An indentation-style dict-like object cannot be empty', pos)
                     raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
                 # pos.implicit_type == 'list'
                 raise erring.ParseError('A list-like object ended before an expected value was added', pos)
@@ -146,7 +146,7 @@ class Ast(object):
         if pos._open:
             if pos.implicit_type == 'dict':
                 if not pos:
-                    raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
+                    raise erring.ParseError('An indentation-style dict-like object cannot be empty', pos)
                 raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
             # pos.implicit_type == 'list'
             raise erring.ParseError('A list-like object ended before an expected value was added', pos)
@@ -165,15 +165,16 @@ class Ast(object):
         '''
         Append a scalar key.
 
-        In inline mode, append at the current position.  In non-inline mode,
-        if the key's indentation does not match that of the current position,
-        try to find an appropriate pre-existing dict or attempt to create one.
+        In inline mode, append at the current position.  In indentation-style
+        syntax, if the key's indentation does not match that of the current
+        position, try to find an appropriate pre-existing dict or attempt to
+        create one.
         '''
         state = self.state
         scalar_node = state.next_scalar
         if state.lineno != scalar_node.last_lineno:
             if not (state.inline and state.lineno == scalar_node.last_lineno + 1):
-                raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in non-inline mode, and no later than the following line in inline mode'.format(assign_key_val), state)
+                raise erring.ParseError('Key-value assignment "{0}" must be on the same line as the key in indentation-style syntax, and no later than the following line in inline mode'.format(assign_key_val), state)
             if state.last_line_comment_lineno == scalar_node.last_lineno:
                 raise erring.ParseError('Key-value assignment "{0}" cannot be separated from its key by a line comment'.format(assign_key_val), state)
             if not state.indent.startswith(state.inline_indent):
@@ -209,7 +210,8 @@ class Ast(object):
             pos.check_append_scalar_key(scalar_node)
         elif len(scalar_node.external_indent) >= len(pos.indent):
             dict_node = DictlikeNode(scalar_node)
-            # No need to set `._open=True`; irrelevant in non-inline mode.
+            # No need to set `._open=True`; irrelevant in indentation-style
+            # syntax.
             self._append_collection(dict_node)
             dict_node.check_append_scalar_key(scalar_node)
         else:
@@ -501,13 +503,12 @@ class Ast(object):
                 raise erring.ParseError('Misplaced "{0}"; cannot start a list element here'.format(OPEN_INDENTATION_LIST), state)
 
 
-    def start_indentation_dict(self, DictlikeNode=astnodes.DictlikeNode):
+    def start_explicit_indentation_dict(self, DictlikeNode=astnodes.DictlikeNode):
         '''
         Start a dict-like object in indentation-style syntax after an explicit
         type declaration.
         '''
-        state = self.state
-        dict_node = DictlikeNode(state)
+        dict_node = DictlikeNode(self.state)
         if self.pos is self.section_pos:
             self._append_key_path_collection(dict_node)
         else:
@@ -1085,13 +1086,13 @@ class Ast(object):
                     raise erring.ParseError('A tag never ended; missing "{0}" and any necessary following object'.format(END_TAG_WITH_SUFFIX), pos)
                 raise erring.ParseError('An inline object with unexpected implicit type {0} never ended'.format(pos.implicit_type), pos)
             if not state.source_inline:
-                raise erring.Bug('Data that started in non-inline mode ended in inline mode', state)
+                raise erring.Bug('Data that started in indentation-style syntax ended in inline mode', state)
         elif pos is not root:
             while pos is not root:
                 if pos._open:
                     if pos.implicit_type == 'dict':
                         if not pos:
-                            raise erring.ParseError('A non-inline dict-like object cannot be empty', pos)
+                            raise erring.ParseError('An indentation-style dict-like object cannot be empty', pos)
                         raise erring.ParseError('A dict-like object ended before a key-value pair was completed', pos)
                     # pos.implicit_type == 'list'
                     raise erring.ParseError('A list-like object ended before an expected value was added', pos)
