@@ -321,6 +321,22 @@ class BespONEncoder(object):
         return '(bytes)> |{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented.decode('ascii'), indent)
 
 
+    def _encode_doc_comment(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
+        if delim is None:
+            delim = '###'
+        if self._invalid_literal_unicode_re.search(obj) is not None:
+            raise ValueError('Invalid literal code point')
+        while delim in obj and len(delim) < 93:
+            delim += '###'
+        if len(delim) > 90:
+            raise ValueError('Cannot create comment since all valid escape sequences of "#" appear literally within the comment text')
+        if self._line_terminator_unicode_re.search(obj) or self.bidi_rtl_re.search(obj):
+            if obj[-1] != '\n':
+                return '|{0}\n{1}{2}\n{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True)))
+            return '|{0}\n{1}{2}{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True)))
+        return '{0}{1}{0}'.format(delim, obj)
+
+
     def _encode_list(self, obj, indent, key=False, key_path=False, val=False,
                      open_indentation_list=OPEN_INDENTATION_LIST,
                      start_inline_list=START_INLINE_LIST,

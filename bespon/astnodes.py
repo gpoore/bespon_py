@@ -65,7 +65,8 @@ _node_data_slots = ['doc_comment', 'tag',
 
 _node_scalar_slots = ['implicit_type', 'delim', 'block']
 
-_node_collection_slots = ['nesting_depth', 'parent', 'index',
+_node_collection_slots = ['view',
+                          'nesting_depth', 'parent', 'index',
                           'key_path_parent', '_key_path_traversable',
                           '_key_path_scope',
                           '_open',
@@ -343,7 +344,8 @@ class FullScalarNode(object):
     ScalarNode with extra data for full AST.
     '''
     __slots__ = (_node_common_slots + _node_data_slots + _node_scalar_slots +
-                 ['continuation_indent', 'raw_val', 'num_base',
+                 ['view', 'index', 'parent',
+                  'continuation_indent', 'raw_val', 'num_base',
                   'key_path', 'key_path_occurrences',
                   'assign_key_val_lineno', 'assign_key_val_colno'])
 
@@ -351,13 +353,15 @@ class FullScalarNode(object):
                  implicit_type, delim=None, block=False, num_base=None,
                  continuation_indent=None,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals):
-        self.implicit_type = implicit_type
-        self.delim = delim
-        self.block = block
+        self.view = None
         self.num_base = num_base
         self.continuation_indent = continuation_indent
         self.key_path = None
         self.key_path_occurrences = None
+
+        self.implicit_type = implicit_type
+        self.delim = delim
+        self.block = block
 
         self._state = state
         self.indent = state.indent
@@ -369,7 +373,6 @@ class FullScalarNode(object):
         self.last_lineno = last_lineno
         self.last_colno = last_colno
         self._resolved = True
-        self.extra_dependents = None
         if not state.next_cache:
             self.doc_comment = None
             self.tag = None
@@ -378,7 +381,7 @@ class FullScalarNode(object):
             self.external_first_lineno = self.first_lineno
             self.external_first_colno = self.first_colno
         else:
-            set_tag_doc_comment_externals(self, state)
+            set_tag_doc_comment_externals(self, state, block)
 
 
 
@@ -449,6 +452,8 @@ class ListlikeNode(list):
                  list=list):
         list.__init__(self)
 
+        self.view = None
+
         self.implicit_type = 'list'
         self.key_path_parent = key_path_parent
         self._key_path_traversable = _key_path_traversable
@@ -518,6 +523,9 @@ class ListlikeNode(list):
             node.parent = self
             node.index = len(self)
             self._unresolved_dependency_count += 1
+        elif self._state.full_ast:
+            node.parent = self
+            node.index = len(self)
         self.last_lineno = node.last_lineno
         self.last_colno = node.last_colno
         self._open = False
@@ -529,6 +537,9 @@ class ListlikeNode(list):
             node.parent = self
             node.index = len(self)
             self._unresolved_dependency_count += 1
+        elif self._state.full_ast:
+            node.parent = self
+            node.index = len(self)
         self.last_lineno = node.last_lineno
         self.last_colno = node.last_colno
         self._open = False
@@ -586,6 +597,8 @@ class DictlikeNode(collections.OrderedDict):
                  key_path_parent=None, _key_path_traversable=False,
                  OrderedDict=collections.OrderedDict):
         OrderedDict.__init__(self)
+
+        self.view = None
 
         self.implicit_type = 'dict'
         self.key_path_parent = key_path_parent
@@ -691,6 +704,9 @@ class DictlikeNode(collections.OrderedDict):
             node.parent = self
             node.index = self._next_key
             self._unresolved_dependency_count += 1
+        elif self._state.full_ast:
+            node.parent = self
+            node.index = self._next_key
         self.last_lineno = node.last_lineno
         self.last_colno = node.last_colno
         self._awaiting_val = False
@@ -705,6 +721,9 @@ class DictlikeNode(collections.OrderedDict):
             node.parent = self
             node.index = self._next_key
             self._unresolved_dependency_count += 1
+        elif self._state.full_ast:
+            node.parent = self
+            node.index = self._next_key
         self.last_lineno = node.last_lineno
         self.last_colno = node.last_colno
         self._awaiting_val = False

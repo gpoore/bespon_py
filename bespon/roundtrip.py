@@ -16,13 +16,14 @@ from __future__ import (division, print_function, absolute_import,
 import sys
 import collections
 from . import encoding
-from .decoding import BespONDecoder
+from . import load_types
+from . import decoding
 
 if sys.version_info.major == 2:
     str = unicode
 
 
-_DEFAULT_DECODER = BespONDecoder()
+_DEFAULT_DECODER = decoding.BespONDecoder()
 
 
 
@@ -35,7 +36,7 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(fp.read())
         else:
-            ast = BespONDecoder(**kwargs).decode_to_ast(fp.read())
+            ast = decoding.BespONDecoder(**kwargs).decode_to_ast(fp.read())
     else:
         ast = cls(**kwargs).decode_to_ast(fp.read())
     return RoundtripAst(ast)
@@ -49,10 +50,157 @@ def loads_roundtrip_ast(s, cls=None, **kwargs):
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(s)
         else:
-            ast = BespONDecoder(**kwargs).decode_to_ast(s)
+            ast = decoding.BespONDecoder(**kwargs).decode_to_ast(s)
     else:
         ast = cls(**kwargs).decode_to_ast(s)
     return RoundtripAst(ast)
+
+
+
+
+class AstView(object):
+    '''
+    Abstract view of a location in the AST.
+    '''
+    __slots__ = ['_ast', '_node']
+
+    def __init__(self, ast, node):
+        self._ast = ast
+        self._node = node
+
+
+    @property
+    def implicit_type(self):
+        return self._node.implicit_type
+
+    @property
+    def type(self):
+        tag = self._node.tag
+        if tag is not None and tag.type is not None:
+            return tag.type
+        return self._node.implicit_type
+
+
+    @property
+    def key(self):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        return self._node.index
+
+    @key.setter
+    def key(self, key):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        self._ast._replace_key_at_pos(self._node.parent, self._node.index, key)
+
+
+    @property
+    def key_doc_comment(self):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        doc_comment_node = self._node.parent.key_nodes[self._node.index].doc_comment
+        if doc_comment_node is None:
+            return None
+        return doc_comment_node.final_val
+
+    @key_doc_comment.setter
+    def key_doc_comment(self, val):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        doc_comment_node = self._node.parent.key_nodes[self._node.index].doc_comment
+        if doc_comment_node is None:
+            return NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
+        self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
+
+
+class ScalarAstView(AstView):
+    __slots__ = []
+
+    @property
+    def value(self):
+        if self._node.implicit_type == 'alias':
+            if self._node.target_node.implicit_type in ('dict', 'list'):
+                raise AttributeError('Values for aliased collection types are not accessible')
+            return self._node.target_node.final_val
+        return self._node.final_val
+
+    @value.setter
+    def value(self, val):
+        if self._node.implicit_type == 'alias':
+            raise AttributeError('Aliased values cannot be assigned through the alias; assign them directly')
+        self._ast._replace_val_at_pos(self._node, val)
+
+
+    @property
+    def value_doc_comment(self):
+        doc_comment_node = self._node.doc_comment
+        if doc_comment_node is None:
+            return None
+        return doc_comment_node.final_val
+
+    @value_doc_comment.setter
+    def value_doc_comment(self, val):
+        doc_comment_node = self._node.doc_comment
+        if doc_comment_node is None:
+            return NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
+        self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
+
+
+_ast_view_by_implicit_type = {}
+
+
+class DictAstView(AstView):
+    __slots__ = []
+    _ast_view_by_implicit_type = _ast_view_by_implicit_type
+
+    def __getitem__(self, subscript):
+        sub_node = self._node[subscript]
+        sub_node_view = sub_node.view
+        if sub_node_view is None:
+            view = self._ast_view_by_implicit_type[sub_node.implicit_type](self._ast, sub_node)
+            sub_node.view = view
+            return view
+        return sub_node_view
+
+
+    def __len__(self):
+        return len(self._node)
+
+
+    def __iter__(self):
+        return iter(self._node)
+
+
+    def items(self):
+        return ((key, self[key]) for key in self)
+
+
+class ListAstView(AstView):
+    __slots__ = []
+    _ast_view_by_implicit_type = _ast_view_by_implicit_type
+
+    def __getitem__(self, subscript):
+        sub_node = self._node[subscript]
+        sub_node_view = sub_node.view
+        if sub_node_view is None:
+            view = self._ast_view_by_implicit_type[sub_node.implicit_type](self._ast, sub_node)
+            sub_node.view = view
+            return view
+        return sub_node_view
+
+
+    def __len__(self):
+        return len(self._node)
+
+
+    def __iter__(self):
+        return (self[n] for n in range(len(self)))
+
+
+for implicit_type in load_types.IMPLICIT_SCALAR_TYPES:
+    _ast_view_by_implicit_type[implicit_type] = ScalarAstView
+_ast_view_by_implicit_type['dict'] = DictAstView
+_ast_view_by_implicit_type['list'] = ListAstView
 
 
 
@@ -66,6 +214,7 @@ class RoundtripAst(object):
         self.source = ast.source
         self.source_name = self.source.source_name
         self.root = ast.root
+        self._view = _ast_view_by_implicit_type[ast.root[0].implicit_type](self, ast.root[0])
         self.source_lines = ast.source_lines
         self.max_nesting_depth = ast.max_nesting_depth
         self.scalar_nodes = ast.scalar_nodes
@@ -87,19 +236,37 @@ class RoundtripAst(object):
         self._replacements = {}
 
 
+    def __getitem__(self, subscript):
+        return self._view[subscript]
+
+
+    def __len__(self):
+        return len(self._view)
+
+
+    def __iter__(self):
+        return iter(self._view)
+
+
+    def __getattr__(self, name):
+        return getattr(self._view, name)
+
+
     def replace_val(self, path, obj):
         '''
         Replace a value in the AST.
         '''
-        if isinstance(obj, dict) or isinstance(obj, list):
-            raise TypeError('Replacing collections is not currently supported')
         if not isinstance(path, list) and not isinstance(path, tuple):
             raise TypeError('Path to value must be a list or tuple of dict keys/list indices')
         pos = self.root[0]
         for k in path:
             pos = pos[k]
-        #if pos.tag is not None and [k for k in pos.tag if k not in ('type', 'label')]:
-        #    raise TypeError('Value replacement is currently not supported for tagged objects when the tag does more than specify a type or label')
+        self._replace_val_at_pos(self, pos, obj)
+
+
+    def _replace_val_at_pos(self, pos, obj):
+        if isinstance(obj, dict) or isinstance(obj, list):
+            raise TypeError('Replacing collections is not currently supported')
         if pos.tag is not None:
             raise TypeError('Value replacement is not currently supported for tagged objects')
         if type(pos.final_val) != type(obj):
@@ -134,11 +301,13 @@ class RoundtripAst(object):
         # method could also work on a list.
         if not isinstance(pos, dict):
             raise TypeError('Key replacement is only possible for dicts')
+        key = path[-1]
+        self._replace_key_at_pos(pos, key, obj)
+
+
+    def _replace_key_at_pos(self, pos, key, obj):
         current_dict = pos
-        old_key = path[-1]
-        pos = pos.key_nodes[old_key]
-        #if old_key.tag is not None and [k for k in pos.tag if k not in ('type', 'label')]:
-        #    raise TypeError('Key replacement is currently not supported for tagged objects when the tag does more than specify a type or label')
+        pos = pos.key_nodes[key]
         if pos.tag is not None:
             raise TypeError('Key replacement is not currently supported for tagged objects')
         if type(pos.final_val) != type(obj):
@@ -168,7 +337,7 @@ class RoundtripAst(object):
         pos.final_val = obj
         pos.raw_val = encoded_val
         for k, v in current_dict_kv_pairs:
-            if k == old_key:
+            if k == key:
                 if hasattr(v, 'index'):
                     v.index = obj
                 current_dict[obj] = v
@@ -176,7 +345,7 @@ class RoundtripAst(object):
                 current_dict[k] = v
         # The dict of key nodes isn't ordered and has no special attributes,
         # so it's simpler to update.
-        del current_dict.key_nodes[old_key]
+        del current_dict.key_nodes[key]
         current_dict.key_nodes[obj] = pos
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
         # The key path nodes aren't being updated, since they aren't being
@@ -185,6 +354,19 @@ class RoundtripAst(object):
         if pos.key_path_occurrences is not None:
             for occ in pos.key_path_occurrences:
                 self._replacements[(occ.first_lineno, occ.first_colno, occ.last_lineno, occ.last_colno)] = encoded_val
+
+
+    def _replace_doc_comment_at_pos(self, pos, obj):
+        if not isinstance(obj, str):
+            raise TypeError
+        continuation_indent = pos.continuation_indent
+        if continuation_indent is None:
+            if pos.at_line_start:
+                continuation_indent = pos.indent
+            else:
+                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
+        encoded_val = self.encoder._encode_doc_comment(obj, continuation_indent, delim=pos.delim, block=pos.block)
+        self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
 
 
     def dumps(self):
