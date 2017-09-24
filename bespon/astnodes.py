@@ -63,7 +63,7 @@ _node_data_slots = ['doc_comment', 'tag',
                     'external_first_lineno',
                     'external_first_colno']
 
-_node_scalar_slots = ['implicit_type', 'delim', 'block']
+_node_scalar_slots = ['delim', 'block']
 
 _node_collection_slots = ['view',
                           'nesting_depth', 'parent', 'index',
