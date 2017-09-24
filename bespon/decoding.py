@@ -903,7 +903,7 @@ class BespONDecoder(object):
         if state.in_tag:
             raise erring.ParseError('Doc comments are not allowed in tags', state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Cannot start a doc comment when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         elif state.next_tag is not None:
@@ -954,7 +954,7 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         line_lstrip_delim = line.lstrip(line[0])
@@ -1014,7 +1014,7 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Encountered a string when a prior scalar had not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         line_lstrip_delim = line.lstrip(line[0])
@@ -1167,7 +1167,7 @@ class BespONDecoder(object):
         if delim_code_point not in block_delim_set:
             raise erring.ParseError('Invalid block delimiter', state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Encountered a string when a prior scalar had not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         elif delim_code_point == comment_delim and state.next_doc_comment is not None:
@@ -1378,7 +1378,7 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Cannot start a number when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.number_re.match(line)
@@ -1523,7 +1523,7 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 if state.unquoted_string_or_key_path_re.match(line):
                     raise erring.ParseError('Cannot start a string when a prior scalar has not yet been resolved', state, unresolved_cache=True)
                 if self.only_ascii_unquoted and self._unquoted_string_or_key_path_unicode_re.match(line):
@@ -1641,7 +1641,7 @@ class BespONDecoder(object):
         if state.bidi_rtl:
             self._check_bidi_rtl(state)
         if state.next_scalar is not None:
-            if state.inline or state.next_scalar.last_lineno == state.lineno:
+            if state.inline or not state.at_line_start:
                 raise erring.ParseError('Cannot start an alias when a prior scalar has not yet been resolved', state, unresolved_cache=True)
             state.ast.append_scalar_val()
         m = state.alias_path_re.match(line)
