@@ -1584,7 +1584,7 @@ class BespONDecoder(object):
             if not state.full_ast:
                 node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
             else:
-                node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
+                node = FullScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                 node.raw_val = raw_val
                 state.ast.scalar_nodes.append(node)
             if node.tag is None or node.tag.type is None:
