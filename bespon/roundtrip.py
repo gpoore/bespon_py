@@ -32,6 +32,7 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
     '''
     Load data from a file-like object into RoundtripAst.
     '''
+    encoder = kwargs.pop('encoder', None)
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(fp.read())
@@ -39,13 +40,14 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
             ast = decoding.BespONDecoder(**kwargs).decode_to_ast(fp.read())
     else:
         ast = cls(**kwargs).decode_to_ast(fp.read())
-    return RoundtripAst(ast)
+    return RoundtripAst(ast, encoder=encoder)
 
 
 def loads_roundtrip_ast(s, cls=None, **kwargs):
     '''
     Load data from a Unicode string into RoundtripAst.
     '''
+    encoder = kwargs.pop('encoder', None)
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(s)
@@ -53,7 +55,7 @@ def loads_roundtrip_ast(s, cls=None, **kwargs):
             ast = decoding.BespONDecoder(**kwargs).decode_to_ast(s)
     else:
         ast = cls(**kwargs).decode_to_ast(s)
-    return RoundtripAst(ast)
+    return RoundtripAst(ast, encoder=encoder)
 
 
 
@@ -217,7 +219,7 @@ class RoundtripAst(object):
     Abstract representation of loaded data that may be modified and then
     encoded to produce a minimal diff compared to the original source.
     '''
-    def __init__(self, ast):
+    def __init__(self, ast, encoder=None):
         self.source = ast.source
         self.source_name = self.source.source_name
         self.root = ast.root
@@ -227,7 +229,12 @@ class RoundtripAst(object):
         self.scalar_nodes = ast.scalar_nodes
         self.line_comments = ast.line_comments
 
-        self.encoder = encoding.BespONEncoder()
+        if encoder is None:
+            self.encoder = encoding.BespONEncoder()
+        elif isinstance(encoder, encoding.BespONEncoder):
+            self.encoder = encoder
+        else:
+            raise TypeError
 
         # Need a way to see what objects are on a line.  Since objects are
         # added to `scalar_nodes` as created, they are already sorted.  Since
@@ -274,7 +281,7 @@ class RoundtripAst(object):
     def _replace_val_at_pos(self, pos, obj):
         if pos.tag is not None:
             raise TypeError('Value replacement is not currently supported for tagged objects')
-        if type(pos.final_val) != type(obj):
+        if type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
             raise TypeError('Value replacement is only allowed for values of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         if pos.implicit_type in ('dict', 'list'):
             encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=pos.indent, inline=pos.inline,
@@ -319,7 +326,7 @@ class RoundtripAst(object):
         pos = pos.key_nodes[key]
         if pos.tag is not None:
             raise TypeError('Key replacement is not currently supported for tagged objects')
-        if type(pos.final_val) != type(obj):
+        if type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
             raise TypeError('Key replacement is only allowed for keys of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         key_path = False if pos.key_path is None else True
         continuation_indent = pos.continuation_indent

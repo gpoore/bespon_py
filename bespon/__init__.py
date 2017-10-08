@@ -19,3 +19,5 @@ from .loading import load, loads
 from .dumping import dump, dumps
 from .load_types import LoadType
 from .roundtrip import load_roundtrip_ast, loads_roundtrip_ast
+from .decoding import BespONDecoder
+from .encoding import BespONEncoder
