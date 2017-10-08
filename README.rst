@@ -45,13 +45,32 @@ Data can be loaded from a file or string into an instance of the
 This class has two methods that allow data to be modified.
 
 * ``replace_val(<path>, <obj>)`` This replaces the object currently located
-  at ``<path>`` within the data with ``<obj>``.  ``<path>`` must be a list
-  or tuple consisting of dict keys and list indices.  ``<obj>`` must currently be a Unicode string, float, int, or bool, and must have the same
-  type as the object it is replacing.
+  at ``<path>`` within the data with ``<obj>``.  ``<path>`` must be a list or
+  tuple consisting of dict keys and list indices.  ``<obj>`` must currently be
+  a Unicode string, float, int, or bool, and must have the same type as the
+  object it is replacing.  (There is also preliminary support for replacing
+  lists and dicts.)
 * ``replace_key(<path>, <obj>)`` This replaces the dict key at the end of
   ``<path>`` with the new key ``<obj>`` (which will map to the same value as
-  the replaced key).  ``<obj>`` must be a Unicode string, int, or bool,
-  and must have the same type as the object it is replacing.
+  the replaced key).  ``<obj>`` must be a Unicode string, int, or bool, and
+  must have the same type as the object it is replacing.  (There is also
+  preliminary support for replacing lists and dicts.)
+
+There is also preliminary support for ``__getitem__``-style access
+(``ast['key']``, etc.).  Data accessed in this manner has the following
+methods.
+
+* ``key``:  Key of the current location, if in a dict.
+  Allows assignment.  For example, ``ast['key'].key = 'new_key'`` will rename
+  the key.
+* ``key_doc_comment``:  Doc comment of key, if in a dict.  ``None`` if there
+  is no doc comment.  Currently only supports assignment for existing doc
+  comments.
+* ``value``:  Value of the current location.  Can be assigned, as long as the
+  new object is of the same type as the old object, and the type is supported.
+* ``value_doc_comment``:  Doc comment of the value at the current location.
+  ``None`` if there is no doc comment.  Currently only supports assignment for
+  existing doc comments.
 
 After data in a ``RoundtripAst`` instance has been modified, it may be encoded
 back into a string with the ``dumps()`` method.  An example is shown below.
@@ -73,6 +92,25 @@ back into a string with the ``dumps()`` method.  An example is shown below.
     key.sk.second = 0b111
     key.sk.fourth = `\another \literal`
 
+Here is the same example using the preliminary ``__getitem__``-style syntax.
+
+::
+
+    >>> ast = bespon.loads_roundtrip_ast("""
+    key.subkey.first = 123   # Comment
+    key.subkey.second = 0b1101
+    key.subkey.third = `literal \string`
+    """)
+    >>> ast['key']['subkey'].key = 'sk'
+    >>> ast['key']['sk']['second'].value = 7
+    >>> ast['key']['sk']['third'].value = '\\another \\literal'
+    >>> ast['key']['sk']['third'].key = 'fourth'
+    >>> print(ast.dumps())
+
+    key.sk.first = 123   # Comment
+    key.sk.second = 0b111
+    key.sk.fourth = `\another \literal`
+
 This example illustrates several of BespON's round-trip capabilities.
 
 * Comments and layout are preserved exactly.
@@ -86,7 +124,8 @@ This example illustrates several of BespON's round-trip capabilities.
   modifications.  The old key is invalid.
 
 Currently, round-trip support is limited to changing the value of any Unicode
-string, float, int, or bool, without changing the type.  Support for changing
+string, float, int, or bool, without changing the type.  (There is also
+preliminary support for replacing lists and dicts.)  Support for changing
 data types and for more general data manipulation will be added in the future.
 
 
@@ -168,10 +207,71 @@ customize data handling.
 
 **Dumping**
 
+* ``aliases`` (boolean, default ``True``):  Allow aliases so that a
+  collection may appear multiple times within data.
+
+* ``circular_references`` (boolean, default ``False``):  Allow aliases to
+  create circular references.
+
 * ``hex_floats`` (boolean, default ``False``):  Whether floats are
   dumped in hex form.
+
+* ``integers`` (boolean, default ``True``):  Whether integers are permitted.
+  Otherwise they are interpreted as floats.
+
 * ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
   depth of collections.
+
+* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
+  identifier-style strings are allowed unquoted.
+
+* ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
+  points are allowed to appear literally in the source (without being
+  represented via backslash-escapes).
+
+* ``extended_types`` (boolean, default ``False``):  Enable preliminary support
+  for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
+  3]``).  Enable preliminary support for complex number literals and rational
+  number literals.  Complex numbers currently use the general form
+  ``1.0+2.0i``, where the real part is optional, the imaginary unit is
+  represented with ``i``, and numbers must be floats (either in decimal or hex
+  form).  Rational numbers use the form ``1/2``, where the numerator and
+  denominator must both be decimal integers, and any sign must come before the
+  fraction.
+
+* ``python_types`` (boolean, default ``False``):  Enable preliminary support
+  for Python-specific data types.  Currently this only supports ``tuple``.
+
+* ``baseclass`` (boolean, default ``False``):  Encode unknown data types as
+  their baseclasses if supported.  For example, ``collections.OrderedDict``
+  would be encoded as a ``dict``, and a custom integer class would be encoded
+  as ``int``.
+
+* ``trailing_commas`` (boolean, default ``False``):  In inline syntax, leave
+  a comma after the last item in a collection.  This can minimize diffs.
+
+* ``compact_inline`` (boolean, default ``False``):  In inline syntax, put
+  everything on one line to make it as compact as possible.
+
+* ``inline_depth`` (boolean, default ``max_nesting_depth+1``):  Nesting depth
+  at which to switch from indentation-style to inline-style syntax.  A value
+  of ``0`` will make everything inline, ``1`` will make the top-level
+  collection indentation-style but everything inside it inline-style, and
+  so forth.
+
+* ``nesting_indent`` (string, default ``<space><space><space><space>``):
+  Indentation added for each nesting level.
+
+* ``start_list_item`` (string, default ``<space><space>*<space>``):  How a
+  list item starts in indentation-style syntax.  This must begin with one or
+  more spaces or tabs and contain a single ``*``.  The leading spaces or tabs
+  define the relative indentation from the previous indentation level.
+
+* ``flush_start_list_item`` (string, default ``*<space>``):  How a list item
+  starts in indentation-style syntax when it is at the top level, within
+  another list, or otherwise in a context when the ``*`` must be aligned flush
+  with a designated margin.  Must start with a single ``*`` followed by zero
+  or more spaces or tabs.
 
 
 
