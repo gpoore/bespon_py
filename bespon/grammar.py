@@ -83,6 +83,11 @@ _RAW_LIT_GRAMMAR = [# Whitespace
                     ('sign', '+-'),
                     ('dec_exponent_letter', 'eE'),
                     ('hex_exponent_letter', 'pP'),
+                    ('hex_prefix', '0x'),
+                    ('oct_prefix', '0o'),
+                    ('bin_prefix', '0b'),
+                    ('dec_float_zero', '0.0'),
+                    ('hex_float_zero', '0x0.0p+0'),
                     ('quaternion_unit', 'ijk'),
                     ('imaginary_unit', 'i'),
                     # Other
@@ -112,8 +117,9 @@ _RAW_LIT_SPECIAL = [# Special code points
                     ('inline_element_separator', ','),
                     ('block_prefix', '|'),
                     ('block_suffix', '/'),
-                    ('escaped_string_singlequote_delim', "'"),
                     ('escaped_string_doublequote_delim', '"'),
+                    ('escaped_string_singlequote_delim', "'"),
+                    ('escaped_string_delim', '{escaped_string_doublequote_delim}{escaped_string_singlequote_delim}'),
                     ('literal_string_delim', '`'),
                     ('path_separator', '.'),
                     ('alias_prefix', '$'),
@@ -125,6 +131,13 @@ _RAW_LIT_SPECIAL = [# Special code points
                     ('number_start', '0123456789+-')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
+_RAW_LIT_DUMP = [# Sequences for dumping data
+                 ('nesting_indent', '{space}'*4),
+                 ('indent_or_open_indentation_list', '{indent}{open_indentation_list}'),
+                 ('start_list_item', '{space}{space}{open_indentation_list}{space}'),
+                 ('flush_start_list_item', '{open_indentation_list}{space}')]
+_RAW_LIT_GRAMMAR.extend(_RAW_LIT_DUMP)
+
 LIT_GRAMMAR = {}
 for k, v in _RAW_LIT_GRAMMAR:
     if k in ('start_inline_dict', 'end_inline_dict'):
@@ -135,8 +148,10 @@ for k, v in _RAW_LIT_GRAMMAR:
 # definition format
 LIT_GRAMMAR['line_terminator_ascii_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_ascii'])
 LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_unicode'])
-
-
+LIT_GRAMMAR['escaped_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['escaped_string_delim'] for n in range(1, 90+1) if n == 1 or n % 3 == 0)
+LIT_GRAMMAR['literal_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['literal_string_delim'] for n in range(1, 90+1) if n == 1 or n == 2 or n % 3 == 0)
+LIT_GRAMMAR['string_delim_seq_set'] = LIT_GRAMMAR['escaped_string_delim_seq_set'] | LIT_GRAMMAR['literal_string_delim_seq_set']
+LIT_GRAMMAR['comment_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['literal_string_delim'] for n in range(1, 90+1) if n == 1 or n % 3 == 0)
 
 
 # Assemble regex grammar
@@ -227,13 +242,13 @@ _RAW_RE_TYPE = [# None type
                 # Number types
                 # Integers
                 ('positive_dec_integer', '(?:{zero}|{nonzero_dec_digit}{dec_digit}*{underscore_dec_digits}*)'),
-                ('hex_prefix', '0x_?'),
+                ('hex_prefix', LIT_GRAMMAR['hex_prefix'] + '_?'),
                 ('hex_integer_value', '(?:{lower_hex_digit}+{underscore_lower_hex_digits}*|{upper_hex_digit}+{underscore_upper_hex_digits}*)'),
                 ('positive_hex_integer', '{hex_prefix}{hex_integer_value}'),
-                ('oct_prefix', '0o_?'),
+                ('oct_prefix', LIT_GRAMMAR['oct_prefix'] + '_?'),
                 ('oct_integer_value', '{oct_digit}+{underscore_oct_digits}*'),
                 ('positive_oct_integer', '{oct_prefix}{oct_integer_value}'),
-                ('bin_prefix', '0b_?'),
+                ('bin_prefix', LIT_GRAMMAR['bin_prefix'] + '_?'),
                 ('bin_integer_value', '{bin_digit}+{underscore_bin_digits}*'),
                 ('positive_bin_integer', '{bin_prefix}{bin_integer_value}'),
                 # Any integer -- order is important due to base prefixes
@@ -361,6 +376,9 @@ _RAW_RE_TYPE = [# None type
                         (?P<reserved_word>{reserved_word}(?!{unquoted_continue_unicode}|{path_separator})) |
                         (?P<unquoted_string>{unquoted_string_unicode}) (?P<key_path>{key_path_continue_unicode}+)?
                         '''.replace('\x20', '').replace('\n', '')),
+                ('valid_terminated_unquoted_string_ascii', r'(?!{reserved_word}$){unquoted_string_ascii}\Z'),
+                ('valid_terminated_unquoted_string_below_u0590', r'(?!{reserved_word}$){unquoted_string_below_u0590}\Z'),
+                ('valid_terminated_unquoted_string_unicode', r'(?!{reserved_word}$){unquoted_string_unicode}\Z'),
 
                 # Alias path
                 ('alias_path_ascii', '{alias_prefix}(?:{home_alias}|{self_alias}|{unquoted_string_ascii})(?:{path_separator}{unquoted_string_ascii})*'),

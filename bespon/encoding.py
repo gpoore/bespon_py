@@ -16,448 +16,837 @@ from __future__ import (division, print_function, absolute_import,
 
 import sys
 import re
+import collections
+import fractions
 from . import escape
 from . import grammar
+from . import tooling
 
 if sys.version_info.major == 2:
     str = unicode
-
-
-MAX_NESTING_DEPTH = grammar.PARAMS['max_nesting_depth']
-
-NONE_TYPE = grammar.LIT_GRAMMAR['none_type']
-BOOL_TRUE = grammar.LIT_GRAMMAR['bool_true']
-BOOL_FALSE = grammar.LIT_GRAMMAR['bool_false']
-OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
-START_INLINE_DICT = grammar.LIT_GRAMMAR['start_inline_dict']
-END_INLINE_DICT = grammar.LIT_GRAMMAR['end_inline_dict']
-ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
-START_INLINE_LIST = grammar.LIT_GRAMMAR['start_inline_list']
-END_INLINE_LIST = grammar.LIT_GRAMMAR['end_inline_list']
-ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim']
-ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim']
-LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
-BLOCK_PREFIX = grammar.LIT_GRAMMAR['block_prefix']
-BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
 
 
 
 
 class BespONEncoder(object):
     '''
-    Encode BespON.  This is a very basic encoder using indentation-style
-    syntax.
+    Encode BespON.
     '''
-    def __init__(self, max_nesting_depth=MAX_NESTING_DEPTH, hex_floats=False):
-        if not isinstance(max_nesting_depth, int):
-            raise TypeError('max_nesting_depth must be an integer')
-        if max_nesting_depth < 0:
-            raise ValueError('max_nesting_depth must be >= 0')
-        self.max_nesting_depth = max_nesting_depth
-        if hex_floats not in (True, False):
-            raise TypeError('hex_floats must be boolean')
+    def __init__(self, *args, **kwargs):
+        if args:
+            raise TypeError('Explicit keyword arguments are required')
+
+        only_ascii_source = kwargs.pop('only_ascii_source', False)
+        only_ascii_unquoted = kwargs.pop('only_ascii_unquoted', True)
+        aliases = kwargs.pop('aliases', True)
+        circular_references = kwargs.pop('circular_references', False)
+        integers = kwargs.pop('integers', True)
+        hex_floats = kwargs.pop('hex_floats', False)
+        extended_types = kwargs.pop('extended_types', False)
+        python_types = kwargs.pop('python_types', False)
+        encode_as_baseclass = kwargs.pop('encode_as_baseclass', False)
+        trailing_commas = kwargs.pop('trailing_commas', False)
+        compact_inline = kwargs.pop('compact_inline', False)
+        if not all(x in (True, False) for x in (only_ascii_source, only_ascii_unquoted,
+                                                aliases, circular_references,
+                                                integers, hex_floats, extended_types, python_types,
+                                                encode_as_baseclass, trailing_commas, compact_inline)):
+            raise TypeError
+        self.only_ascii_source = only_ascii_source
+        self.only_ascii_unquoted = only_ascii_unquoted
+        self.aliases = aliases
+        self.circular_references = circular_references
+        self.integers = integers
         self.hex_floats = hex_floats
+        self.extended_types = extended_types
+        self.python_types = python_types
+        self.encode_as_baseclass = encode_as_baseclass
+        self.trailing_commas = trailing_commas
+        self.compact_inline = compact_inline
 
-        self.dict_indent_per_level = '\x20\x20\x20\x20'
-        self.list_indent_per_level = '\x20\x20'
+        max_nesting_depth = kwargs.pop('max_nesting_depth', grammar.PARAMS['max_nesting_depth'])
+        max_section_depth = kwargs.pop('max_section_depth', 0)
+        inline_depth = kwargs.pop('inline_depth', max_nesting_depth+1)
+        if not all(isinstance(x, int) for x in (max_nesting_depth, max_section_depth, inline_depth)):
+            raise TypeError
+        if not all(x >= 0 for x in (max_nesting_depth, max_section_depth, inline_depth)):
+            raise ValueError
+        self.max_nesting_depth = max_nesting_depth
+        self.max_section_depth = max_section_depth
+        self.inline_depth = inline_depth
 
-        self._escape = escape.Escape()
+        nesting_indent = kwargs.pop('nesting_indent', grammar.LIT_GRAMMAR['nesting_indent'])
+        start_list_item = kwargs.pop('start_list_item', grammar.LIT_GRAMMAR['start_list_item'])
+        flush_start_list_item = kwargs.pop('flush_start_list_item', grammar.LIT_GRAMMAR['flush_start_list_item'])
+        if not all(isinstance(x, str) and x for x in (nesting_indent, start_list_item, flush_start_list_item)):
+            raise TypeError
+        if nesting_indent.lstrip(grammar.LIT_GRAMMAR['indent']):
+            raise ValueError
+        self.nesting_indent = nesting_indent
+        if (start_list_item.count(grammar.LIT_GRAMMAR['open_indentation_list']) != 1 or
+                start_list_item[0] not in grammar.LIT_GRAMMAR['indent'] or
+                start_list_item.strip(grammar.LIT_GRAMMAR['indent_or_open_indentation_list'])):
+            raise ValueError
+        if (flush_start_list_item[0] != grammar.LIT_GRAMMAR['open_indentation_list'] or
+                start_list_item.strip(grammar.LIT_GRAMMAR['indent_or_open_indentation_list'])):
+            raise ValueError
+        self.start_list_item = start_list_item
+        self.flush_start_list_item = flush_start_list_item
+        before_open, after_open = start_list_item.split(grammar.LIT_GRAMMAR['open_indentation_list'])
+        self._start_list_item_indent = before_open
+        if before_open[-1:] == '\t' and after_open[:1] == '\t':
+            self._list_item_indent = start_list_item.replace(grammar.LIT_GRAMMAR['open_indentation_list'], '')
+        else:
+            self._list_item_indent = start_list_item.replace(grammar.LIT_GRAMMAR['open_indentation_list'], '\x20')
+        self._flush_start_list_item_indent = ''
+        if flush_start_list_item[1:2] == '\t':
+            self._flush_list_item_indent = flush_start_list_item[1:]
+        else:
+            self._flush_list_item_indent = '\x20' + flush_start_list_item[1:]
+
+        if kwargs:
+            raise TypeError('Unexpected keyword argument(s) {0}'.format(', '.join('"{0}"'.format(k) for k in kwargs)))
+
+
+        self._escape = escape.Escape(only_ascii_source=only_ascii_source)
         self._escape_unicode = self._escape.escape_unicode
         self._escape_bytes = self._escape.escape_bytes
         self._invalid_literal_unicode_re = self._escape.invalid_literal_unicode_re
         self._invalid_literal_bytes_re = self._escape.invalid_literal_bytes_re
 
-        unquoted_string_pattern = r'(?!{reserved_word}$){unquoted_string}\Z'
-        self._unquoted_str_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                          unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']))
-        self._unquoted_bytes_re = re.compile(unquoted_string_pattern.format(reserved_word=grammar.RE_GRAMMAR['reserved_word'],
-                                                                            unquoted_string=grammar.RE_GRAMMAR['unquoted_string_ascii']).encode('ascii'))
+
+        if only_ascii_unquoted:
+            self._unquoted_str_re = re.compile(grammar.RE_GRAMMAR['valid_terminated_unquoted_string_ascii'])
+        else:
+            self._unquoted_str_re = re.compile(grammar.RE_GRAMMAR['valid_terminated_unquoted_string_unicode'])
+        self._unquoted_bytes_re = re.compile(grammar.RE_GRAMMAR['valid_terminated_unquoted_string_ascii'].encode('ascii'))
 
         self._line_terminator_unicode_re = re.compile(grammar.RE_GRAMMAR['line_terminator_unicode'])
         self._line_terminator_bytes_re = re.compile(grammar.RE_GRAMMAR['line_terminator_ascii'].encode('ascii'))
 
         self.bidi_rtl_re = re.compile(grammar.RE_GRAMMAR['bidi_rtl'])
-        self._last_scalar_bidi_rtl = False
-
-        self._encode_funcs = {type(None): self._encode_none,
-                              type(True): self._encode_bool,
-                              type(1): self._encode_int,
-                              type(1.0): self._encode_float,
-                              type('a'): self._encode_str,
-                              type(b'a'): self._encode_bytes,
-                              type([]): self._encode_list,
-                              type({}): self._encode_dict}
-
-        self._dict_types = set([type({})])
-        self._list_types = set([type([])])
-        self._collection_types = self._dict_types | self._list_types
-        self._scalar_types = set([k for k in self._encode_funcs if k not in self._collection_types])
 
 
-    def _encode_none(self, obj, indent, key=False, key_path=False, val=False,
-                     none_type=NONE_TYPE):
-        self._last_scalar_bidi_rtl = False
-        return none_type
+        encode_funcs = {type(None): self._encode_none,
+                        type(True): self._encode_bool,
+                        type(1): self._encode_int if integers else self._encode_int_as_float,
+                        type(1.0): self._encode_float,
+                        type('a'): self._encode_str,
+                        type(b'a'): self._encode_bytes,
+                        type([]): self._encode_list,
+                        type({}): self._encode_dict}
+
+        if self.extended_types:
+            encode_funcs[type(1j)] = self._encode_complex
+            encode_funcs[type(fractions.Fraction())] = self._encode_rational
+            encode_funcs[type(collections.OrderedDict())] = self._encode_odict
+            encode_funcs[type(set())] = self._encode_set
+        if self.python_types:
+            encode_funcs[type(tuple())] = self._encode_tuple
+
+        if encode_as_baseclass:
+            def encode_func_factory(t, issubclass=issubclass):
+                for k, v in encode_funcs.items():
+                    if issubclass(t, k):
+                        return v
+                raise KeyError(t)
+            self._encode_funcs = tooling.keydefaultdict(encode_func_factory)
+            self._encode_funcs.update(encode_funcs)
+        else:
+            self._encode_funcs = encode_funcs
 
 
-    def _encode_bool(self, obj, indent, key=False, key_path=False, val=False,
-                     bool_true=BOOL_TRUE, bool_false=BOOL_FALSE):
-        self._last_scalar_bidi_rtl = False
-        return bool_true if obj else bool_false
+        self._reset()
 
 
-    def _encode_int(self, obj, indent, key=False, key_path=False, val=False, num_base=None):
+    def _reset(self):
+        '''
+        Reset everything in preparation for the next run.
+
+        This is always done after encoding to avoid unnecessary memory usage
+        by the buffer.
+        '''
+        self._buffer = []
+        self._nesting_depth = 0
+        self._scalar_bidi_rtl = False
+        self._obj_path = collections.OrderedDict()
+        self._alias_counter = 0
+        self._alias_values = {}
+        self._alias_def_template = {}
+        self._alias_def_buffer_index = {}
+
+
+    def _encode_none(self, obj,
+                     at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                     none_type=grammar.LIT_GRAMMAR['none_type']):
+        self._buffer.append(none_type)
+
+
+    def _encode_bool(self, obj,
+                     at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                     bool_true=grammar.LIT_GRAMMAR['bool_true'],
+                     bool_false=grammar.LIT_GRAMMAR['bool_false']):
+        self._buffer.append(bool_true if obj else bool_false)
+
+
+    def _encode_int(self, obj,
+                    at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                    num_base=10,
+                    hex_template='{0}{{0:0x}}'.format(grammar.LIT_GRAMMAR['hex_prefix']),
+                    oct_template='{0}{{0:0o}}'.format(grammar.LIT_GRAMMAR['oct_prefix']),
+                    bin_template='{0}{{0:0b}}'.format(grammar.LIT_GRAMMAR['bin_prefix']),
+                    str=str):
         if key_path:
-            raise TypeError('Ints are not supported in key paths')
-        self._last_scalar_bidi_rtl = False
-        if num_base is not None and num_base != 10:
-            if num_base == 16:
-                return '0x{0:0x}'.format(obj)
-            if num_base == 8:
-                return '0o{0:0o}'.format(obj)
-            if num_base == 2:
-                return '0b{0:0b}'.format(obj)
-            raise ValueError('Unknown base {0}'.format(num_base))
-        return str(obj)
+            raise TypeError('Ints are not valid in key paths')
+        if num_base == 10:
+            self._buffer.append(str(obj))
+            return
+        if num_base == 16:
+            self._buffer.append(hex_template.format(obj))
+            return
+        if num_base == 8:
+            self._buffer.append(oct_template.format(obj))
+            return
+        if num_base == 2:
+            self._buffer.append(bin_template.format(obj))
+            return
+        raise ValueError('Unknown base {0}'.format(num_base))
 
 
-    def _encode_float(self, obj, indent, key=False, key_path=False, val=False, num_base=None):
+    def _encode_int_as_float(self, obj, float=float, **kwargs):
+        # Extremely large ints won't be silently converted to inf, because
+        # `float()` raises an OverflowError.
+        self._encode_float(float(obj), **kwargs)
+
+
+    def _encode_float(self, obj,
+                      at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                      num_base=None,
+                      hex_exponent_letter=grammar.LIT_GRAMMAR['hex_exponent_letter'][0],
+                      str=str):
         if key:
-            raise TypeError('Floats are not supported as dict keys')
+            raise TypeError('Floats are not valid dict keys')
         if self.hex_floats:
             if num_base is not None:
-                raise TypeError
-            num_base = 16
-        self._last_scalar_bidi_rtl = False
-        if num_base is not None and num_base != 10:
-            if num_base == 16:
-                hex_str = obj.hex()
-                num, exp = hex_str.split('p')
-                num = num.rstrip('0')
-                if num[-1] == '.':
-                    num += '0'
-                return num + 'p' + exp
-            raise ValueError('Unknown base {0}'.format(num_base))
-        return str(obj)
+                if num_base != 16:
+                    raise ValueError
+            else:
+                num_base = 16
+        if num_base is None or num_base == 10:
+            self._buffer.append(str(obj))
+            return
+        if num_base == 16:
+            num, exp = obj.hex().split('p')
+            num = num.rstrip('0')
+            if num[-1] == '.':
+                num += '0'
+            self._buffer.append(num + hex_exponent_letter + exp)
+            return
+        raise ValueError('Unknown base {0}'.format(num_base))
 
 
-    def _encode_str(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
-        # Not using grammar here for the sake of concise clarity over
-        # consistency.  Might be worth revising in future.
+    def _encode_complex(self, obj,
+                        at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                        num_base=None,
+                        hex_exponent_letter=grammar.LIT_GRAMMAR['hex_exponent_letter'][0],
+                        dec_float_zero=grammar.LIT_GRAMMAR['dec_float_zero'],
+                        hex_float_zero=grammar.LIT_GRAMMAR['hex_float_zero'],
+                        imaginary_unit=grammar.LIT_GRAMMAR['imaginary_unit'],
+                        str=str):
+        if key:
+            raise TypeError('Complex floats are not valid dict keys')
+        if self.hex_floats:
+            if num_base is not None:
+                if num_base != 16:
+                    raise ValueError
+            else:
+                num_base = 16
+        real = obj.real
+        imag = obj.imag
+        if num_base is None or num_base == 10:
+            if real == 0.0:
+                self._buffer.append(str(imag) + imaginary_unit)
+                return
+            if imag == 0.0:
+                self._buffer.append(str(real) + '+' + dec_float_zero + imaginary_unit)
+                return
+            if imag < 0.0:
+                self._buffer.append(str(real) + str(imag) + imaginary_unit)
+                return
+            self._buffer.append(str(real) + '+' + str(imag) + imaginary_unit)
+            return
+        if num_base == 16:
+            if real == 0.0:
+                num_imag, exp_imag = imag.hex().split('p')
+                num_imag = num_imag.rstrip('0')
+                if num_imag[-1] == '.':
+                    num_imag += '0'
+                self._buffer.append(num_imag + hex_exponent_letter + exp_imag + imaginary_unit)
+                return
+            if imag == 0.0:
+                num_real, exp_real = real.hex().split('p')
+                num_real = num_real.rstrip('0')
+                if num_real[-1] == '.':
+                    num_real += '0'
+                self._buffer.append(num_real + hex_exponent_letter + exp_real + '+' + hex_float_zero + imaginary_unit)
+                return
+            num_real, exp_real = real.hex().split('p')
+            num_real = num_real.rstrip('0')
+            if num_real[-1] == '.':
+                num_real += '0'
+            num_imag, exp_imag = imag.hex().split('p')
+            num_imag = num_imag.rstrip('0')
+            if num_imag[-1] == '.':
+                num_imag += '0'
+            if imag < 0.0:
+                self._buffer.append(num_real + hex_exponent_letter + exp_real + num_imag + hex_exponent_letter + exp_imag + imaginary_unit)
+                return
+            self._buffer.append(num_real + hex_exponent_letter + exp_real + '+' + num_imag + hex_exponent_letter + exp_imag + imaginary_unit)
+            return
+        raise ValueError('Unknown base {0}'.format(num_base))
+
+
+    def _encode_rational(self, obj,
+                         at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                         str=str):
+        if key:
+            raise TypeError('Rational numbers are not valid dict keys')
+        self._buffer.append(str(obj))
+
+
+    def _encode_str(self, obj,
+                    at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                    delim=None, block=None,
+                    string_delim_seq_set=grammar.LIT_GRAMMAR['string_delim_seq_set'],
+                    len=len):
         # There is a lot of logic here to cover round-tripping.  In that
         # scenario, delimiter style should be preserved whenever reasonable.
-        if self.bidi_rtl_re.search(obj) is None:
-            self._last_scalar_bidi_rtl = False
-        else:
-            self._last_scalar_bidi_rtl = True
         if delim is None:
-            m = self._unquoted_str_re.match(obj)
-        if delim is None and m is not None:
-            return obj
+            if self._unquoted_str_re.match(obj) is not None:
+                self._scalar_bidi_rtl = self.bidi_rtl_re.search(obj) is not None
+                self._buffer.append(obj)
+                return
+            delim_char = '"'
+        elif delim in string_delim_seq_set:
+            delim_char = delim[0]
+        else:
+            raise ValueError
         if key_path:
             if delim is None:
                 raise ValueError('String does not match the required pattern for a key path element')
             raise ValueError('Key path elements cannot be quoted')
+        if self.compact_inline and self._nesting_depth >= self.inline_depth:
+            self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"', inline=True, bidi_rtl=True)))
+            return
         if self._line_terminator_unicode_re.search(obj) is None:
-            if delim is None:
-                if '"' not in obj:
-                    return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
-            if delim[0] == '"':
-                if '"' not in obj:
-                    return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
-            if delim[0] == "'":
+            self._scalar_bidi_rtl = self.bidi_rtl_re.search(obj) is not None
+            if delim_char == "'":
                 if "'" not in obj:
-                    return "'{0}'".format(self._escape_unicode(obj, "'"))
-                return "'''{0}'''".format(self._escape_unicode(obj, "'", multidelim=True))
-            if delim[0] == '`':
-                if self._invalid_literal_unicode_re.search(obj) is not None:
-                    if '"' not in obj:
-                        return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                    return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
-                if '`' not in obj:
-                    return '`{0}`'.format(obj)
-                if '``' not in obj:
-                    if obj[0] == '`':
-                        open_delim = '``\x20'
-                    else:
-                        open_delim = '``'
-                    if obj[-1] == '`':
-                        close_delim = '\x20``'
-                    else:
-                        close_delim = '``'
-                    return open_delim + obj + close_delim
-                if '```' not in obj:
-                    if obj[0] == '`':
-                        open_delim = '```\x20'
-                    else:
-                        open_delim = '```'
-                    if obj[-1] == '`':
-                        close_delim = '\x20```'
-                    else:
-                        close_delim = '```'
-                    return open_delim + obj + close_delim
+                    self._buffer.append("'{0}'".format(self._escape_unicode(obj, "'")))
+                    return
+                self._buffer.append("'''{0}'''".format(self._escape_unicode(obj, "'", multidelim=True)))
+                return
+            if delim_char == '"' or obj == '' or self._invalid_literal_unicode_re.search(obj) is not None:
                 if '"' not in obj:
-                    return '"{0}"'.format(self._escape_unicode(obj, '"'))
-                return '"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True))
-            raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
-        if delim is not None and len(delim) % 3 != 0:
-            delim = delim[0]*3
-        if delim is None or obj[-1] != '\n' or self._invalid_literal_unicode_re.search(obj) is not None:
-            if delim is None or delim[0] == '`':
+                    self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"')))
+                    return
+                self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True)))
+                return
+            if '`' not in obj:
+                self._buffer.append('`{0}`'.format(obj))
+                return
+            if '``' not in obj:
+                if obj[0] == '`':
+                    open_delim = '``\x20'
+                else:
+                    open_delim = '``'
+                if obj[-1] == '`':
+                    close_delim = '\x20``'
+                else:
+                    close_delim = '``'
+                self._buffer.append(open_delim + obj + close_delim)
+                return
+            if '```' not in obj:
+                if obj[0] == '`':
+                    open_delim = '```\x20'
+                else:
+                    open_delim = '```'
+                if obj[-1] == '`':
+                    close_delim = '\x20```'
+                else:
+                    close_delim = '```'
+                self._buffer.append(open_delim + obj + close_delim)
+                return
+            if '"' not in obj:
+                self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"')))
+                return
+            self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True)))
+            return
+        if not at_line_start:
+            indent += self.nesting_indent
+            self._buffer.append('\n' + indent)
+        template = '|{0}\n{1}{2}|{0}/'
+        if obj[-1] != '\n' or self._invalid_literal_unicode_re.search(obj) is not None:
+            if delim_char == '`':
                 delim_char = '"'
-            elif delim[0] in ('"', "'"):
-                delim_char = delim[0]
-            else:
-                raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
             obj_encoded = self._escape_unicode(obj, delim_char, multidelim=True)
             obj_encoded_lines = obj_encoded.splitlines(True)
             if obj_encoded_lines[-1][-1:] != '\n':
                 obj_encoded_lines[-1] += '\\\n'
             obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
-            return '|{0}\n{1}{2}|{0}/'.format(delim_char*3, obj_encoded_indented, indent)
-        if delim not in obj:
+            self._buffer.append(template.format(delim_char*3, obj_encoded_indented, indent))
+            return
+        if delim_char*3 not in obj:
             obj_lines = obj.splitlines(True)
             obj_indented = ''.join([indent + line for line in obj_lines])
-            return '|{0}\n{1}{2}|{0}/'.format(delim, obj_indented, indent)
-        if delim[0]*3 not in obj:
+            self._buffer.append(template.format(delim_char*3, obj_indented, indent))
+            return
+        if delim_char*6 not in obj:
             obj_lines = obj.splitlines(True)
             obj_indented = ''.join([indent + line for line in obj_lines])
-            return '|{0}\n{1}{2}|{0}/'.format(delim[0]*3, obj_indented, indent)
-        if delim[0]*6 not in obj:
-            obj_lines = obj.splitlines(True)
-            obj_indented = ''.join([indent + line for line in obj_lines])
-            return '|{0}\n{1}{2}|{0}/'.format(delim[0]*6, obj_indented, indent)
+            self._buffer.append(template.format(delim_char*6, obj_indented, indent))
+            return
         obj_encoded = self._escape_unicode(obj, '"', multidelim=True)
         obj_encoded_lines = obj_encoded.splitlines(True)
         obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
-        return '|{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented, indent)
+        self._buffer.append(template.format('"""', obj_encoded_indented, indent))
+        return
 
 
-    def _encode_bytes(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
-        self._last_scalar_bidi_rtl = False
-        if delim is None:
-            m = self._unquoted_bytes_re.match(obj)
+    def _encode_bytes(self, obj,
+                      at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                      delim=None, block=None,
+                      string_delim_seq_set=grammar.LIT_GRAMMAR['string_delim_seq_set']):
         if key_path:
             raise TypeError('Bytes type cannot be used in key paths')
-        if delim is None and m is not None:
-            return '(bytes)> {0}'.format(obj.decode('ascii'))
+        tag = '(bytes)> '
+        if delim is None:
+            if self._unquoted_bytes_re.match(obj) is not None:
+                self._buffer.append(tag + obj.decode('ascii'))
+                return
+            delim_char = '"'
+            delim_char_bytes = b'"'
+        elif delim in string_delim_seq_set:
+            delim_char = delim[0]
+            delim_char_bytes = delim_char.encode('ascii')
+        else:
+            raise ValueError
         if self._line_terminator_bytes_re.search(obj) is None:
-            if delim is None:
-                if b'"' not in obj:
-                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
-                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
-            if delim[0] == '"':
-                if b'"' not in obj:
-                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
-                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
-            if delim[0] == "'":
+            if delim_char == "'":
                 if b"'" not in obj:
-                    return "(bytes)> '{0}'".format(self._escape_bytes(obj, "'").decode('ascii'))
-                return "(bytes)> '''{0}'''".format(self._escape_bytes(obj, "'", multidelim=True).decode('ascii'))
-            if delim[0] == '`':
-                if self._invalid_literal_bytes_re.search(obj) is not None:
-                    if b'"' not in obj:
-                        return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
-                    return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
-                if b'`' not in obj:
-                    return '(bytes)> `{0}`'.format(obj.decode('ascii'))
-                if b'``' not in obj:
-                    if obj[:1] == b'`':
-                        open_delim = '``\x20'
-                    else:
-                        open_delim = '``'
-                    if obj[-1:] == b'`':
-                        close_delim = '\x20``'
-                    else:
-                        close_delim = '``'
-                    return '(bytes)> ' + open_delim + obj.decode('ascii') + close_delim
-                if b'```' not in obj:
-                    if obj[:1] == b'`':
-                        open_delim = '```\x20'
-                    else:
-                        open_delim = '```'
-                    if obj[-1:] == b'`':
-                        close_delim = '\x20```'
-                    else:
-                        close_delim = '```'
-                    return '(bytes)> ' + open_delim + obj.decode('ascii') + close_delim
+                    self._buffer.append(tag + "'{0}'".format(self._escape_bytes(obj, "'").decode('ascii')))
+                    return
+                self._buffer.append(tag + "'''{0}'''".format(self._escape_bytes(obj, "'", multidelim=True).decode('ascii')))
+                return
+            if delim_char == '"' or obj == b'' or self._invalid_literal_bytes_re.search(obj) is not None:
                 if b'"' not in obj:
-                    return '(bytes)> "{0}"'.format(self._escape_bytes(obj, '"').decode('ascii'))
-                return '(bytes)> """{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii'))
-            raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
-        if delim is not None and len(delim) % 3 != 0:
-            delim = delim[0]*3
-        indent_bytes = indent.encode('ascii')
-        if delim is None or obj[-1:] != b'\n' or self._invalid_literal_bytes_re.search(obj) is not None:
-            if delim is None or delim[0] == '`':
+                    self._buffer.append(tag + '"{0}"'.format(self._escape_bytes(obj, '"').decode('ascii')))
+                    return
+                self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii')))
+                return
+            if b'`' not in obj:
+                self._buffer.append(tag + '`{0}`'.format(obj.decode('ascii')))
+                return
+            if b'``' not in obj:
+                if obj[:1] == b'`':
+                    open_delim = '``\x20'
+                else:
+                    open_delim = '``'
+                if obj[-1:] == b'`':
+                    close_delim = '\x20``'
+                else:
+                    close_delim = '``'
+                self._buffer.append(tag + open_delim + obj.decode('ascii') + close_delim)
+                return
+            if '```' not in obj:
+                if obj[:1] == b'`':
+                    open_delim = '```\x20'
+                else:
+                    open_delim = '```'
+                if obj[-1:] == b'`':
+                    close_delim = '\x20```'
+                else:
+                    close_delim = '```'
+                self._buffer.append(tag + open_delim + obj.decode('ascii') + close_delim)
+                return
+            if b'"' not in obj:
+                self._buffer.append(tag +'"{0}"'.format(self._escape_bytes(obj, '"').decode('ascii')))
+                return
+            self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii')))
+            return
+        if not at_line_start:
+            indent += self.nesting_indent
+            self._buffer.append('\n' + indent)
+        tag = '(bytes)>\n' + indent
+        template = '|{0}\n{1}{2}|{0}/'
+        if obj[-1] != b'\n' or self._invalid_literal_bytes_re.search(obj) is not None:
+            if delim_char == '`':
                 delim_char = '"'
-            elif delim[0] in ('"', "'"):
-                delim_char = delim[0]
-            else:
-                raise ValueError('Unknown string delimiting character "{0}"'.format(delim[0]))
-            obj_encoded = self._escape_bytes(obj, delim_char, multidelim=True)
+            obj_encoded = self._escape_bytes(obj, delim_char, multidelim=True).decode('ascii')
             obj_encoded_lines = obj_encoded.splitlines(True)
-            if obj_encoded_lines[-1][-1:] != b'\n':
-                obj_encoded_lines[-1] += b'\\\n'
-            obj_encoded_indented = b''.join([indent_bytes + line for line in obj_encoded_lines])
-            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim_char*3, obj_encoded_indented.decode('ascii'), indent)
-        if delim.encode('ascii') not in obj:
-            obj_lines = obj.splitlines(True)
-            obj_indented = b''.join([indent_bytes + line for line in obj_lines])
-            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim, obj_indented.decode('ascii'), indent)
-        if delim[0].encode('ascii')*3 not in obj:
-            obj_lines = obj.splitlines(True)
-            obj_indented = b''.join([indent + line for line in obj_lines])
-            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim[0]*3, obj_indented.decode('ascii'), indent)
-        if delim[0].encode('ascii')*6 not in obj:
-            obj_lines = obj.splitlines(True)
-            obj_indented = b''.join([indent_bytes + line for line in obj_lines])
-            return '(bytes)> |{0}\n{1}{2}|{0}/'.format(delim[0]*6, obj_indented.decode('ascii'), indent)
-        obj_encoded = self._escape_bytes(obj, '"', multidelim=True)
+            if obj_encoded_lines[-1][-1:] != '\n':
+                obj_encoded_lines[-1] += '\\\n'
+            obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
+            self._buffer.append(tag + template.format(delim_char*3, obj_encoded_indented, indent))
+            return
+        if delim_char_bytes*3 not in obj:
+            obj_lines = obj.decode('ascii').splitlines(True)
+            obj_indented = ''.join([indent + line for line in obj_lines])
+            self._buffer.append(tag + template.format(delim_char*3, obj_indented, indent))
+            return
+        if delim_char_bytes*6 not in obj:
+            obj_lines = obj.decode('ascii').splitlines(True)
+            obj_indented = ''.join([indent + line for line in obj_lines])
+            self._buffer.append(tag + template.format(delim_char*6, obj_indented, indent))
+            return
+        obj_encoded = self._escape_bytes(obj, '"', multidelim=True).decode('ascii')
         obj_encoded_lines = obj_encoded.splitlines(True)
-        obj_encoded_indented = b''.join([indent_bytes + line for line in obj_encoded_lines])
-        return '(bytes)> |{0}\n{1}{2}|{0}/'.format('"""', obj_encoded_indented.decode('ascii'), indent)
+        obj_encoded_indented = ''.join([indent + line for line in obj_encoded_lines])
+        self._buffer.append(tag + template.format('"""', obj_encoded_indented, indent))
 
 
-    def _encode_doc_comment(self, obj, indent, key=False, key_path=False, val=False, delim=None, block=None):
+    def _encode_doc_comment(self, obj,
+                            at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                            delim=None, block=None,
+                            comment_delim_seq_set=grammar.LIT_GRAMMAR['comment_delim_seq_set'],):
+        if key_path:
+            raise TypeError('Key paths do not take doc comments')
         if delim is None:
             delim = '###'
+        elif delim in comment_delim_seq_set:
+            delim = '###'
+        else:
+            raise ValueError
         if self._invalid_literal_unicode_re.search(obj) is not None:
             raise ValueError('Invalid literal code point')
-        while delim in obj and len(delim) < 93:
+        while delim in obj:
             delim += '###'
-        if len(delim) > 90:
-            raise ValueError('Cannot create comment since all valid escape sequences of "#" appear literally within the comment text')
+            if delim not in comment_delim_seq_set:
+                raise ValueError('Cannot create comment since all valid escape sequences of "#" appear literally within the comment text')
+        if not at_line_start:
+            indent += self.nesting_indent
+            self._buffer.append('\n' + indent)
         if self._line_terminator_unicode_re.search(obj) or self.bidi_rtl_re.search(obj):
             if obj[-1] != '\n':
-                return '|{0}\n{1}{2}\n{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True)))
-            return '|{0}\n{1}{2}{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True)))
-        return '{0}{1}{0}'.format(delim, obj)
+                self._buffer.append('|{0}\n{1}{2}\n{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True))))
+                return
+            self._buffer.append('|{0}\n{1}{2}{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True))))
+            return
+        self._buffer.append('{0}{1}{0}'.format(delim, obj))
 
 
-    def _encode_list(self, obj, indent, key=False, key_path=False, val=False,
-                     open_indentation_list=OPEN_INDENTATION_LIST,
-                     start_inline_list=START_INLINE_LIST,
-                     end_inline_list=END_INLINE_LIST):
+    def _encode_alias(self, obj,
+                      at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                      alias_prefix=grammar.LIT_GRAMMAR['alias_prefix'],
+                      alias_basename='obj', id=id, str=str):
+        id_obj = id(obj)
+        if not self.aliases:
+            raise ValueError('Aliases were encountered but are not enabled (aliases=False)')
+        if id_obj in self._obj_path and not self.circular_references:
+            raise ValueError('Circular references were encountered but are not enabled (circular_references=False)')
+        alias_value = self._alias_values[id_obj]
+        if alias_value is None:
+            self._alias_counter += 1
+            alias_value = alias_basename + str(self._alias_counter)
+            if alias_basename != 'obj':
+                self._scalar_bidi_rtl = self.bidi_rtl_re.search(alias_value) is not None
+            self._alias_values[id_obj] = alias_value
+            self._buffer[self._alias_def_buffer_index[id_obj]] = self._alias_def_template[id_obj].format(alias_value)
+        self._buffer.append(alias_prefix+alias_value)
+
+
+    def _encode_list(self, obj,
+                     at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                     explicit_type=None,
+                     start_inline_list=grammar.LIT_GRAMMAR['start_inline_list'],
+                     end_inline_list=grammar.LIT_GRAMMAR['end_inline_list'],
+                     indent_chars=grammar.LIT_GRAMMAR['indent'],
+                     id=id, len=len, type=type):
         if key:
-            raise TypeError('Lists are not supported as dict keys')
-        if id(obj) in self._collections:
-            raise ValueError('Encoder does not currently support circular references')
-        self._nesting_depth += 1
-        if self._nesting_depth > self.max_nesting_depth:
-            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
-        self._collections.add(id(obj))
+            raise TypeError('List-like objects are not supported as dict keys')
+        id_obj = id(obj)
+        if id_obj in self._alias_values:
+            self._encode_alias(obj)
+            return
+
+        self._obj_path[id_obj] = None
+        self._alias_values[id_obj] = None
+
         if not obj:
-            yield start_inline_list + end_inline_list + '\n'
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._alias_def_template[id_obj] = '(label={0})>\x20'
+            else:
+                self._buffer.append('({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._buffer.append(')>\x20')
+                self._alias_def_template[id_obj] = ', label={0}'
+            self._buffer.append(start_inline_list + end_inline_list)
+            return
+
+        inline = self._nesting_depth >= self.inline_depth
+        if value and not inline:
+            indent = indent[:-len(self.nesting_indent)]
+        if inline:
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._alias_def_template[id_obj] = '(label={0})>\x20'
+            else:
+                self._buffer.append('({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._buffer.append(')>\x20')
+                self._alias_def_template[id_obj] = ', label={0}'
+            if self.compact_inline:
+                self._buffer.append(start_inline_list)
+            else:
+                self._buffer.append(start_inline_list + '\n')
+            internal_indent = indent + self.nesting_indent
         else:
-            first = True
-            for n, elem in enumerate(obj):
-                type_elem = type(elem)
-                if type_elem in self._list_types and elem:
-                    if first:
-                        yield open_indentation_list + '\n' + indent + '\x20\x20'
-                        first = False
-                    else:
-                        yield indent + open_indentation_list + '\n' + indent + '\x20\x20'
-                    for x in self._encode_funcs[type_elem](elem, indent + '\x20\x20'):
-                        yield x
+            if not at_line_start:
+                self._buffer.append('\n')
+            elif after_start_list_item:
+                self._buffer[-1] = self._buffer[-1].rstrip(indent_chars) + '\n'
+            if self._nesting_depth == 0 or after_start_list_item or already_indented:
+                start_list_item = self.flush_start_list_item
+                start_list_item_indent = self._flush_start_list_item_indent
+                internal_indent = indent + self._flush_list_item_indent
+            else:
+                start_list_item = self.start_list_item
+                start_list_item_indent = self._start_list_item_indent
+                internal_indent = indent + self._list_item_indent
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                if already_indented:
+                    self._alias_def_template[id_obj] = '(label={0})>\n' + indent + start_list_item_indent
                 else:
-                    if first:
-                        yield open_indentation_list + '\x20'
-                        first = False
-                    else:
-                        yield indent + open_indentation_list + '\x20'
-                    if type_elem in self._scalar_types:
-                        yield self._encode_funcs[type_elem](elem, indent + '\x20\x20')
-                        yield '\n'
-                    else:
-                        for x in self._encode_funcs[type_elem](elem, indent + '\x20\x20'):
-                            yield x
+                    self._alias_def_template[id_obj] = indent + start_list_item_indent + '(label={0})>\n'
+            else:
+                if already_indented:
+                    self._buffer.append('({0}'.format(explicit_type))
+                else:
+                    self._buffer.append(indent + start_list_item_indent + '({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                if already_indented:
+                    self._buffer.append(')>\n' + indent + start_list_item_indent)
+                else:
+                    self._buffer.append(')>\n')
+                self._alias_def_template[id_obj] = ', label={0}'
 
-    def _encode_dict(self, obj, indent, key=False, key_path=False, val=False,
-                     start_inline_dict=START_INLINE_DICT,
-                     end_inline_dict=END_INLINE_DICT,
-                     assign_key_val=ASSIGN_KEY_VAL):
-        if key:
-            raise TypeError('Dicts are not supported as dict keys')
-        if id(obj) in self._collections:
-            raise ValueError('Encoder does not currently support circular references')
         self._nesting_depth += 1
         if self._nesting_depth > self.max_nesting_depth:
             raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
-        self._collections.add(id(obj))
+
+        if inline:
+            if self.compact_inline:
+                for item in obj:
+                    self._encode_funcs[type(item)](item, at_line_start=False, indent=internal_indent)
+                    self._buffer.append(',\x20')
+                if self.trailing_commas:
+                    self._buffer[-1] = ','
+                else:
+                    self._buffer[-1] = ''
+                self._buffer.append(end_inline_list)
+            else:
+                for item in obj:
+                    self._buffer.append(internal_indent)
+                    self._encode_funcs[type(item)](item, indent=internal_indent)
+                    self._buffer.append(',\n')
+                if not self.trailing_commas:
+                    self._buffer[-1] = '\n'
+                self._buffer.append(indent + end_inline_list)
+        else:
+            first = False
+            for item in obj:
+                if first:
+                    first = False
+                    if already_indented:
+                        self._buffer.append(start_list_item)
+                    else:
+                        self._buffer.append(indent + start_list_item)
+                else:
+                    self._buffer.append(indent + start_list_item)
+                self._encode_funcs[type(item)](item, after_start_list_item=True, indent=internal_indent)
+                self._buffer.append('\n')
+            self._buffer.pop()
+
+        self._obj_path.popitem()
+        self._nesting_depth -= 1
+
+
+    def _encode_dict(self, obj,
+                     at_line_start=True, indent='', already_indented=False, after_start_list_item=False, key=False, key_path=False, value=False,
+                     explicit_type=None,
+                     start_inline_dict=grammar.LIT_GRAMMAR['start_inline_dict'],
+                     end_inline_dict=grammar.LIT_GRAMMAR['end_inline_dict'],
+                     assign_key_val=grammar.LIT_GRAMMAR['assign_key_val']):
+        if key:
+            raise TypeError('Dict-like objects are not supported as dict keys')
+        id_obj = id(obj)
+        if id_obj in self._alias_values:
+            self._encode_alias(obj)
+            return
+
+        self._obj_path[id_obj] = None
+        self._alias_values[id_obj] = None
+
         if not obj:
-            yield start_inline_dict + end_inline_dict + '\n'
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._alias_def_template[id_obj] = '(label={0})>\x20'
+            else:
+                self._buffer.append('({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._buffer.append(')>\x20')
+                self._alias_def_template[id_obj] = ', label={0}'
+            self._buffer.append(start_inline_dict + end_inline_dict)
+            return
+
+        inline = self._nesting_depth >= self.inline_depth
+        if inline:
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._alias_def_template[id_obj] = '(label={0})>\x20'
+            else:
+                self._buffer.append('({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                self._buffer.append(')>\x20')
+                self._alias_def_template[id_obj] = ', label={0}'
+            if self.compact_inline:
+                self._buffer.append(start_inline_dic)
+            else:
+                self._buffer.append(start_inline_dic + '\n')
+        else:
+            if not at_line_start:
+                self._buffer.append('\n')
+            if explicit_type is None:
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                if already_indented or after_start_list_item:
+                    self._alias_def_template[id_obj] = '(dict, label={0})>\n' + indent
+                else:
+                    self._alias_def_template[id_obj] = indent + '(dict, label={0})>\n'
+            else:
+                if already_indented or after_start_list_item:
+                    self._buffer.append('({0}'.format(explicit_type))
+                else:
+                    self._buffer.append(indent + '({0}'.format(explicit_type))
+                self._alias_def_buffer_index[id_obj] = len(self._buffer)
+                self._buffer.append('')
+                if already_indented:
+                    self._buffer.append(')>\n' + indent)
+                else:
+                    self._buffer.append(')>\n')
+                self._alias_def_template[id_obj] = ', label={0}'
+        internal_indent = indent + self.nesting_indent
+
+        self._nesting_depth += 1
+        if self._nesting_depth > self.max_nesting_depth:
+            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
+
+        if inline:
+            if self.compact_inline:
+                for k, v in obj.items():
+                    self._encode_funcs[type(k)](k, at_line_start=False, indent=internal_indent, key=True)
+                    self._buffer.append(' = ')
+                    self._encode_funcs[type(v)](v, at_line_start=False, indent=internal_indent, value=True)
+                    self._buffer.append(',\x20')
+                if self.trailing_commas:
+                    self._buffer[-1] = ','
+                else:
+                    self._buffer[-1] = ''
+                self._buffer.append(end_inline_dict)
+            else:
+                for k, v in obj.items():
+                    self._buffer.append(internal_indent)
+                    self._encode_funcs[type(k)](k, indent=internal_indent, key=True)
+                    if self._scalar_bidi_rtl:
+                        self._scalar_bidi_rtl = False
+                        self._buffer.append(' =\n' + internal_indent)
+                        self._encode_funcs[type(v)](v, indent=internal_indent, value=True)
+                    else:
+                        self._buffer.append(' = ')
+                        self._encode_funcs[type(v)](v, at_line_start=False, indent=internal_indent, value=True)
+                    self._buffer.append(',\n')
+                if not self.trailing_commas:
+                    self._buffer[-1] = '\n'
+                self._buffer.append(indent + end_inline_dict)
         else:
             first = True
             for k, v in obj.items():
                 if first:
-                    yield self._encode_funcs[type(k)](k, indent, key=True)
                     first = False
+                    if not already_indented and not after_start_list_item:
+                        self._buffer.append(indent)
                 else:
-                    yield indent + self._encode_funcs[type(k)](k, indent, key=True)
-                yield '\x20' + assign_key_val
-                type_v = type(v)
-                if type_v in self._scalar_types:
-                    if self._last_scalar_bidi_rtl:
-                        yield '\n' + indent + self.dict_indent_per_level
-                    else:
-                        yield '\x20'
-                    yield self._encode_funcs[type_v](v, indent + self.dict_indent_per_level, val=True)
-                    yield '\n'
-                elif not v:
-                    yield '\x20'
-                    yield self._encode_funcs[type_v](v, indent + self.dict_indent_per_level, val=True)
-                elif type_v in self._dict_types:
-                    yield '\n' + indent + self.dict_indent_per_level
-                    for x in self._encode_funcs[type_v](v, indent + self.dict_indent_per_level, val=True):
-                        yield x
-                elif type_v in self._list_types:
-                    yield '\n' + indent + self.list_indent_per_level
-                    for x in self._encode_funcs[type_v](v, indent + self.list_indent_per_level, val=True):
-                        yield x
+                    self._buffer.append(indent)
+                self._encode_funcs[type(k)](k, indent=internal_indent, key=True)
+                if self._scalar_bidi_rtl:
+                    self._scalar_bidi_rtl = False
+                    self._buffer.append(' =\n' + internal_indent)
+                    self._encode_funcs[type(v)](v, indent=internal_indent, value=True)
                 else:
-                    raise TypeError('Unsupported object of type {0}'.format(type_v))
+                    self._buffer.append(' = ')
+                    self._encode_funcs[type(v)](v, at_line_start=False, indent=internal_indent, value=True)
+                self._buffer.append('\n')
+            self._buffer.pop()
+
+        self._obj_path.popitem()
+        self._nesting_depth -= 1
 
 
-    def iterencode(self, obj):
-        '''
-        Encode an object iteratively as a sequence of strings.
-        '''
-        self._nesting_depth = 0
-        self._collections = set()
-        self._last_scalar_bidi_rtl = False
-        if type(obj) in self._encode_funcs:
-            if type(obj) in self._collection_types:
-                return self._encode_funcs[type(obj)](obj, '')
-            return self._encode_funcs[type(obj)](obj, '') + '\n'
-        raise TypeError('Encoding type {0} is not supported'.format(type(obj)))
+    def _encode_odict(self, obj, **kwargs):
+        self._encode_dict(obj, explicit_type='odict', **kwargs)
+
+
+    def _encode_set(self, obj, **kwargs):
+        self._encode_list(obj, explicit_type='set', **kwargs)
+
+    def _encode_tuple(self, obj, **kwargs):
+        self._encode_list(obj, explicit_type='tuple', **kwargs)
 
 
     def encode(self, obj):
         '''
         Encode an object as a string.
         '''
-        return ''.join(x for x in self.iterencode(obj))
+        self._encode_funcs[type(obj)](obj)
+        if self._buffer[-1][-1] != '\n':
+            self._buffer.append('\n')
+        encoded = ''.join(self._buffer)
+        self._reset()
+        return encoded
 
 
-    def encode_element(self, obj, indent='', key=False, key_path=False,
+    def partial_encode(self, obj, inline=False,
+                       indent='', already_indented=False,
+                       key=False, key_path=False,
                        delim=None, block=False, num_base=None,
                        initial_nesting_depth=0):
         '''
-        Encode an object in a manner suitable for a specified context.
-
-        This is used in RoundtripAst.
+        Encode an object within a larger object in a manner suitable for its
+        context.  This is used in RoundtripAst.
         '''
         self._nesting_depth = initial_nesting_depth
-        self._collections = set()
-        self._last_scalar_bidi_rtl = False
         if (block and delim is None) or (delim is not None and num_base is not None) or (key_path and not key):
             raise TypeError('Invalid argument combination')
         if delim is not None:
-            return self._encode_funcs[type(obj)](obj, indent, key=key, key_path=key_path, delim=delim, block=block)
-        if num_base is not None:
-            return self._encode_funcs[type(obj)](obj, indent, key=key, key_path=key_path, num_base=num_base)
-        return self._encode_funcs[type(obj)](obj, indent, key=key, key_path=key_path)
+            self._encode_funcs[type(obj)](obj, inline=inline, indent=indent, already_indented=already_indented, key=key, key_path=key_path, delim=delim, block=block)
+        elif num_base is not None:
+            self._encode_funcs[type(obj)](obj, inline=inline, indent=indent, already_indented=already_indented, key=key, key_path=key_path, num_base=num_base)
+        else:
+            self._encode_funcs[type(obj)](obj, inline=inline, indent=indent, already_indented=already_indented, key=key, key_path=key_path)
+        encoded = ''.join(self._buffer)
+        if not already_indented and not encoded.startswith(indent):
+            encoded = indent + encoded
+        self._reset()
+        return encoded

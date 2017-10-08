@@ -955,6 +955,7 @@ class Ast(object):
             return any(self._circular_references_exist(v, new_ids, cleared_ids) for v in node_nodes.values())
         if implicit_type == 'list':
             return any(self._circular_references_exist(v, new_ids, cleared_ids) for v in node_nodes)
+        raise ValueError
 
 
     def _resolve_dict_config(self, dict_node, dict_tag,

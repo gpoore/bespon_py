@@ -97,7 +97,8 @@ class Escape(object):
                         'backslash': grammar.RE_GRAMMAR['backslash'],
                         'singlequote': grammar.RE_GRAMMAR['escaped_string_singlequote_delim'],
                         'doublequote': grammar.RE_GRAMMAR['escaped_string_doublequote_delim'],
-                        'newline': grammar.RE_GRAMMAR['newline']}
+                        'newline': grammar.RE_GRAMMAR['newline'],
+                        'bidi_rtl': grammar.RE_GRAMMAR['bidi_rtl']}
 
         self.invalid_literal_unicode_re = re.compile('{always_escaped_unicode}'.format(**pattern_dict))
 
@@ -110,6 +111,16 @@ class Escape(object):
         self._invalid_literal_or_backslash_multiple_singlequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_unicode_pattern)
         invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{newline}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_multiple_doublequote_newline_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_unicode_pattern)
+
+        invalid_literal_or_backslash_singlequote_newline_bidi_rtl_unicode_pattern = '{backslash}|{singlequote}|{newline}|{always_escaped_unicode}|{bidi_rtl}'.format(**pattern_dict)
+        self._invalid_literal_or_backslash_singlequote_newline_bidi_rtl_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_newline_bidi_rtl_unicode_pattern)
+        invalid_literal_or_backslash_doublequote_newline_bidi_rtl_unicode_pattern = '{backslash}|{doublequote}|{newline}|{always_escaped_unicode}|{bidi_rtl}'.format(**pattern_dict)
+        self._invalid_literal_or_backslash_doublequote_newline_bidi_rtl_unicode_re = re.compile(invalid_literal_or_backslash_doublequote_newline_bidi_rtl_unicode_pattern)
+
+        invalid_literal_or_backslash_multiple_singlequote_newline_bidi_rtl_unicode_pattern = '{backslash}|{singlequote}(?={singlequote}|\\Z)|{newline}|{always_escaped_unicode}|{bidi_rtl}'.format(**pattern_dict)
+        self._invalid_literal_or_backslash_multiple_singlequote_newline_bidi_rtl_unicode_re = re.compile(invalid_literal_or_backslash_multiple_singlequote_newline_bidi_rtl_unicode_pattern)
+        invalid_literal_or_backslash_multiple_doublequote_newline_bidi_rtl_unicode_pattern = '{backslash}|{doublequote}(?={doublequote}|\\Z)|{newline}|{always_escaped_unicode}|{bidi_rtl}'.format(**pattern_dict)
+        self._invalid_literal_or_backslash_multiple_doublequote_newline_bidi_rtl_unicode_re = re.compile(invalid_literal_or_backslash_multiple_doublequote_newline_bidi_rtl_unicode_pattern)
 
         invalid_literal_or_backslash_singlequote_unicode_pattern = '{backslash}|{singlequote}|{always_escaped_unicode}'.format(**pattern_dict)
         self._invalid_literal_or_backslash_singlequote_unicode_re = re.compile(invalid_literal_or_backslash_singlequote_unicode_pattern)
@@ -190,7 +201,7 @@ class Escape(object):
         return '\\U{0:08x}'.format(n)
 
 
-    def escape_unicode(self, s, delim_char, multidelim=False, all=False, inline=False):
+    def escape_unicode(self, s, delim_char, multidelim=False, inline=False, bidi_rtl=False):
         '''
         Within a string, replace all code points that are not allowed to
         appear literally with their escaped counterparts.
@@ -198,33 +209,43 @@ class Escape(object):
         if delim_char != "'" and delim_char != '"':
             raise TypeError
         d = self._escape_unicode_dict
-        if all:
-            v = ''.join(d[c] for c in s)
-        else:
-            if inline:
-                if delim_char == "'":
-                    if multidelim:
+        if inline:
+            if delim_char == "'":
+                if multidelim:
+                    if bidi_rtl:
+                        r = self._invalid_literal_or_backslash_multiple_singlequote_newline_bidi_rtl_unicode_re
+                    else:
                         r = self._invalid_literal_or_backslash_multiple_singlequote_newline_unicode_re
+                else:
+                    if bidi_rtl:
+                        r = self._invalid_literal_or_backslash_singlequote_newline_bidi_rtl_unicode_re
                     else:
                         r = self._invalid_literal_or_backslash_singlequote_newline_unicode_re
-                else:
-                    if multidelim:
+            else:
+                if multidelim:
+                    if bidi_rtl:
+                        r = self._invalid_literal_or_backslash_multiple_doublequote_newline_bidi_rtl_unicode_re
+                    else:
                         r = self._invalid_literal_or_backslash_multiple_doublequote_newline_unicode_re
+                else:
+                    if bidi_rtl:
+                        r = self._invalid_literal_or_backslash_doublequote_newline_bidi_rtl_unicode_re
                     else:
                         r = self._invalid_literal_or_backslash_doublequote_newline_unicode_re
-            else:
-                if delim_char == "'":
-                    if multidelim:
-                        r = self._invalid_literal_or_backslash_multiple_singlequote_unicode_re
-                    else:
-                        r = self._invalid_literal_or_backslash_singlequote_unicode_re
+        else:
+            if bidi_rtl:
+                raise ValueError
+            if delim_char == "'":
+                if multidelim:
+                    r = self._invalid_literal_or_backslash_multiple_singlequote_unicode_re
                 else:
-                    if multidelim:
-                        r = self._invalid_literal_or_backslash_multiple_doublequote_unicode_re
-                    else:
-                        r = self._invalid_literal_or_backslash_doublequote_unicode_re
-            v = r.sub(lambda m: d[m.group(0)], s)
-        return v
+                    r = self._invalid_literal_or_backslash_singlequote_unicode_re
+            else:
+                if multidelim:
+                    r = self._invalid_literal_or_backslash_multiple_doublequote_unicode_re
+                else:
+                    r = self._invalid_literal_or_backslash_doublequote_unicode_re
+        return r.sub(lambda m: d[m.group(0)], s)
 
 
     def escape_bytes(self, b, delim_char, multidelim=False, inline=False):
