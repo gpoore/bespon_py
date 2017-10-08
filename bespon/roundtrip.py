@@ -62,11 +62,12 @@ class AstView(object):
     '''
     Abstract view of a location in the AST.
     '''
-    __slots__ = ['_ast', '_node']
+    __slots__ = ['_ast', '_node', '_modified_value']
 
     def __init__(self, ast, node):
         self._ast = ast
         self._node = node
+        self._modified_value = False
 
 
     @property
@@ -113,9 +114,6 @@ class AstView(object):
         self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
 
 
-class ScalarAstView(AstView):
-    __slots__ = []
-
     @property
     def value(self):
         if self._node.implicit_type == 'alias':
@@ -128,6 +126,7 @@ class ScalarAstView(AstView):
     def value(self, val):
         if self._node.implicit_type == 'alias':
             raise AttributeError('Aliased values cannot be assigned through the alias; assign them directly')
+        self._modified_value = True
         self._ast._replace_val_at_pos(self._node, val)
 
 
@@ -146,6 +145,10 @@ class ScalarAstView(AstView):
         self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
 
 
+class ScalarAstView(AstView):
+    __slots__ = []
+
+
 _ast_view_by_implicit_type = {}
 
 
@@ -154,6 +157,8 @@ class DictAstView(AstView):
     _ast_view_by_implicit_type = _ast_view_by_implicit_type
 
     def __getitem__(self, subscript):
+        if self._modified_value:
+            raise NotImplementedError('Accessing replaced dict-like objects is not currently supported')
         sub_node = self._node[subscript]
         sub_node_view = sub_node.view
         if sub_node_view is None:
@@ -180,6 +185,8 @@ class ListAstView(AstView):
     _ast_view_by_implicit_type = _ast_view_by_implicit_type
 
     def __getitem__(self, subscript):
+        if self._modified_value:
+            raise NotImplementedError('Accessing replaced list-like objects is not currently supported')
         sub_node = self._node[subscript]
         sub_node_view = sub_node.view
         if sub_node_view is None:
@@ -261,30 +268,32 @@ class RoundtripAst(object):
         pos = self.root[0]
         for k in path:
             pos = pos[k]
-        self._replace_val_at_pos(self, pos, obj)
+        self._replace_val_at_pos(pos, obj)
 
 
     def _replace_val_at_pos(self, pos, obj):
-        if isinstance(obj, dict) or isinstance(obj, list):
-            raise TypeError('Replacing collections is not currently supported')
         if pos.tag is not None:
             raise TypeError('Value replacement is not currently supported for tagged objects')
         if type(pos.final_val) != type(obj):
             raise TypeError('Value replacement is only allowed for values of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
-        continuation_indent = pos.continuation_indent
-        if continuation_indent is None:
-            if pos.at_line_start:
-                continuation_indent = pos.indent
-            else:
-                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
-        encoded_val = self.encoder.encode_element(obj, continuation_indent,
-                                                  delim=pos.delim, block=pos.block,
-                                                  num_base=pos.num_base)
-        if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
-            if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
-                raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
+        if pos.implicit_type in ('dict', 'list'):
+            encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=pos.indent, inline=pos.inline,
+                                                      initial_nesting_depth=pos.nesting_depth)
+        else:
+            continuation_indent = pos.continuation_indent
+            if continuation_indent is None:
+                if pos.at_line_start:
+                    continuation_indent = pos.indent
+                else:
+                    continuation_indent = pos.indent + self.encoder.nesting_indent
+            encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=continuation_indent, inline=pos.inline,
+                                                      delim=pos.delim, block=pos.block, num_base=pos.num_base)
+            if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
+                if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
+                    raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
         pos.final_val = obj
-        pos.raw_val = encoded_val
+        if pos.implicit_type not in ('dict', 'list'):
+            pos.raw_val = encoded_val
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
 
 
@@ -318,8 +327,8 @@ class RoundtripAst(object):
             if pos.at_line_start:
                 continuation_indent = pos.indent
             else:
-                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
-        encoded_val = self.encoder.encode_element(obj, continuation_indent,
+                continuation_indent = pos.indent + self.encoder.nesting_indent
+        encoded_val = self.encoder.partial_encode(obj, continuation_indent,
                                                   key=True, key_path=key_path,
                                                   delim=pos.delim, block=pos.block,
                                                   num_base=pos.num_base)
@@ -364,7 +373,7 @@ class RoundtripAst(object):
             if pos.at_line_start:
                 continuation_indent = pos.indent
             else:
-                continuation_indent = pos.indent + self.encoder.dict_indent_per_level
+                continuation_indent = pos.indent + self.encoder.nesting_indent
         encoded_val = self.encoder._encode_doc_comment(obj, continuation_indent, delim=pos.delim, block=pos.block)
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
 
@@ -378,10 +387,16 @@ class RoundtripAst(object):
         # Back up by one column, to be before start of content
         prev_last_colno = self.source.first_colno - 1
         source_lines = self.source_lines
-        for (first_lineno, first_colno, last_lineno, last_colno), encoded_val in sorted(self._replacements.items(), key=lambda x: x[0]):
+        len_source_lines = len(source_lines)
+        len_source = sum(len(x) for x in source_lines)
+        for (first_lineno, first_colno, last_lineno, last_colno), encoded_val in sorted(self._replacements.items(), key=lambda x: (x[0][0], x[0][1], len_source_lines-x[0][2], len_source-x[0][3])):
             # Note that all `lineno` and `colno` are 1-indexed to agree with
             # text editors, so that must be corrected in indexing operations.
-            if first_lineno == prev_last_lineno:
+            if last_lineno < prev_last_lineno or (last_lineno == prev_last_lineno and last_colno <= prev_last_colno):
+                # Could have modified a value inside a collection, then
+                # replaced the collection
+                continue
+            elif first_lineno == prev_last_lineno:
                 new_source.append(source_lines[first_lineno-1][prev_last_colno:first_colno-1])
             else:
                 new_source.append(source_lines[prev_last_lineno-1][prev_last_colno:] + '\n')
