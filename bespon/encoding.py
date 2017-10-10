@@ -612,6 +612,8 @@ class BespONEncoder(object):
 
         if not inline:
             inline = self._nesting_depth >= self.inline_depth
+            if inline and value:
+                indent = indent[:-len(self.nesting_indent)]
         if inline:
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
@@ -631,7 +633,8 @@ class BespONEncoder(object):
         else:
             if value:
                 indent = indent[:-len(self.nesting_indent)]
-            if not at_line_start:
+                self._buffer[-1] = (' =\n')
+            elif not at_line_start:
                 self._buffer.append('\n')
             elif after_start_list_item:
                 self._buffer[-1] = self._buffer[-1].rstrip(indent_chars) + '\n'
@@ -721,7 +724,7 @@ class BespONEncoder(object):
 
         if not inline:
             inline = self._nesting_depth >= self.inline_depth
-            if value and inline:
+            if inline and value:
                 indent = indent[:-len(self.nesting_indent)]
         if inline:
             if explicit_type is None:
