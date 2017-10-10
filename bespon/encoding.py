@@ -400,7 +400,9 @@ class BespONEncoder(object):
                 return
             self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True)))
             return
-        if not at_line_start:
+        if value:
+            self._buffer[-1] = ' =\n' + indent
+        elif not at_line_start:
             indent += self.nesting_indent
             self._buffer.append('\n' + indent)
         template = '|{0}\n{1}{2}|{0}/'
@@ -492,7 +494,9 @@ class BespONEncoder(object):
                 return
             self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii')))
             return
-        if not at_line_start:
+        if value:
+            self._buffer[-1] = ' =\n' + indent
+        elif not at_line_start:
             indent += self.nesting_indent
             self._buffer.append('\n' + indent)
         tag = '(bytes)>\n' + indent
@@ -608,8 +612,6 @@ class BespONEncoder(object):
 
         if not inline:
             inline = self._nesting_depth >= self.inline_depth
-        if value and not inline:
-            indent = indent[:-len(self.nesting_indent)]
         if inline:
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
@@ -627,6 +629,8 @@ class BespONEncoder(object):
                 self._buffer.append(start_inline_list + '\n')
             internal_indent = indent + self.nesting_indent
         else:
+            if value:
+                indent = indent[:-len(self.nesting_indent)]
             if not at_line_start:
                 self._buffer.append('\n')
             elif after_start_list_item:
@@ -717,6 +721,8 @@ class BespONEncoder(object):
 
         if not inline:
             inline = self._nesting_depth >= self.inline_depth
+            if value and inline:
+                indent = indent[:-len(self.nesting_indent)]
         if inline:
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
@@ -733,7 +739,9 @@ class BespONEncoder(object):
             else:
                 self._buffer.append(start_inline_dict + '\n')
         else:
-            if not at_line_start:
+            if value:
+                self._buffer[-1] = ' =\n'
+            elif not at_line_start:
                 self._buffer.append('\n')
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
