@@ -530,12 +530,12 @@ class BespONEncoder(object):
     def _encode_doc_comment(self, obj,
                             margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
                             delim=None, block=None,
-                            comment_delim_seq_set=grammar.LIT_GRAMMAR['comment_delim_seq_set'],):
+                            doc_comment_delim_seq_set=grammar.LIT_GRAMMAR['doc_comment_delim_seq_set'],):
         if key_path:
             raise TypeError('Key paths do not take doc comments')
         if delim is None:
             delim = '###'
-        elif delim in comment_delim_seq_set:
+        elif delim in doc_comment_delim_seq_set:
             delim = '###'
         else:
             raise ValueError
@@ -543,7 +543,7 @@ class BespONEncoder(object):
             raise ValueError('Invalid literal code point')
         while delim in obj:
             delim += '###'
-            if delim not in comment_delim_seq_set:
+            if delim not in doc_comment_delim_seq_set:
                 raise ValueError('Cannot create comment since all valid escape sequences of "#" appear literally within the comment text')
         if not at_line_start:
             indent += self.nesting_indent
@@ -555,6 +555,16 @@ class BespONEncoder(object):
             self._buffer.append('|{0}\n{1}{2}{1}|{0}/'.format(delim, indent, indent.join(obj.splitlines(True))))
             return
         self._buffer.append('{0}{1}{0}'.format(delim, obj))
+
+
+    def _encode_line_comment(self, obj,
+                             margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                             delim=None, block=None):
+        if self._invalid_literal_unicode_re.search(obj) is not None:
+            raise ValueError('Invalid literal code point')
+        if self._line_terminator_unicode_re.search(obj):
+            raise ValueError('Line comments cannot contain literal newlines')
+        self._buffer.append('#' + obj)
 
 
     def _encode_alias(self, obj,
@@ -837,7 +847,7 @@ class BespONEncoder(object):
         return encoded
 
 
-    def partial_encode(self, obj,
+    def partial_encode(self, obj, dtype=None,
                        inline=False, at_line_start=True, indent='',
                        key=False, key_path=False,
                        delim=None, block=False, num_base=None,
@@ -848,14 +858,21 @@ class BespONEncoder(object):
         '''
         self._reset()
         self._nesting_depth = initial_nesting_depth
-        if (delim and num_base) or (key_path and not key):
-            raise TypeError('Invalid argument combination')
-        if delim or block:
-            self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
-        elif num_base:
-            self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, num_base=num_base)
+        if dtype is None:
+            if (delim and num_base) or (key_path and not key):
+                raise TypeError('Invalid argument combination')
+            if delim or block:
+                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
+            elif num_base:
+                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, num_base=num_base)
+            else:
+                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path)
+        elif dtype == 'doc_comment':
+            self._encode_doc_comment(obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
+        elif dtype == 'line_comment':
+            self._encode_line_comment(obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
         else:
-            self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path)
+            raise ValueError
         encoded = ''.join(self._buffer).replace('\n', '\n'+indent)
         self._free()
         return encoded

@@ -151,7 +151,7 @@ LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GR
 LIT_GRAMMAR['escaped_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['escaped_string_delim'] for n in range(1, 90+1) if n == 1 or n % 3 == 0)
 LIT_GRAMMAR['literal_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['literal_string_delim'] for n in range(1, 90+1) if n == 1 or n == 2 or n % 3 == 0)
 LIT_GRAMMAR['string_delim_seq_set'] = LIT_GRAMMAR['escaped_string_delim_seq_set'] | LIT_GRAMMAR['literal_string_delim_seq_set']
-LIT_GRAMMAR['comment_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['literal_string_delim'] for n in range(1, 90+1) if n == 1 or n % 3 == 0)
+LIT_GRAMMAR['doc_comment_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['comment_delim'] for n in range(1, 90+1) if n % 3 == 0)
 
 
 # Assemble regex grammar

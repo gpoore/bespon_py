@@ -117,6 +117,25 @@ class AstView(object):
 
 
     @property
+    def key_trailing_comment(self):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        trailing_comment_node = self._node.parent.key_nodes[self._node.index].trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @key_trailing_comment.setter
+    def key_trailing_comment(self, val):
+        if self._node.parent.implicit_type != 'dict':
+            raise AttributeError('Keys only exist in dict-like objects')
+        trailing_comment_node = self._node.parent.key_nodes[self._node.index].trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
+
+
+    @property
     def value(self):
         if self._node.implicit_type == 'alias':
             if self._node.target_node.implicit_type in ('dict', 'list'):
@@ -147,8 +166,23 @@ class AstView(object):
         self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
 
 
+
 class ScalarAstView(AstView):
     __slots__ = []
+
+    @property
+    def value_trailing_comment(self):
+        trailing_comment_node = self._node.trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @value_trailing_comment.setter
+    def value_trailing_comment(self, val):
+        trailing_comment_node = self._node.trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
 _ast_view_by_implicit_type = {}
@@ -182,6 +216,36 @@ class DictAstView(AstView):
         return ((key, self[key]) for key in self)
 
 
+    @property
+    def value_start_trailing_comment(self):
+        trailing_comment_node = self._node.start_trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @value_start_trailing_comment.setter
+    def value_start_trailing_comment(self, val):
+        trailing_comment_node = self._node.start_trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
+
+
+    @property
+    def value_end_trailing_comment(self):
+        trailing_comment_node = self._node.end_trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @value_end_trailing_comment.setter
+    def value_end_trailing_comment(self, val):
+        trailing_comment_node = self._node.end_trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
+
+
 class ListAstView(AstView):
     __slots__ = []
     _ast_view_by_implicit_type = _ast_view_by_implicit_type
@@ -204,6 +268,36 @@ class ListAstView(AstView):
 
     def __iter__(self):
         return (self[n] for n in range(len(self)))
+
+
+    @property
+    def value_start_trailing_comment(self):
+        trailing_comment_node = self._node.start_trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @value_start_trailing_comment.setter
+    def value_start_trailing_comment(self, val):
+        trailing_comment_node = self._node.start_trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
+
+
+    @property
+    def value_end_trailing_comment(self):
+        trailing_comment_node = self._node.end_trailing_comment
+        if trailing_comment_node is None:
+            return None
+        return trailing_comment_node.final_val
+
+    @value_end_trailing_comment.setter
+    def value_end_trailing_comment(self, val):
+        trailing_comment_node = self._node.end_trailing_comment
+        if trailing_comment_node is None:
+            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+        self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
 for implicit_type in load_types.IMPLICIT_SCALAR_TYPES:
@@ -240,12 +334,53 @@ class RoundtripAst(object):
         # added to `scalar_nodes` as created, they are already sorted.  Since
         # line comments are always last on a line, if they are added after all
         # other objects, then sorting is preserved.
-        objects_on_line = collections.defaultdict(list)
+        objects_starting_on_line = collections.defaultdict(list)
         for obj in self.scalar_nodes:
-            objects_on_line[obj.first_lineno].append(obj)
+            objects_starting_on_line[obj.first_lineno].append(obj)
         for obj in self.line_comments:
-            objects_on_line[obj.first_lineno].append(obj)
-        self.objects_on_line = objects_on_line
+            objects_starting_on_line[obj.first_lineno].append(obj)
+        self._objects_starting_on_line = objects_starting_on_line
+
+        last_node_on_line = {}
+        for node in self._iter_nodes():
+            if node.implicit_type not in ('dict', 'list', 'tag'):
+                if node.last_lineno not in last_node_on_line:
+                    last_node_on_line[node.last_lineno] = node
+                else:
+                    other_node = last_node_on_line[node.last_lineno]
+                    if node.last_colno > other_node.last_colno:
+                        last_node_on_line[node.last_lineno] = node
+            elif node.inline:
+                if node.last_lineno not in last_node_on_line:
+                    last_node_on_line[node.last_lineno] = node
+                else:
+                    other_node = last_node_on_line[node.last_lineno]
+                    if node.last_colno > other_node.last_colno:
+                        last_node_on_line[node.last_lineno] = node
+                if node.first_lineno == node.last_lineno:
+                    continue
+                elif node.first_lineno not in last_node_on_line:
+                    last_node_on_line[node.first_lineno] = node
+                else:
+                    other_node = last_node_on_line[node.first_lineno]
+                    if other_node.implicit_type not in ('dict', 'list', 'tag'):
+                        if node.first_colno > other_node.last_colno:
+                            last_node_on_line[node.first_lineno] = node
+                    elif ((node.first_lineno == other_node.last_lineno and node.first_colno > other_node.last_colno) or
+                            node.first_colno > other_node.first_colno):
+                        last_node_on_line[node.first_lineno] = node
+
+        for comment_node in self.line_comments:
+            if comment_node.first_lineno in last_node_on_line:
+                node = last_node_on_line[comment_node.first_lineno]
+                if node.implicit_type in ('int', 'float', 'complex', 'rational', 'str'):
+                    node.trailing_comment = comment_node
+                elif node.implicit_type in ('dict', 'list'):
+                    if node.last_lineno == comment_node.first_lineno:
+                        node.end_trailing_comment = comment_node
+                    else:
+                        node.start_trailing_comment = comment_node
+
 
         self._replacements = {}
 
@@ -264,6 +399,29 @@ class RoundtripAst(object):
 
     def __getattr__(self, name):
         return getattr(self._view, name)
+
+
+    def _iter_nodes(self):
+        return self._iter_node(self.root[0])
+
+
+    def _iter_node(self, node):
+        if node.implicit_type not in ('doc_comment', 'tag'):
+            if node.doc_comment is not None:
+                yield node.doc_comment
+            if node.tag is not None:
+                yield node.tag
+        yield node
+        if node.implicit_type == 'dict':
+            for k, v in zip(node.key_nodes.values(), node.values()):
+                for x in self._iter_node(k):
+                    yield x
+                for x in self._iter_node(v):
+                    yield x
+        elif node.implicit_type == 'list':
+            for v in node:
+                for x in self._iter_node(v):
+                    yield x
 
 
     def replace_val(self, path, obj):
@@ -296,7 +454,7 @@ class RoundtripAst(object):
             encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=continuation_indent, inline=pos.inline,
                                                       delim=pos.delim, block=pos.block, num_base=pos.num_base)
             if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
-                if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
+                if pos.first_colno < self._objects_starting_on_line[pos.first_lineno][-1].first_colno:
                     raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
         pos.final_val = obj
         if pos.implicit_type not in ('dict', 'list'):
@@ -335,12 +493,12 @@ class RoundtripAst(object):
                 continuation_indent = pos.indent
             else:
                 continuation_indent = pos.indent + self.encoder.nesting_indent
-        encoded_val = self.encoder.partial_encode(obj, continuation_indent,
+        encoded_val = self.encoder.partial_encode(obj, indent=continuation_indent,
                                                   key=True, key_path=key_path,
                                                   delim=pos.delim, block=pos.block,
                                                   num_base=pos.num_base)
         if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
-            if pos.first_colno < self.objects_on_line[pos.first_lineno][-1].first_colno:
+            if pos.first_colno < self._objects_starting_on_line[pos.first_lineno][-1].first_colno:
                 raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')
         # Need to update the dict so that the key ordering is kept, the new
         # key is recognized as a key, and the old key is removed.  The
@@ -381,7 +539,14 @@ class RoundtripAst(object):
                 continuation_indent = pos.indent
             else:
                 continuation_indent = pos.indent + self.encoder.nesting_indent
-        encoded_val = self.encoder._encode_doc_comment(obj, continuation_indent, delim=pos.delim, block=pos.block)
+        encoded_val = self.encoder.partial_encode(obj, dtype='doc_comment', indent=continuation_indent, delim=pos.delim, block=pos.block)
+        self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
+
+
+    def _replace_trailing_comment_at_pos(self, pos, obj):
+        if not isinstance(obj, str):
+            raise TypeError
+        encoded_val = self.encoder.partial_encode(obj, dtype='line_comment')
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
 
 

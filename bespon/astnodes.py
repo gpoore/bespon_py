@@ -347,13 +347,15 @@ class FullScalarNode(object):
                  ['view', 'index', 'parent',
                   'continuation_indent', 'raw_val', 'num_base',
                   'key_path', 'key_path_occurrences',
-                  'assign_key_val_lineno', 'assign_key_val_colno'])
+                  'assign_key_val_lineno', 'assign_key_val_colno',
+                  'trailing_comment'])
 
     def __init__(self, state, first_lineno, first_colno, last_lineno, last_colno,
                  implicit_type, delim=None, block=False, num_base=None,
                  continuation_indent=None,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals):
         self.view = None
+        self.trailing_comment = None
         self.num_base = num_base
         self.continuation_indent = continuation_indent
         self.key_path = None
@@ -444,7 +446,8 @@ class ListlikeNode(list):
     List-like collection.
     '''
     __slots__ = (_node_common_slots + _node_data_slots +
-                 _node_collection_slots + ['internal_indent'])
+                 _node_collection_slots +
+                 ['internal_indent', 'start_trailing_comment', 'end_trailing_comment'])
 
     def __init__(self, state_or_scalar_node,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -453,6 +456,8 @@ class ListlikeNode(list):
         list.__init__(self)
 
         self.view = None
+        self.start_trailing_comment = None
+        self.end_trailing_comment = None
 
         self.implicit_type = 'list'
         self.key_path_parent = key_path_parent
@@ -590,7 +595,7 @@ class DictlikeNode(collections.OrderedDict):
     '''
     __slots__ = (_node_common_slots + _node_data_slots +
                  _node_collection_slots +
-                 ['_next_key', '_awaiting_val', 'key_nodes'])
+                 ['_next_key', '_awaiting_val', 'key_nodes', 'start_trailing_comment', 'end_trailing_comment'])
 
     def __init__(self, state_or_scalar_node,
                  set_tag_doc_comment_externals=_set_tag_doc_comment_externals,
@@ -599,6 +604,8 @@ class DictlikeNode(collections.OrderedDict):
         OrderedDict.__init__(self)
 
         self.view = None
+        self.start_trailing_comment = None
+        self.end_trailing_comment = None
 
         self.implicit_type = 'dict'
         self.key_path_parent = key_path_parent

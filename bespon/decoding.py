@@ -838,7 +838,7 @@ class BespONDecoder(object):
                     m_end = m.end(group)
                     line = line[m_end:]
                     content_lines.append(line_content)
-                    last_colno = len_continuation_indent + m_end - 1
+                    last_colno = len_continuation_indent + m_end
                     break
             content_lines.append(line)
             line = next(state.source_lines_iter, None)

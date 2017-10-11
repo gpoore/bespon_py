@@ -56,7 +56,7 @@ This class has two methods that allow data to be modified.
   must have the same type as the object it is replacing.  (There is also
   preliminary support for replacing lists and dicts.)
 
-There is also preliminary support for ``__getitem__``-style access
+There is also **preliminary** support for ``__getitem__``-style access
 (``ast['key']``, etc.).  Data accessed in this manner has the following
 methods.
 
@@ -71,6 +71,13 @@ methods.
 * ``value_doc_comment``:  Doc comment of the value at the current location.
   ``None`` if there is no doc comment.  Currently only supports assignment for
   existing doc comments.
+* ``value_trailing_comment``:  Trailing line comment (``#comment``) that
+  immediately follows a non-collection type on the same line.
+* ``value_start_trailing_comment``:  Trailing line comment that immediately
+  follows the start of a collection in inline-style syntax ("``{``" or
+  "``[``").
+* ``value_end_trailing_comment``:  Trailing line comment that immediately
+  follows the end of a collection in inline-style syntax ("``}``" or "``]``").
 
 After data in a ``RoundtripAst`` instance has been modified, it may be encoded
 back into a string with the ``dumps()`` method.  An example is shown below.
