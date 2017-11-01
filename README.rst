@@ -5,7 +5,7 @@
 
 
 The ``bespon`` package for Python encodes and decodes data in the
-`BespON <https://bespon.org>`_ format.
+`BespON format <https://bespon.org>`_.
 
 
 
@@ -22,10 +22,9 @@ Similarly, dumping data to a file or string:
 * ``bespon.dump(<obj>, <file-like object>)``
 * ``bespon.dumps(<obj>)``
 
-At the moment, only dumping in indentation-style syntax is possible.  Support
-for other styles is under development.  Only dicts, lists, Unicode
-strings, byte strings, floats, ints, bools, and ``None`` are currently
-supported for dumping.  Loading supports additional data types.
+Only dicts, lists, Unicode strings, byte strings, floats, ints, bools, and
+``None`` are supported for dumping by default.  See the ``extended_types``
+and ``python_types`` keywords for optional support of additional types.
 
 
 
@@ -33,8 +32,7 @@ Lossless round-trip support
 ===========================
 
 There is also support for lossless round-tripping.  Data can be loaded,
-values can be modified, and then data can be saved again with minimal
-impact on the data file layout.
+modified, and then saved with minimal impact on the data file layout.
 
 Data can be loaded from a file or string into an instance of the
 ``RoundtripAst`` class.
@@ -49,25 +47,31 @@ This class has two methods that allow data to be modified.
   tuple consisting of dict keys and list indices.  ``<obj>`` must currently be
   a Unicode string, float, int, or bool, and must have the same type as the
   object it is replacing.  (There is also preliminary support for replacing
-  lists and dicts.)
+  lists and dicts.  Support for changing data types is coming soon.)
 * ``replace_key(<path>, <obj>)`` This replaces the dict key at the end of
   ``<path>`` with the new key ``<obj>`` (which will map to the same value as
   the replaced key).  ``<obj>`` must be a Unicode string, int, or bool, and
   must have the same type as the object it is replacing.  (There is also
-  preliminary support for replacing lists and dicts.)
+  preliminary support for replacing lists and dicts.  Support for changing
+  data types is coming soon.)
 
 There is also **preliminary** support for ``__getitem__``-style access
 (``ast['key']``, etc.).  Data accessed in this manner has the following
-methods.
+attributes.
 
 * ``key``:  Key of the current location, if in a dict.
-  Allows assignment.  For example, ``ast['key'].key = 'new_key'`` will rename
-  the key.
+  Allows assignment, as long as the new object is of the same type as the old
+  object, and the type is supported.  (Support for changing data types is
+  coming soon.)  For example, ``ast['key'].key = 'new_key'`` will rename the
+  key.
 * ``key_doc_comment``:  Doc comment of key, if in a dict.  ``None`` if there
   is no doc comment.  Currently only supports assignment for existing doc
   comments.
+* ``key_trailing_comment``:  Trailing line comment (``#comment``) that
+  immediately follows a key on the same line.
 * ``value``:  Value of the current location.  Can be assigned, as long as the
   new object is of the same type as the old object, and the type is supported.
+  (Support for changing data types is coming soon.)
 * ``value_doc_comment``:  Doc comment of the value at the current location.
   ``None`` if there is no doc comment.  Currently only supports assignment for
   existing doc comments.
@@ -130,11 +134,6 @@ This example illustrates several of BespON's round-trip capabilities.
 * As soon as a key is modified, the new key must be used for further
   modifications.  The old key is invalid.
 
-Currently, round-trip support is limited to changing the value of any Unicode
-string, float, int, or bool, without changing the type.  (There is also
-preliminary support for replacing lists and dicts.)  Support for changing
-data types and for more general data manipulation will be added in the future.
-
 
 
 Advanced loading and dumping
@@ -179,7 +178,8 @@ customize data handling.
     bytes-compatible backslash escapes are allowed in the string.
 
   * ``mutable`` (boolean, default ``False``):  For collection types.
-    Specifies whether instances are mutable after being created.  Mutable collections have greater flexibility in terms of circular references.
+    Specifies whether instances are mutable after being created.  Mutable
+    collections have greater flexibility in terms of circular references.
 
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
   for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
@@ -198,18 +198,20 @@ customize data handling.
 * ``integers`` (boolean, default ``True``):  Whether integers are permitted.
   Otherwise they are interpreted as floats.
 
-* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
-  identifier-style strings are allowed unquoted.
+* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
+  depth for collections.  When ``circular_references=True``, this is the
+  maximum permitted depth before a circular reference is encountered.
 
 * ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
   points are allowed to appear literally in the source (without being
   represented via backslash-escapes).
 
+* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
+  identifier-style strings are allowed unquoted.
+
 * ``python_types`` (boolean, default ``False``):  Enable preliminary support
   for Python-specific data types.  Currently this only supports ``tuple``.
 
-* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
-  depth for collections.
 
 
 **Dumping**
@@ -217,24 +219,16 @@ customize data handling.
 * ``aliases`` (boolean, default ``True``):  Allow aliases so that a
   collection may appear multiple times within data.
 
+* ``baseclass`` (boolean, default ``False``):  Encode unknown data types as
+  their baseclasses if supported.  For example, ``collections.OrderedDict``
+  would be encoded as a ``dict``, and a custom integer class would be encoded
+  as ``int``.
+
 * ``circular_references`` (boolean, default ``False``):  Allow aliases to
   create circular references.
 
-* ``hex_floats`` (boolean, default ``False``):  Whether floats are
-  dumped in hex form.
-
-* ``integers`` (boolean, default ``True``):  Whether integers are permitted.
-  Otherwise they are interpreted as floats.
-
-* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
-  depth of collections.
-
-* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
-  identifier-style strings are allowed unquoted.
-
-* ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
-  points are allowed to appear literally in the source (without being
-  represented via backslash-escapes).
+* ``compact_inline`` (boolean, default ``False``):  In inline syntax, put
+  everything on one line to make it as compact as possible.
 
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
   for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
@@ -246,19 +240,14 @@ customize data handling.
   denominator must both be decimal integers, and any sign must come before the
   fraction.
 
-* ``python_types`` (boolean, default ``False``):  Enable preliminary support
-  for Python-specific data types.  Currently this only supports ``tuple``.
+* ``flush_start_list_item`` (string, default ``*<space>``):  How a list item
+  starts in indentation-style syntax when it is at the top level, within
+  another list, or otherwise in a context when the ``*`` must be aligned flush
+  with a designated margin.  Must start with a single ``*`` followed by zero
+  or more spaces or tabs.
 
-* ``baseclass`` (boolean, default ``False``):  Encode unknown data types as
-  their baseclasses if supported.  For example, ``collections.OrderedDict``
-  would be encoded as a ``dict``, and a custom integer class would be encoded
-  as ``int``.
-
-* ``trailing_commas`` (boolean, default ``False``):  In inline syntax, leave
-  a comma after the last item in a collection.  This can minimize diffs.
-
-* ``compact_inline`` (boolean, default ``False``):  In inline syntax, put
-  everything on one line to make it as compact as possible.
+* ``hex_floats`` (boolean, default ``False``):  Whether floats are
+  dumped in hex form.
 
 * ``inline_depth`` (boolean, default ``max_nesting_depth+1``):  Nesting depth
   at which to switch from indentation-style to inline-style syntax.  A value
@@ -266,19 +255,33 @@ customize data handling.
   collection indentation-style but everything inside it inline-style, and
   so forth.
 
+* ``integers`` (boolean, default ``True``):  Whether integers are permitted.
+  Otherwise they are interpreted as floats.
+
+* ``max_nesting_depth`` (int, default ``100``):  Maximum permitted nesting
+  depth of collections.  When ``circular_references=True``, this is the
+  maximum permitted depth before a circular reference is encountered.
+
 * ``nesting_indent`` (string, default ``<space><space><space><space>``):
   Indentation added for each nesting level.
+
+* ``only_ascii_source`` (boolean, default ``False``):  Whether non-ASCII code
+  points are allowed to appear literally in the source (without being
+  represented via backslash-escapes).
+
+* ``only_ascii_unquoted`` (boolean, default ``True``):  Whether non-ASCII
+  identifier-style strings are allowed unquoted.
+
+* ``python_types`` (boolean, default ``False``):  Enable preliminary support
+  for Python-specific data types.  Currently this only supports ``tuple``.
+
+* ``trailing_commas`` (boolean, default ``False``):  In inline syntax, leave
+  a comma after the last item in a collection.  This can minimize diffs.
 
 * ``start_list_item`` (string, default ``<space><space>*<space>``):  How a
   list item starts in indentation-style syntax.  This must begin with one or
   more spaces or tabs and contain a single ``*``.  The leading spaces or tabs
   define the relative indentation from the previous indentation level.
-
-* ``flush_start_list_item`` (string, default ``*<space>``):  How a list item
-  starts in indentation-style syntax when it is at the top level, within
-  another list, or otherwise in a context when the ``*`` must be aligned flush
-  with a designated margin.  Must start with a single ``*`` followed by zero
-  or more spaces or tabs.
 
 
 
