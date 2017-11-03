@@ -44,16 +44,16 @@ This class has two methods that allow data to be modified.
 
 * ``replace_val(<path>, <obj>)`` This replaces the object currently located
   at ``<path>`` within the data with ``<obj>``.  ``<path>`` must be a list or
-  tuple consisting of dict keys and list indices.  ``<obj>`` must currently be
-  a Unicode string, float, int, or bool, and must have the same type as the
-  object it is replacing.  (There is also preliminary support for replacing
-  lists and dicts.  Support for changing data types is coming soon.)
+  tuple consisting of dict keys and list indices.  ``<obj>`` must have the
+  same type as the object it is replacing.  There is **experimental** support
+  for replacing dicts and lists; all other types are fully supported.
 * ``replace_key(<path>, <obj>)`` This replaces the dict key at the end of
   ``<path>`` with the new key ``<obj>`` (which will map to the same value as
   the replaced key).  ``<obj>`` must be a Unicode string, int, or bool, and
-  must have the same type as the object it is replacing.  (There is also
-  preliminary support for replacing lists and dicts.  Support for changing
-  data types is coming soon.)
+  must have the same type as the object it is replacing.
+
+**Experimental** support for changing data types may be enabled by loading
+data with the option ``enforce_types=False``.
 
 There is also **preliminary** support for ``__getitem__``-style access
 (``ast['key']``, etc.).  Data accessed in this manner has the following
@@ -61,9 +61,8 @@ attributes.
 
 * ``key``:  Key of the current location, if in a dict.
   Allows assignment, as long as the new object is of the same type as the old
-  object, and the type is supported.  (Support for changing data types is
-  coming soon.)  For example, ``ast['key'].key = 'new_key'`` will rename the
-  key.
+  object, and the type is supported.  For example, ``ast['key'].key =
+  'new_key'`` will rename the key.
 * ``key_doc_comment``:  Doc comment of key, if in a dict.  ``None`` if there
   is no doc comment.  Currently only supports assignment for existing doc
   comments.
@@ -71,7 +70,6 @@ attributes.
   immediately follows a key on the same line.
 * ``value``:  Value of the current location.  Can be assigned, as long as the
   new object is of the same type as the old object, and the type is supported.
-  (Support for changing data types is coming soon.)
 * ``value_doc_comment``:  Doc comment of the value at the current location.
   ``None`` if there is no doc comment.  Currently only supports assignment for
   existing doc comments.

@@ -33,6 +33,7 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
     Load data from a file-like object into RoundtripAst.
     '''
     encoder = kwargs.pop('encoder', None)
+    enforce_types = kwargs.pop('enforce_types', None)
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(fp.read())
@@ -40,7 +41,7 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
             ast = decoding.BespONDecoder(**kwargs).decode_to_ast(fp.read())
     else:
         ast = cls(**kwargs).decode_to_ast(fp.read())
-    return RoundtripAst(ast, encoder=encoder)
+    return RoundtripAst(ast, encoder=encoder, enforce_types=enforce_types)
 
 
 def loads_roundtrip_ast(s, cls=None, **kwargs):
@@ -48,6 +49,7 @@ def loads_roundtrip_ast(s, cls=None, **kwargs):
     Load data from a Unicode string into RoundtripAst.
     '''
     encoder = kwargs.pop('encoder', None)
+    enforce_types = kwargs.pop('enforce_types', None)
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(s)
@@ -55,7 +57,7 @@ def loads_roundtrip_ast(s, cls=None, **kwargs):
             ast = decoding.BespONDecoder(**kwargs).decode_to_ast(s)
     else:
         ast = cls(**kwargs).decode_to_ast(s)
-    return RoundtripAst(ast, encoder=encoder)
+    return RoundtripAst(ast, encoder=encoder, enforce_types=enforce_types)
 
 
 
@@ -313,7 +315,7 @@ class RoundtripAst(object):
     Abstract representation of loaded data that may be modified and then
     encoded to produce a minimal diff compared to the original source.
     '''
-    def __init__(self, ast, encoder=None):
+    def __init__(self, ast, encoder=None, enforce_types=None):
         self.source = ast.source
         self.source_name = self.source.source_name
         self.root = ast.root
@@ -327,6 +329,12 @@ class RoundtripAst(object):
             self.encoder = encoding.BespONEncoder()
         elif isinstance(encoder, encoding.BespONEncoder):
             self.encoder = encoder
+        else:
+            raise TypeError
+        if enforce_types is None:
+            self.enforce_types = True
+        elif enforce_types in (True, False):
+            self.enforce_types = enforce_types
         else:
             raise TypeError
 
@@ -439,19 +447,17 @@ class RoundtripAst(object):
     def _replace_val_at_pos(self, pos, obj):
         if pos.tag is not None:
             raise TypeError('Value replacement is not currently supported for tagged objects')
-        if type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
-            raise TypeError('Value replacement is only allowed for values of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
+        if self.enforce_types and type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
+            raise TypeError('Value replacement is only allowed for values of the same type (enforce_types=True); trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         if pos.implicit_type in ('dict', 'list'):
-            encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=pos.indent, inline=pos.inline,
+            encoded_val = self.encoder.partial_encode(obj, flush_margin=pos.parent.implicit_type == 'list',
+                                                      after_start_list_item=not pos.inline and pos.parent.implicit_type == 'list',
+                                                      inline=pos.inline, at_line_start=pos.at_line_start, indent=pos.indent,
                                                       initial_nesting_depth=pos.nesting_depth)
         else:
-            continuation_indent = pos.continuation_indent
-            if continuation_indent is None:
-                if pos.at_line_start:
-                    continuation_indent = pos.indent
-                else:
-                    continuation_indent = pos.indent + self.encoder.nesting_indent
-            encoded_val = self.encoder.partial_encode(obj, at_line_start=pos.at_line_start, indent=continuation_indent, inline=pos.inline,
+            encoded_val = self.encoder.partial_encode(obj, flush_margin=pos.parent.implicit_type == 'list',
+                                                      after_start_list_item=not pos.inline and pos.parent.implicit_type == 'list',
+                                                      inline=pos.inline, at_line_start=pos.at_line_start, indent=pos.indent,
                                                       delim=pos.delim, block=pos.block, num_base=pos.num_base)
             if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
                 if pos.first_colno < self._objects_starting_on_line[pos.first_lineno][-1].first_colno:
@@ -484,19 +490,13 @@ class RoundtripAst(object):
         pos = pos.key_nodes[key]
         if pos.tag is not None:
             raise TypeError('Key replacement is not currently supported for tagged objects')
-        if type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
-            raise TypeError('Key replacement is only allowed for keys of the same type; trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
+        if self.enforce_types and type(obj) != type(pos.final_val) and not (self.encoder.baseclass and issubclass(type(obj), type(pos.final_val))):
+            raise TypeError('Key replacement is only allowed for keys of the same type (enforce_types=True); trying to replace {0} with {1}'.format(type(pos.final_val), type(obj)))
         key_path = False if pos.key_path is None else True
-        continuation_indent = pos.continuation_indent
-        if continuation_indent is None:
-            if pos.at_line_start:
-                continuation_indent = pos.indent
-            else:
-                continuation_indent = pos.indent + self.encoder.nesting_indent
-        encoded_val = self.encoder.partial_encode(obj, indent=continuation_indent,
+        encoded_val = self.encoder.partial_encode(obj,
+                                                  inline=pos.inline, at_line_start=pos.at_line_start, indent=pos.indent,
                                                   key=True, key_path=key_path,
-                                                  delim=pos.delim, block=pos.block,
-                                                  num_base=pos.num_base)
+                                                  delim=pos.delim, block=pos.block, num_base=pos.num_base)
         if isinstance(obj, str) and self.encoder.bidi_rtl_re.search(encoded_val) is not None and self.encoder.bidi_rtl_re.search(pos.raw_val) is None:
             if pos.first_colno < self._objects_starting_on_line[pos.first_lineno][-1].first_colno:
                 raise ValueError('Replacing strings that do not contain right-to-left code points with strings that do contain them is currently not supported when this would require reformatting to avoid a following object on the same line')

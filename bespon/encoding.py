@@ -94,11 +94,15 @@ class BespONEncoder(object):
         self.flush_start_list_item = flush_start_list_item
         before_open, after_open = start_list_item.split(grammar.LIT_GRAMMAR['open_indentation_list'])
         self._start_list_item_indent = before_open
+        self._start_list_item_open = start_list_item[:-len(after_open)]
+        self._list_item_leading = after_open
         if before_open[-1:] == '\t' and after_open[:1] == '\t':
             self._list_item_indent = start_list_item.replace(grammar.LIT_GRAMMAR['open_indentation_list'], '')
         else:
             self._list_item_indent = start_list_item.replace(grammar.LIT_GRAMMAR['open_indentation_list'], '\x20')
         self._flush_start_list_item_indent = ''
+        self._flush_start_list_item_open = flush_start_list_item[0]
+        self._flush_list_item_leading = flush_start_list_item[1:]
         if flush_start_list_item[1:2] == '\t':
             self._flush_list_item_indent = flush_start_list_item[1:]
         else:
@@ -195,20 +199,22 @@ class BespONEncoder(object):
 
 
     def _encode_none(self, obj,
-                     margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                     flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                      none_type=grammar.LIT_GRAMMAR['none_type']):
+        self._buffer.append(leading)
         self._buffer.append(none_type)
 
 
     def _encode_bool(self, obj,
-                     margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                     flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                      bool_true=grammar.LIT_GRAMMAR['bool_true'],
                      bool_false=grammar.LIT_GRAMMAR['bool_false']):
+        self._buffer.append(leading)
         self._buffer.append(bool_true if obj else bool_false)
 
 
     def _encode_int(self, obj,
-                    margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                    flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                     num_base=10,
                     hex_template='{0}{{0:0x}}'.format(grammar.LIT_GRAMMAR['hex_prefix']),
                     oct_template='{0}{{0:0o}}'.format(grammar.LIT_GRAMMAR['oct_prefix']),
@@ -216,6 +222,7 @@ class BespONEncoder(object):
                     str=str):
         if key_path:
             raise TypeError('Ints are not valid in key paths')
+        self._buffer.append(leading)
         if num_base == 10:
             self._buffer.append(str(obj))
             return
@@ -238,12 +245,13 @@ class BespONEncoder(object):
 
 
     def _encode_float(self, obj,
-                      margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                      flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                       num_base=None,
                       hex_exponent_letter=grammar.LIT_GRAMMAR['hex_exponent_letter'][0],
                       str=str):
         if key:
             raise TypeError('Floats are not valid dict keys')
+        self._buffer.append(leading)
         if self.hex_floats:
             if num_base is not None:
                 if num_base != 16:
@@ -264,7 +272,7 @@ class BespONEncoder(object):
 
 
     def _encode_complex(self, obj,
-                        margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                        flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                         num_base=None,
                         hex_exponent_letter=grammar.LIT_GRAMMAR['hex_exponent_letter'][0],
                         dec_float_zero=grammar.LIT_GRAMMAR['dec_float_zero'],
@@ -273,6 +281,7 @@ class BespONEncoder(object):
                         str=str):
         if key:
             raise TypeError('Complex floats are not valid dict keys')
+        self._buffer.append(leading)
         if self.hex_floats:
             if num_base is not None:
                 if num_base != 16:
@@ -325,15 +334,16 @@ class BespONEncoder(object):
 
 
     def _encode_rational(self, obj,
-                         margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                         flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                          str=str):
         if key:
             raise TypeError('Rational numbers are not valid dict keys')
+        self._buffer.append(leading)
         self._buffer.append(str(obj))
 
 
     def _encode_str(self, obj,
-                    margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                    flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                     delim=None, block=None,
                     string_delim_seq_set=grammar.LIT_GRAMMAR['string_delim_seq_set'],
                     len=len):
@@ -342,6 +352,7 @@ class BespONEncoder(object):
         if delim is None:
             if self._unquoted_str_re.match(obj) is not None:
                 self._scalar_bidi_rtl = self.bidi_rtl_re.search(obj) is not None
+                self._buffer.append(leading)
                 self._buffer.append(obj)
                 return
             delim_char = '"'
@@ -354,10 +365,12 @@ class BespONEncoder(object):
                 raise ValueError('String does not match the required pattern for a key path element')
             raise ValueError('Key path elements cannot be quoted')
         if inline and self.compact_inline:
+            self._buffer.append(leading)
             self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"', inline=True, bidi_rtl=True)))
             return
         if self._line_terminator_unicode_re.search(obj) is None:
             self._scalar_bidi_rtl = self.bidi_rtl_re.search(obj) is not None
+            self._buffer.append(leading)
             if delim_char == "'":
                 if "'" not in obj:
                     self._buffer.append("'{0}'".format(self._escape_unicode(obj, "'")))
@@ -400,9 +413,9 @@ class BespONEncoder(object):
                 return
             self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', multidelim=True)))
             return
-        if value:
-            self._buffer[-1] = ' =\n' + indent
-        elif not at_line_start:
+        if at_line_start:
+            self._buffer.append(leading)
+        else:
             indent += self.nesting_indent
             self._buffer.append('\n' + indent)
         template = '|{0}\n{1}{2}|{0}/'
@@ -434,7 +447,7 @@ class BespONEncoder(object):
 
 
     def _encode_bytes(self, obj,
-                      margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                      flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                       delim=None, block=None,
                       string_delim_seq_set=grammar.LIT_GRAMMAR['string_delim_seq_set']):
         if key_path:
@@ -442,6 +455,7 @@ class BespONEncoder(object):
         tag = '(bytes)> '
         if delim is None:
             if self._unquoted_bytes_re.match(obj) is not None:
+                self._buffer.append(leading)
                 self._buffer.append(tag + obj.decode('ascii'))
                 return
             delim_char = '"'
@@ -451,7 +465,12 @@ class BespONEncoder(object):
             delim_char_bytes = delim_char.encode('ascii')
         else:
             raise ValueError
+        if inline and self.compact_inline:
+            self._buffer.append(leading)
+            self._buffer.append('"{0}"'.format(self._escape_bytes(obj, '"', inline=True).decode('ascii')))
+            return
         if self._line_terminator_bytes_re.search(obj) is None:
+            self._buffer.append(leading)
             if delim_char == "'":
                 if b"'" not in obj:
                     self._buffer.append(tag + "'{0}'".format(self._escape_bytes(obj, "'").decode('ascii')))
@@ -494,9 +513,9 @@ class BespONEncoder(object):
                 return
             self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', multidelim=True).decode('ascii')))
             return
-        if value:
-            self._buffer[-1] = ' =\n' + indent
-        elif not at_line_start:
+        if at_line_start:
+            self._buffer.append(leading)
+        else:
             indent += self.nesting_indent
             self._buffer.append('\n' + indent)
         tag = '(bytes)>\n' + indent
@@ -528,7 +547,7 @@ class BespONEncoder(object):
 
 
     def _encode_doc_comment(self, obj,
-                            margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                            flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                             delim=None, block=None,
                             doc_comment_delim_seq_set=grammar.LIT_GRAMMAR['doc_comment_delim_seq_set'],):
         if key_path:
@@ -558,17 +577,18 @@ class BespONEncoder(object):
 
 
     def _encode_line_comment(self, obj,
-                             margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                             flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                              delim=None, block=None):
         if self._invalid_literal_unicode_re.search(obj) is not None:
             raise ValueError('Invalid literal code point')
         if self._line_terminator_unicode_re.search(obj):
             raise ValueError('Line comments cannot contain literal newlines')
+        self._buffer.append(leading)
         self._buffer.append('#' + obj)
 
 
     def _encode_alias(self, obj,
-                      margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                      flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                       alias_prefix=grammar.LIT_GRAMMAR['alias_prefix'],
                       alias_basename='obj', id=id, str=str):
         id_obj = id(obj)
@@ -584,11 +604,12 @@ class BespONEncoder(object):
                 self._scalar_bidi_rtl = self.bidi_rtl_re.search(alias_value) is not None
             self._alias_values[id_obj] = alias_value
             self._buffer[self._alias_def_buffer_index[id_obj]] = self._alias_def_template[id_obj].format(alias_value)
-        self._buffer.append(alias_prefix+alias_value)
+        self._buffer.append(leading)
+        self._buffer.append(alias_prefix + alias_value)
 
 
     def _encode_list(self, obj,
-                     margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                     flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                      explicit_type=None,
                      start_inline_list=grammar.LIT_GRAMMAR['start_inline_list'],
                      end_inline_list=grammar.LIT_GRAMMAR['end_inline_list'],
@@ -604,7 +625,14 @@ class BespONEncoder(object):
         self._obj_path[id_obj] = None
         self._alias_values[id_obj] = None
 
+        if not inline:
+            inline = self._nesting_depth >= self.inline_depth
+        self._nesting_depth += 1
+        if self._nesting_depth > self.max_nesting_depth:
+            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
+
         if not obj:
+            self._buffer.append(leading)
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
                 self._buffer.append('')
@@ -620,11 +648,8 @@ class BespONEncoder(object):
             self._nesting_depth -= 1
             return
 
-        if not inline:
-            inline = self._nesting_depth >= self.inline_depth
-            if inline and value:
-                indent = indent[:-len(self.nesting_indent)]
         if inline:
+            self._buffer.append(leading)
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
                 self._buffer.append('')
@@ -635,26 +660,38 @@ class BespONEncoder(object):
                 self._buffer.append('')
                 self._buffer.append(')>\x20')
                 self._alias_def_template[id_obj] = ', label={0}'
+            internal_indent = indent + self.nesting_indent
             if self.compact_inline:
                 self._buffer.append(start_inline_list)
+                for item in obj:
+                    self._encode_funcs[type(item)](item, inline=inline, at_line_start=False, indent=internal_indent)
+                    self._buffer.append(',\x20')
+                if self.trailing_commas:
+                    self._buffer[-1] = ','
+                else:
+                    self._buffer[-1] = ''
+                self._buffer.append(end_inline_list)
             else:
                 self._buffer.append(start_inline_list + '\n')
-            internal_indent = indent + self.nesting_indent
+                for item in obj:
+                    self._buffer.append(internal_indent)
+                    self._encode_funcs[type(item)](item, inline=inline, indent=internal_indent)
+                    self._buffer.append(',\n')
+                if not self.trailing_commas:
+                    self._buffer[-1] = '\n'
+                self._buffer.append(indent + end_inline_list)
         else:
-            if value:
-                indent = indent[:-len(self.nesting_indent)]
-                self._buffer[-1] = (' =\n')
-            elif not at_line_start:
+            if after_start_list_item or not at_line_start:
                 self._buffer.append('\n')
-            elif after_start_list_item:
-                self._buffer[-1] = self._buffer[-1].rstrip(indent_chars) + '\n'
-            if margin or after_start_list_item:
-                start_list_item = self.flush_start_list_item
+            if flush_margin or after_start_list_item:
                 start_list_item_indent = self._flush_start_list_item_indent
+                start_list_item_open = self._flush_start_list_item_open
+                internal_leading = self._flush_list_item_leading
                 internal_indent = indent + self._flush_list_item_indent
             else:
-                start_list_item = self.start_list_item
                 start_list_item_indent = self._start_list_item_indent
+                start_list_item_open = self._start_list_item_open
+                internal_leading = self._list_item_leading
                 internal_indent = indent + self._list_item_indent
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
@@ -666,33 +703,9 @@ class BespONEncoder(object):
                 self._buffer.append('')
                 self._buffer.append(')>\n')
                 self._alias_def_template[id_obj] = ', label={0}'
-
-        self._nesting_depth += 1
-        if self._nesting_depth > self.max_nesting_depth:
-            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
-
-        if inline:
-            if self.compact_inline:
-                for item in obj:
-                    self._encode_funcs[type(item)](item, inline=inline, at_line_start=False, indent=internal_indent)
-                    self._buffer.append(',\x20')
-                if self.trailing_commas:
-                    self._buffer[-1] = ','
-                else:
-                    self._buffer[-1] = ''
-                self._buffer.append(end_inline_list)
-            else:
-                for item in obj:
-                    self._buffer.append(internal_indent)
-                    self._encode_funcs[type(item)](item, inline=inline, indent=internal_indent)
-                    self._buffer.append(',\n')
-                if not self.trailing_commas:
-                    self._buffer[-1] = '\n'
-                self._buffer.append(indent + end_inline_list)
-        else:
             for item in obj:
-                self._buffer.append(indent + start_list_item)
-                self._encode_funcs[type(item)](item, inline=inline, after_start_list_item=True, indent=internal_indent)
+                self._buffer.append(indent + start_list_item_open)
+                self._encode_funcs[type(item)](item, inline=inline, after_start_list_item=True, indent=internal_indent, leading=internal_leading)
                 self._buffer.append('\n')
             self._buffer.pop()
 
@@ -701,7 +714,7 @@ class BespONEncoder(object):
 
 
     def _encode_dict(self, obj,
-                     margin=False, inline=False, at_line_start=True, indent='', after_start_list_item=False, key=False, key_path=False, value=False,
+                     flush_margin=False, inline=False, at_line_start=True, indent='', leading='', after_start_list_item=False, key=False, key_path=False, value=False,
                      explicit_type=None,
                      start_inline_dict=grammar.LIT_GRAMMAR['start_inline_dict'],
                      end_inline_dict=grammar.LIT_GRAMMAR['end_inline_dict'],
@@ -716,7 +729,14 @@ class BespONEncoder(object):
         self._obj_path[id_obj] = None
         self._alias_values[id_obj] = None
 
+        if not inline:
+            inline = self._nesting_depth >= self.inline_depth
+        self._nesting_depth += 1
+        if self._nesting_depth > self.max_nesting_depth:
+            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
+
         if not obj:
+            self._buffer.append(leading)
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
                 self._buffer.append('')
@@ -732,11 +752,8 @@ class BespONEncoder(object):
             self._nesting_depth -= 1
             return
 
-        if not inline:
-            inline = self._nesting_depth >= self.inline_depth
-            if inline and value:
-                indent = indent[:-len(self.nesting_indent)]
         if inline:
+            self._buffer.append(leading)
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
                 self._buffer.append('')
@@ -747,15 +764,41 @@ class BespONEncoder(object):
                 self._buffer.append('')
                 self._buffer.append(')>\x20')
                 self._alias_def_template[id_obj] = ', label={0}'
+            internal_indent = indent + self.nesting_indent
             if self.compact_inline:
                 self._buffer.append(start_inline_dict)
+                for k, v in obj.items():
+                    self._encode_funcs[type(k)](k, inline=inline, at_line_start=False, indent=internal_indent, key=True)
+                    self._buffer.append(' =')
+                    self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=internal_indent, leading='\x20', value=True)
+                    self._buffer.append(',\x20')
+                if self.trailing_commas:
+                    self._buffer[-1] = ','
+                else:
+                    self._buffer[-1] = ''
+                self._buffer.append(end_inline_dict)
             else:
                 self._buffer.append(start_inline_dict + '\n')
+                for k, v in obj.items():
+                    self._buffer.append(internal_indent)
+                    self._encode_funcs[type(k)](k, inline=inline, indent=internal_indent, key=True)
+                    if self._scalar_bidi_rtl:
+                        self._scalar_bidi_rtl = False
+                        self._buffer.append('\x20=\n' + internal_indent)
+                        self._encode_funcs[type(v)](v, inline=inline, indent=internal_indent, value=True)
+                    else:
+                        self._buffer.append('\x20=')
+                        self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=internal_indent, leading='\x20', value=True)
+                    self._buffer.append(',\n')
+                if not self.trailing_commas:
+                    self._buffer[-1] = '\n'
+                self._buffer.append(indent + end_inline_dict)
         else:
-            if value:
-                self._buffer[-1] = ' =\n'
-            elif not at_line_start:
-                self._buffer.append('\n')
+            if at_line_start:
+                self._buffer.append(leading)
+            else:
+                indent += self.nesting_indent
+                self._buffer.append('\n' + indent)
             if explicit_type is None:
                 self._alias_def_buffer_index[id_obj] = len(self._buffer)
                 self._buffer.append('')
@@ -766,56 +809,21 @@ class BespONEncoder(object):
                 self._buffer.append('')
                 self._buffer.append(')>\n')
                 self._alias_def_template[id_obj] = ', label={0}'
-        internal_indent = indent + self.nesting_indent
-
-        self._nesting_depth += 1
-        if self._nesting_depth > self.max_nesting_depth:
-            raise TypeError('Max nesting depth for collections was exceeded; max depth = {0}'.format(self.max_nesting_depth))
-
-        if inline:
-            if self.compact_inline:
-                for k, v in obj.items():
-                    self._encode_funcs[type(k)](k, inline=inline, at_line_start=False, indent=internal_indent, key=True)
-                    self._buffer.append(' = ')
-                    self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=internal_indent, value=True)
-                    self._buffer.append(',\x20')
-                if self.trailing_commas:
-                    self._buffer[-1] = ','
-                else:
-                    self._buffer[-1] = ''
-                self._buffer.append(end_inline_dict)
-            else:
-                for k, v in obj.items():
-                    self._buffer.append(internal_indent)
-                    self._encode_funcs[type(k)](k, inline=inline, indent=internal_indent, key=True)
-                    if self._scalar_bidi_rtl:
-                        self._scalar_bidi_rtl = False
-                        self._buffer.append(' =\n' + internal_indent)
-                        self._encode_funcs[type(v)](v, inline=inline, indent=internal_indent, value=True)
-                    else:
-                        self._buffer.append(' = ')
-                        self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=internal_indent, value=True)
-                    self._buffer.append(',\n')
-                if not self.trailing_commas:
-                    self._buffer[-1] = '\n'
-                self._buffer.append(indent + end_inline_dict)
-        else:
+            internal_indent = indent + self.nesting_indent
             first = True
             for k, v in obj.items():
                 if first:
                     first = False
-                    if not after_start_list_item:
-                        self._buffer.append(indent)
                 else:
                     self._buffer.append(indent)
                 self._encode_funcs[type(k)](k, inline=inline, indent=indent, key=True)
                 if self._scalar_bidi_rtl:
                     self._scalar_bidi_rtl = False
-                    self._buffer.append(' =\n' + internal_indent)
+                    self._buffer.append('\x20=\n' + internal_indent)
                     self._encode_funcs[type(v)](v, inline=inline, indent=internal_indent, value=True)
                 else:
-                    self._buffer.append(' = ')
-                    self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=internal_indent, value=True)
+                    self._buffer.append('\x20=')
+                    self._encode_funcs[type(v)](v, inline=inline, at_line_start=False, indent=indent, leading='\x20', value=True)
                 self._buffer.append('\n')
             self._buffer.pop()
 
@@ -839,7 +847,7 @@ class BespONEncoder(object):
         Encode an object as a string.
         '''
         self._reset()
-        self._encode_funcs[type(obj)](obj, margin=True)
+        self._encode_funcs[type(obj)](obj, flush_margin=True)
         if self._buffer[-1][-1] != '\n':
             self._buffer.append('\n')
         encoded = ''.join(self._buffer)
@@ -848,7 +856,9 @@ class BespONEncoder(object):
 
 
     def partial_encode(self, obj, dtype=None,
+                       flush_margin=False,
                        inline=False, at_line_start=True, indent='',
+                       after_start_list_item=False,
                        key=False, key_path=False,
                        delim=None, block=False, num_base=None,
                        initial_nesting_depth=0):
@@ -862,15 +872,15 @@ class BespONEncoder(object):
             if (delim and num_base) or (key_path and not key):
                 raise TypeError('Invalid argument combination')
             if delim or block:
-                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
+                self._encode_funcs[type(obj)](obj, flush_margin=flush_margin, inline=inline, at_line_start=at_line_start, after_start_list_item=after_start_list_item, key=key, key_path=key_path, delim=delim, block=block)
             elif num_base:
-                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, num_base=num_base)
+                self._encode_funcs[type(obj)](obj, flush_margin=flush_margin, inline=inline, at_line_start=at_line_start, after_start_list_item=after_start_list_item, key=key, key_path=key_path, num_base=num_base)
             else:
-                self._encode_funcs[type(obj)](obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path)
+                self._encode_funcs[type(obj)](obj, flush_margin=flush_margin, inline=inline, at_line_start=at_line_start, after_start_list_item=after_start_list_item, key=key, key_path=key_path)
         elif dtype == 'doc_comment':
-            self._encode_doc_comment(obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
+            self._encode_doc_comment(obj, flush_margin=flush_margin, inline=inline, at_line_start=at_line_start, after_start_list_item=after_start_list_item, key=key, key_path=key_path, delim=delim, block=block)
         elif dtype == 'line_comment':
-            self._encode_line_comment(obj, margin=True, inline=inline, at_line_start=at_line_start, key=key, key_path=key_path, delim=delim, block=block)
+            self._encode_line_comment(obj, flush_margin=flush_margin, inline=inline, at_line_start=at_line_start, after_start_list_item=after_start_list_item, key=key, key_path=key_path, delim=delim, block=block)
         else:
             raise ValueError
         encoded = ''.join(self._buffer).replace('\n', '\n'+indent)
