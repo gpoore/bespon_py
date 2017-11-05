@@ -128,7 +128,9 @@ _RAW_LIT_SPECIAL = [# Special code points
                     # Combinations
                     ('end_tag_with_suffix', '{end_tag}{end_tag_suffix}'),
                     # Numbers
-                    ('number_start', '0123456789+-')]
+                    ('number_start', '0123456789+-'),
+                    # Other
+                    ('block_delim', '{literal_string_delim}{escaped_string_doublequote_delim}{escaped_string_singlequote_delim}{comment_delim}{assign_key_val}')]
 _RAW_LIT_GRAMMAR.extend(_RAW_LIT_SPECIAL)
 
 _RAW_LIT_DUMP = [# Sequences for dumping data
@@ -146,12 +148,15 @@ for k, v in _RAW_LIT_GRAMMAR:
         LIT_GRAMMAR[k] = v.format(**LIT_GRAMMAR)
 # Add a few elements that couldn't conveniently be created with the grammar
 # definition format
+LIT_GRAMMAR['whitespace_set'] = set(LIT_GRAMMAR['whitespace'])
+LIT_GRAMMAR['unicode_whitespace_set'] = set(LIT_GRAMMAR['unicode_whitespace'])
 LIT_GRAMMAR['line_terminator_ascii_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_ascii'])
 LIT_GRAMMAR['line_terminator_unicode_seq'] = ('\r\n',) + tuple(x for x in LIT_GRAMMAR['line_terminator_unicode'])
 LIT_GRAMMAR['escaped_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['escaped_string_delim'] for n in range(1, 90+1) if n == 1 or n % 3 == 0)
 LIT_GRAMMAR['literal_string_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['literal_string_delim'] for n in range(1, 90+1) if n == 1 or n == 2 or n % 3 == 0)
 LIT_GRAMMAR['string_delim_seq_set'] = LIT_GRAMMAR['escaped_string_delim_seq_set'] | LIT_GRAMMAR['literal_string_delim_seq_set']
 LIT_GRAMMAR['doc_comment_delim_seq_set'] = set(n*x for x in LIT_GRAMMAR['comment_delim'] for n in range(1, 90+1) if n % 3 == 0)
+LIT_GRAMMAR['block_delim_set'] = set(LIT_GRAMMAR['block_delim'])
 
 
 # Assemble regex grammar

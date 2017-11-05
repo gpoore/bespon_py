@@ -32,40 +32,6 @@ if sys.version_info.major == 2:
     str = unicode
 
 
-BOM = grammar.LIT_GRAMMAR['bom']
-MAX_DELIM_LENGTH = grammar.PARAMS['max_delim_length']
-MAX_NESTING_DEPTH = grammar.PARAMS['max_nesting_depth']
-
-NEWLINE = grammar.LIT_GRAMMAR['newline']
-INDENT = grammar.LIT_GRAMMAR['indent']
-WHITESPACE_SET = set(grammar.LIT_GRAMMAR['whitespace'])
-UNICODE_WHITESPACE_SET = set(grammar.LIT_GRAMMAR['unicode_whitespace'])
-
-OPEN_INDENTATION_LIST = grammar.LIT_GRAMMAR['open_indentation_list']
-START_INLINE_DICT = grammar.LIT_GRAMMAR['start_inline_dict']
-PATH_SEPARATOR = grammar.LIT_GRAMMAR['path_separator']
-END_TAG_WITH_SUFFIX = grammar.LIT_GRAMMAR['end_tag_with_suffix']
-ASSIGN_KEY_VAL = grammar.LIT_GRAMMAR['assign_key_val']
-
-ESCAPED_STRING_SINGLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_singlequote_delim']
-ESCAPED_STRING_DOUBLEQUOTE_DELIM = grammar.LIT_GRAMMAR['escaped_string_doublequote_delim']
-LITERAL_STRING_DELIM = grammar.LIT_GRAMMAR['literal_string_delim']
-COMMENT_DELIM = grammar.LIT_GRAMMAR['comment_delim']
-BLOCK_PREFIX = grammar.LIT_GRAMMAR['block_prefix']
-BLOCK_SUFFIX = grammar.LIT_GRAMMAR['block_suffix']
-BLOCK_DELIM_SET = set([LITERAL_STRING_DELIM, ESCAPED_STRING_SINGLEQUOTE_DELIM,
-                       ESCAPED_STRING_DOUBLEQUOTE_DELIM, LITERAL_STRING_DELIM,
-                       COMMENT_DELIM, ASSIGN_KEY_VAL])
-
-NUMBER_START = grammar.LIT_GRAMMAR['number_start']
-INFINITY_WORD = grammar.LIT_GRAMMAR['infinity_word']
-SIGN = grammar.LIT_GRAMMAR['sign']
-ANY_EXPONENT_LETTER = grammar.LIT_GRAMMAR['dec_exponent_letter'] + grammar.LIT_GRAMMAR['hex_exponent_letter']
-IMAGINARY_UNIT = grammar.LIT_GRAMMAR['imaginary_unit']
-
-SENTINEL = grammar.LIT_GRAMMAR['terminal_sentinel']
-
-
 
 
 class SourceRange(object):
@@ -212,7 +178,8 @@ class State(object):
         raise erring.InvalidLiteralError(self, code_point, code_point_esc)
 
 
-    def _check_literals_set_code_point_attrs(self, source_raw_string, decoder, bom=BOM):
+    def _check_literals_set_code_point_attrs(self, source_raw_string, decoder,
+                                             bom=grammar.LIT_GRAMMAR['bom']):
         '''
         Check the decoded source for right-to-left code points and invalid
         literal code points.  Set regexes for key paths and unquoted strings
@@ -314,7 +281,7 @@ class BespONDecoder(object):
         aliases = kwargs.pop('aliases', True)
         circular_references = kwargs.pop('circular_references', False)
         integers = kwargs.pop('integers', True)
-        max_nesting_depth = kwargs.pop('max_nesting_depth', MAX_NESTING_DEPTH)
+        max_nesting_depth = kwargs.pop('max_nesting_depth', grammar.PARAMS['max_nesting_depth'])
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
         python_types = kwargs.pop('python_types', False)
@@ -428,10 +395,10 @@ class BespONDecoder(object):
             parse_token[token] = func
             if 'string' in token_name:
                 parse_scalar_token[token] = func
-        for c in NUMBER_START:
+        for c in grammar.LIT_GRAMMAR['number_start']:
             parse_token[c] = self._parse_token_number
             parse_scalar_token[c] = self._parse_token_number
-        for c in INDENT:
+        for c in grammar.LIT_GRAMMAR['indent']:
             parse_token[c] = self._parse_token_whitespace
         parse_token[''] = self._parse_line_goto_next
         self._parse_token = parse_token
@@ -483,7 +450,7 @@ class BespONDecoder(object):
 
 
     @staticmethod
-    def _unwrap_inline_string(s_list, unicode_whitespace_set=UNICODE_WHITESPACE_SET):
+    def _unwrap_inline_string(s_list, unicode_whitespace_set=grammar.LIT_GRAMMAR['unicode_whitespace_set']):
         '''
         Unwrap an inline string.
 
@@ -548,7 +515,7 @@ class BespONDecoder(object):
 
 
     def _parse_lines(self, state,
-                     whitespace=INDENT, whitespace_set=WHITESPACE_SET,
+                     whitespace=grammar.LIT_GRAMMAR['indent'], whitespace_set=grammar.LIT_GRAMMAR['whitespace_set'],
                      len=len):
         '''
         Process lines from source into abstract syntax tree (AST).  Then
@@ -589,7 +556,7 @@ class BespONDecoder(object):
 
 
     def _parse_line_goto_next(self, line, state,
-                              whitespace=INDENT, whitespace_set=WHITESPACE_SET,
+                              whitespace=grammar.LIT_GRAMMAR['indent'], whitespace_set=grammar.LIT_GRAMMAR['whitespace_set'],
                               next=next, len=len):
         '''
         Go to next line.  Used when parsing completes on a line, and no
@@ -631,7 +598,7 @@ class BespONDecoder(object):
         return line_lstrip_ws
 
 
-    def _parse_token_whitespace(self, line, state, whitespace=INDENT):
+    def _parse_token_whitespace(self, line, state, whitespace=grammar.LIT_GRAMMAR['indent']):
         '''
         Remove non-indentation whitespace.
         '''
@@ -651,9 +618,9 @@ class BespONDecoder(object):
 
 
     def _parse_token_open_indentation_list(self, line, state,
-                                           whitespace=INDENT,
-                                           open_indentation_list=OPEN_INDENTATION_LIST,
-                                           path_separator=PATH_SEPARATOR,
+                                           whitespace=grammar.LIT_GRAMMAR['indent'],
+                                           open_indentation_list=grammar.LIT_GRAMMAR['open_indentation_list'],
+                                           path_separator=grammar.LIT_GRAMMAR['path_separator'],
                                            len=len):
         '''
         Open a list in indentation-style syntax.
@@ -758,12 +725,12 @@ class BespONDecoder(object):
 
 
     def _parse_token_end_tag(self, line, state,
-                             end_tag_with_suffix=END_TAG_WITH_SUFFIX,
-                             whitespace=INDENT,
-                             whitespace_set=WHITESPACE_SET,
-                             comment_delim=COMMENT_DELIM,
-                             start_inline_dict=START_INLINE_DICT,
-                             block_prefix=BLOCK_PREFIX,
+                             end_tag_with_suffix=grammar.LIT_GRAMMAR['end_tag_with_suffix'],
+                             whitespace=grammar.LIT_GRAMMAR['indent'],
+                             whitespace_set=grammar.LIT_GRAMMAR['whitespace_set'],
+                             comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                             start_inline_dict=grammar.LIT_GRAMMAR['start_inline_dict'],
+                             block_prefix=grammar.LIT_GRAMMAR['block_prefix'],
                              len=len):
         '''
         End a tag.
@@ -796,8 +763,8 @@ class BespONDecoder(object):
 
 
     def _parse_delim_inline(self, name, delim, line, state, section=False,
-                            whitespace=INDENT,
-                            unicode_whitespace_set=UNICODE_WHITESPACE_SET,
+                            whitespace=grammar.LIT_GRAMMAR['indent'],
+                            unicode_whitespace_set=grammar.LIT_GRAMMAR['unicode_whitespace_set'],
                             next=next, len=len):
         '''
         Find the closing delimiter for an inline quoted string or doc comment.
@@ -857,7 +824,7 @@ class BespONDecoder(object):
 
 
     def _parse_token_line_comment(self, line, state,
-                                  comment_delim=COMMENT_DELIM,
+                                  comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
                                   FullCommentNode=FullCommentNode,
                                   len=len):
         '''
@@ -879,8 +846,8 @@ class BespONDecoder(object):
 
 
     def _parse_token_comment_delim(self, line, state,
-                                   comment_delim=COMMENT_DELIM,
-                                   max_delim_length=MAX_DELIM_LENGTH,
+                                   comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                                   max_delim_length=grammar.PARAMS['max_delim_length'],
                                    CommentNode=CommentNode,
                                    FullCommentNode=FullCommentNode,
                                    len=len):
@@ -941,9 +908,9 @@ class BespONDecoder(object):
 
 
     def _parse_token_literal_string_delim(self, line, state, section=False,
-                                          max_delim_length=MAX_DELIM_LENGTH,
+                                          max_delim_length=grammar.PARAMS['max_delim_length'],
                                           ScalarNode=ScalarNode,
-                                          literal_string_delim=LITERAL_STRING_DELIM,
+                                          literal_string_delim=grammar.LIT_GRAMMAR['literal_string_delim'],
                                           len=len):
         '''
         Parse inline literal string.
@@ -1001,7 +968,7 @@ class BespONDecoder(object):
 
 
     def _parse_token_escaped_string_delim(self, line, state, section=False,
-                                          max_delim_length=MAX_DELIM_LENGTH,
+                                          max_delim_length=grammar.PARAMS['max_delim_length'],
                                           ScalarNode=ScalarNode,
                                           FullScalarNode=FullScalarNode,
                                           len=len):
@@ -1084,12 +1051,13 @@ class BespONDecoder(object):
 
 
     def _parse_token_section(self, delim, line, state,
-                             block_suffix=BLOCK_SUFFIX,
-                             whitespace=INDENT,
+                             block_suffix=grammar.LIT_GRAMMAR['block_suffix'],
+                             whitespace=grammar.LIT_GRAMMAR['indent'],
                              SectionNode=SectionNode,
-                             open_indentation_list=OPEN_INDENTATION_LIST,
+                             open_indentation_list=grammar.LIT_GRAMMAR['open_indentation_list'],
                              KeyPathNode=KeyPathNode,
-                             comment_delim=COMMENT_DELIM):
+                             comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                             path_separator=grammar.LIT_GRAMMAR['path_separator']):
         '''
         Parse a section.  This is invoked by `_parse_token_block_prefix()`.
         At this point, `line` has already had the delimiter stripped.
@@ -1133,28 +1101,28 @@ class BespONDecoder(object):
             return self._parse_line_goto_next('', state)
         if line_lstrip_ws[:1] == comment_delim and line_lstrip_ws[1:2] != comment_delim:
             return self._parse_token_line_comment(line_lstrip_ws, state)
-        if next_scalar.implicit_type == 'key_path' and len(next_scalar) == 1 and line[:1] == PATH_SEPARATOR:
+        if next_scalar.implicit_type == 'key_path' and len(next_scalar) == 1 and line[:1] == path_separator:
             raise erring.ParseError('When a "{0}" is used in a section, it must be the last element in a key path, or the only element'.format(open_indentation_list), state)
         raise erring.ParseError('Unexpected content after start of section', state)
 
 
     def _parse_token_block_prefix(self, line, state,
-                                  max_delim_length=MAX_DELIM_LENGTH,
+                                  max_delim_length=grammar.PARAMS['max_delim_length'],
                                   ScalarNode=ScalarNode,
                                   FullScalarNode=FullScalarNode,
                                   CommentNode=CommentNode,
                                   FullCommentNode=FullCommentNode,
-                                  whitespace=INDENT,
-                                  block_prefix=BLOCK_PREFIX,
-                                  block_suffix=BLOCK_SUFFIX,
-                                  block_delim_set=BLOCK_DELIM_SET,
-                                  comment_delim=COMMENT_DELIM,
-                                  escaped_string_doublequote_delim=ESCAPED_STRING_DOUBLEQUOTE_DELIM,
-                                  escaped_string_singlequote_delim=ESCAPED_STRING_SINGLEQUOTE_DELIM,
-                                  literal_string_delim=LITERAL_STRING_DELIM,
-                                  assign_key_val=ASSIGN_KEY_VAL,
-                                  newline=NEWLINE,
-                                  sentinel=SENTINEL,
+                                  whitespace=grammar.LIT_GRAMMAR['indent'],
+                                  block_prefix=grammar.LIT_GRAMMAR['block_prefix'],
+                                  block_suffix=grammar.LIT_GRAMMAR['block_suffix'],
+                                  block_delim_set=grammar.LIT_GRAMMAR['block_delim_set'],
+                                  comment_delim=grammar.LIT_GRAMMAR['comment_delim'],
+                                  escaped_string_doublequote_delim=grammar.LIT_GRAMMAR['escaped_string_doublequote_delim'],
+                                  escaped_string_singlequote_delim=grammar.LIT_GRAMMAR['escaped_string_singlequote_delim'],
+                                  literal_string_delim=grammar.LIT_GRAMMAR['literal_string_delim'],
+                                  assign_key_val=grammar.LIT_GRAMMAR['assign_key_val'],
+                                  newline=grammar.LIT_GRAMMAR['newline'],
+                                  sentinel=grammar.LIT_GRAMMAR['terminal_sentinel'],
                                   next=next, len=len):
         '''
         Parse a block quoted string or doc comment.
@@ -1364,11 +1332,11 @@ class BespONDecoder(object):
 
 
     def _parse_token_number(self, line, state, section=False,
-                            len=len, int=int, infinity_word=INFINITY_WORD,
+                            len=len, int=int, infinity_word=grammar.LIT_GRAMMAR['infinity_word'],
                             infinity_set=set([float('-inf'), float('inf')]),
-                            sign=SIGN,
-                            any_exponent_letter=ANY_EXPONENT_LETTER,
-                            imaginary_unit=IMAGINARY_UNIT):
+                            sign=grammar.LIT_GRAMMAR['sign'],
+                            any_exponent_letter=grammar.LIT_GRAMMAR['dec_exponent_letter']+grammar.LIT_GRAMMAR['hex_exponent_letter'],
+                            imaginary_unit=grammar.LIT_GRAMMAR['imaginary_unit']):
         '''
         Parse a number (float, int, etc.).
         '''
@@ -1508,9 +1476,9 @@ class BespONDecoder(object):
 
 
     def _parse_token_unquoted_string_or_key_path(self, line, state, section=False,
-                                                 whitespace=INDENT,
-                                                 open_indentation_list=OPEN_INDENTATION_LIST,
-                                                 assign_key_val=ASSIGN_KEY_VAL,
+                                                 whitespace=grammar.LIT_GRAMMAR['indent'],
+                                                 open_indentation_list=grammar.LIT_GRAMMAR['open_indentation_list'],
+                                                 assign_key_val=grammar.LIT_GRAMMAR['assign_key_val'],
                                                  ScalarNode=ScalarNode,
                                                  FullScalarNode=FullScalarNode,
                                                  KeyPathNode=KeyPathNode,
