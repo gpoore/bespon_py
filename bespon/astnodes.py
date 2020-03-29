@@ -1126,7 +1126,7 @@ class KeyPathNode(list):
                     try:
                         kp_elem_final = key_path_reserved_word_vals[kp_elem_raw]
                     except KeyError:
-                        kp_elem_node = ScalarNode(state)
+                        kp_elem_node = ScalarNode(state, lineno, first_colno, lineno, last_colno, implicit_type)
                         kp_elem_node.first_colno = first_colno
                         kp_elem_node.last_colno = last_colno
                         if kp_elem_raw.lower() in _reserved_word_types:
