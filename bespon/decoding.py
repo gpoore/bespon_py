@@ -36,7 +36,7 @@ if sys.version_info.major == 2:
 
 class SourceRange(object):
     '''
-    Object for creating traceback to a range within a source.
+    Create tracebacks to a range within a source.
     '''
     def __init__(self, state, first_lineno, first_colno, last_lineno, last_colno):
         self._state = state
@@ -44,6 +44,147 @@ class SourceRange(object):
         self.first_colno = first_colno
         self.last_lineno = last_lineno
         self.last_colno = last_colno
+
+
+
+
+_context_core_attr = ['_state', 'indent', 'at_line_start', 'inline', 'inline_indent']
+
+_context_node_attr = _context_core_attr + ['external_indent', 'external_at_line_start']
+
+_context_full_core_attr = _context_core_attr + ['first_lineno', 'first_colno', 'last_lineno', 'last_colno']
+
+_context_full_node_attr = _context_full_core_attr + ['external_first_lineno', 'external_first_colno']
+
+
+class Context(object):
+    '''
+    Store state of an object for future use.
+    '''
+    pass
+
+
+class CommentContext(Context):
+    __slots__ = _context_core_attr
+    def __init__(self, state):
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+
+    def update(self):
+        state = self._state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        return self
+
+
+class FullCommentContext(Context):
+    __slots__ = _context_core_attr
+    def __init__(self, state):
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.lineno
+        self.first_colno = state.colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+
+
+class NodeContext(Context):
+    __slots__ = _context_node_attr
+    def __init__(self, state):
+        self._state = state
+        self.indent = self.external_indent = state.indent
+        self.at_line_start = self.external_at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+
+    def update(self):
+        state = self._state
+        self.indent = self.external_indent = state.indent
+        self.at_line_start = self.external_at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        return self
+
+    def copy(self):
+        cls = self.__class__
+        context = cls.__new__(cls)
+        context._state = self._state
+        context.indent = context.external_indent = self.indent
+        context.at_line_start = context.external_at_line_start = self.at_line_start
+        context.inline = self.inline
+        context.inline_indent = self.inline_indent
+        return context
+
+
+class FullNodeContext(Context):
+    __slots__ = _context_node_attr
+    def __init__(self, state):
+        self._state = state
+        self.indent = self.external_indent = state.indent
+        self.at_line_start = self.external_at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = self.external_first_lineno = state.lineno
+        self.first_colno = self.external_first_colno = state.colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+
+    @classmethod
+    def from_context_and_range(cls, context, first_lineno, first_colno, last_lineno, last_colno):
+        obj = cls.__new__(cls)
+        obj._state = context._state
+        obj.indent = obj.external_indent = context.indent
+        obj.at_line_start = obj.external_at_line_start = context.at_line_start
+        obj.inline = context.inline
+        obj.inline_indent = context.inline_indent
+        obj.first_lineno = obj.external_first_lineno = first_lineno
+        obj.first_colno = obj.external_first_colno = first_colno
+        obj.last_lineno = last_lineno
+        obj.last_colno = last_colno
+        return obj
+
+
+class TagContext(Context):
+    __slots__ = _context_core_attr + ['external_indent']
+    def __init__(self, state):
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.external_indent = state.external_indent
+
+    def update(self):
+        state = self._state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.external_indent = state.external_indent
+        return self
+
+
+class FullTagContext(Context):
+    __slots__ = _context_full_core_attr + ['external_indent']
+    def __init__(self, state):
+        self._state = state
+        self.indent = state.indent
+        self.at_line_start = state.at_line_start
+        self.inline = state.inline
+        self.inline_indent = state.inline_indent
+        self.first_lineno = state.lineno
+        self.first_colno = state.colno
+        self.last_lineno = state.last_lineno
+        self.last_colno = state.last_colno
+        self.external_indent = state.external_indent
 
 
 
@@ -60,17 +201,19 @@ class State(object):
                  'source_initial_nesting_depth', 'source_inline',
                  'source_embedded',
                  'source_lines', 'source_lines_iter',
+                 'bom_offset',
                  'source_only_ascii', 'source_only_below_u0590',
                  'indent', 'at_line_start',
                  'inline', 'inline_indent',
-                 'bom_offset',
                  'lineno', 'colno', 'len_full_line_plus_one',
+                 'last_line_comment_lineno',
                  'nesting_depth',
                  'next_cache',
                  'next_tag', 'in_tag', 'start_root_tag', 'end_root_tag',
-                 'next_doc_comment', 'last_line_comment_lineno',
-                 'next_scalar', 'next_scalar_is_keyable',
-                 'data_types', 'core_data_types', 'extended_data_types',
+                 'next_doc_comment', 'next_doc_comment_context',
+                 'next_scalar', 'next_scalar_context', 'next_scalar_is_keyable',
+                 'data_types',
+                 'core_data_types', 'extended_data_types', 'python_data_types',
                  'ast', 'full_ast',
                  'bidi_rtl', 'bidi_rtl_re',
                  'bidi_rtl_last_scalar_last_lineno',
@@ -86,28 +229,28 @@ class State(object):
                  indent='', at_line_start=True,
                  inline=False, inline_indent=None,
                  lineno=1, colno=1,
-                 full_ast=False):
+                 full_ast=False,
+                 indent_chars=grammar.LIT_GRAMMAR['indent']):
         if not all(x is None or isinstance(x, str) for x in (source_name, inline_indent)):
             raise TypeError
         if not all(isinstance(x, str) for x in (indent,)):
             raise TypeError
-        if any(x is not None and x.lstrip('\x20\t') for x in (indent, inline_indent)):
-            raise ValueError('Invalid indentation characters; only spaces and tabs are allowed')
+        if any(x is not None and x != '' and x.lstrip(indent_chars) for x in (indent, inline_indent)):
+            raise ValueError('Invalid indentation characters')
         if not all(isinstance(x, int) and x >= 0 for x in (source_include_depth, source_initial_nesting_depth)):
-            if all(isinstance(x, int) for x in (source_include_depth, source_initial_nesting_depth)):
-                raise ValueError
-            raise TypeError
+            if not all(isinstance(x, int) for x in (source_include_depth, source_initial_nesting_depth)):
+                raise TypeError
+            raise ValueError
         if not all(isinstance(x, int) and x > 0 for x in (lineno, colno)):
-            if all(isinstance(x, int) for x in (lineno, colno)):
-                raise ValueError
-            raise TypeError
+            if not all(isinstance(x, int) for x in (lineno, colno)):
+                raise TypeError
+            raise ValueError
         if not all(x in (True, False) for x in (at_line_start, inline, full_ast, source_embedded)):
             raise TypeError
 
-        # In some cases, depending on context, data may be derived either
-        # from a `State` instance or from an AST node instance.  `_state`
-        # provides an attribute common to all of these that allows
-        # `state` access.
+        # In some cases, data may be derived either from a `State` instance or
+        # from an AST node instance.  `_state` provides an attribute common to
+        # all of these that allows `state` access.
         self._state = self
 
         self.source_name = source_name or '<data>'
