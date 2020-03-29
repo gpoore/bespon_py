@@ -114,7 +114,7 @@ class AstView(object):
             raise AttributeError('Keys only exist in dict-like objects')
         doc_comment_node = self._node.parent.key_nodes[self._node.index].doc_comment
         if doc_comment_node is None:
-            return NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
         self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
 
 
@@ -133,7 +133,7 @@ class AstView(object):
             raise AttributeError('Keys only exist in dict-like objects')
         trailing_comment_node = self._node.parent.key_nodes[self._node.index].trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
@@ -164,7 +164,7 @@ class AstView(object):
     def value_doc_comment(self, val):
         doc_comment_node = self._node.doc_comment
         if doc_comment_node is None:
-            return NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding doc comments where they do not yet exist is not currently supported')
         self._ast._replace_doc_comment_at_pos(doc_comment_node, val)
 
 
@@ -183,7 +183,7 @@ class ScalarAstView(AstView):
     def value_trailing_comment(self, val):
         trailing_comment_node = self._node.trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
@@ -229,7 +229,7 @@ class DictAstView(AstView):
     def value_start_trailing_comment(self, val):
         trailing_comment_node = self._node.start_trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
@@ -244,7 +244,7 @@ class DictAstView(AstView):
     def value_end_trailing_comment(self, val):
         trailing_comment_node = self._node.end_trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
@@ -283,7 +283,7 @@ class ListAstView(AstView):
     def value_start_trailing_comment(self, val):
         trailing_comment_node = self._node.start_trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
@@ -298,7 +298,7 @@ class ListAstView(AstView):
     def value_end_trailing_comment(self, val):
         trailing_comment_node = self._node.end_trailing_comment
         if trailing_comment_node is None:
-            return NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
+            raise NotImplementedError('Adding trailing comments where they do not yet exist is not currently supported')
         self._ast._replace_trailing_comment_at_pos(trailing_comment_node, val)
 
 
