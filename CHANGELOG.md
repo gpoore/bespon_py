@@ -1,6 +1,34 @@
 # `bespon` Change Log
 
 
+## v0.4.0 (2020-03-30)
+
+* Many improvements and new features for `RoundtripAst`.
+  - Improved support for replacing keys and values.  There is experimental
+    support for replacing dicts and lists, and now full support for all other
+    data types.
+  - Added option `enforce_types`, which provides experimental support for
+    replacing keys and values with objects of a different data types.
+  - Added support for custom encoders.
+  - Added preliminary support for `__getitem__`-style access (for example,
+    `ast['key'].value`).
+  - Added access to trailing comments (not doc comments) with new node
+    attributes `key_trailing_comment`, `value_trailing_comment`,
+    `value_start_trailing_comment`, and `value_end_trailing_comment`.  These
+    also allow modification of existing trailing comments.
+* New loading options:  `custom_types` allows use of custom data types.
+  `empty_default` is a function that is called to produce a
+  default value when there is no data to load.
+* New dumping options that control output appearance, data types, and data
+  structures:  `aliases`, `circular_references`, `integers`,
+  `only_ascii_unquoted`, `only_ascii_source`, `extended_types`,
+  `python_types`, `baseclass`, `trailing_commas`, `compact_inline`,
+  `inline_depth`, `nesting_indent`, `start_list_item`, and
+  `flush_start_list_item`.
+* Fixed bug with round-tripping bools.
+* Fixed bug in error reporting for reserved words like `inf` in key paths.
+
+
 ## v0.3.0 (2017-07-12)
 
 * Added decoder options `aliases`, `circular_references`, `custom_parsers`,
