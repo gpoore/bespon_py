@@ -294,7 +294,7 @@ class State(object):
         self.source_lines = source_raw_string.splitlines()
         self.source_lines_iter = iter(self.source_lines)
 
-        self.ast = Ast(self, decoder.max_nesting_depth)
+        self.ast = Ast(self, decoder.max_nesting_depth, decoder.empty_default)
         if self.full_ast:
             self.ast.source_lines = self.source_lines
 
@@ -396,7 +396,8 @@ class BespONDecoder(object):
     __slots__ = ['only_ascii_source', 'only_ascii_unquoted',
                  'aliases', 'circular_references', 'integers',
                  'custom_parsers', 'custom_types',
-                 'max_nesting_depth', 'float_overflow_to_inf',
+                 'max_nesting_depth', 'empty_default',
+                 'float_overflow_to_inf',
                  'extended_types', 'python_types',
                  '_data_types',
                  '_escape_unicode',
@@ -425,6 +426,7 @@ class BespONDecoder(object):
         circular_references = kwargs.pop('circular_references', False)
         integers = kwargs.pop('integers', True)
         max_nesting_depth = kwargs.pop('max_nesting_depth', grammar.PARAMS['max_nesting_depth'])
+        empty_default = kwargs.pop('empty_default', None)
         float_overflow_to_inf = kwargs.pop('float_overflow_to_inf', False)
         extended_types = kwargs.pop('extended_types', False)
         python_types = kwargs.pop('python_types', False)
@@ -445,6 +447,7 @@ class BespONDecoder(object):
         self.circular_references = circular_references
         self.integers = integers
         self.max_nesting_depth = max_nesting_depth
+        self.empty_default = empty_default
         self.float_overflow_to_inf = float_overflow_to_inf
         self.extended_types = extended_types
         self.python_types = python_types
@@ -684,8 +687,6 @@ class BespONDecoder(object):
             line = parse_token[line[:1]](line, state)
 
         state.ast.finalize()
-        if not state.ast.root:
-            raise erring.ParseError('There was no data to load', state)
 
 
     def _check_bidi_rtl(self, state):

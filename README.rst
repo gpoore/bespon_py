@@ -179,6 +179,11 @@ customize data handling.
     Specifies whether instances are mutable after being created.  Mutable
     collections have greater flexibility in terms of circular references.
 
+* ``empty_default`` (function, default ``None``):  When an empty string or
+  file is loaded (or one that only consists of comments and whitespace), this
+  function is called with no arguments to provide a default value, instead of
+  an error being raised.  For example, ``empty_default=dict``.
+
 * ``extended_types`` (boolean, default ``False``):  Enable preliminary support
   for ``set`` and ``odict`` tagged collections (for example, ``(set)> [1, 2,
   3]``).  Enable preliminary support for complex number literals and rational

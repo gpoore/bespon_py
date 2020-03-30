@@ -38,17 +38,18 @@ class Ast(object):
     '''
     __slots__ = ['state', 'full_ast', 'max_nesting_depth',
                  'source', 'source_lines', 'root', 'pos', 'section_pos',
-                 'scalar_nodes', 'line_comments',
+                 'scalar_nodes', 'line_comments', 'empty_default',
                  '_unresolved_collection_nodes',
                  '_unresolved_alias_nodes',
                  '_in_tag_cached_pos', '_in_tag_cached_doc_comment',
                  '_first_section', '_last_section',
                  '_labels']
 
-    def __init__(self, state, max_nesting_depth):
+    def __init__(self, state, max_nesting_depth, empty_default=None):
         self.state = state
         self.full_ast = state.full_ast
         self.max_nesting_depth = max_nesting_depth
+        self.empty_default = empty_default
         self.source = astnodes.SourceNode(state)
         self.root = self.source.root
         self.pos = self.root
@@ -923,8 +924,21 @@ class Ast(object):
                     cleared_ids.update(new_ids)
 
         if root._unresolved_dependency_count == 0:
-            root.final_val = root[0].final_val
-            root._resolved = True
+            if root:
+                root.final_val = root[0].final_val
+                root._resolved = True
+            elif self.empty_default is not None:
+                if state.full_ast:
+                    raise NotImplementedError('There was no data to load; keyword argument "empty_default" is not supported for roundtrip use', state)
+                try:
+                    root.final_val = self.empty_default()
+                except Exception as e:
+                    raise erring.ParseError('Failed to use "empty_default" to create default value for empty data:\n{0}'.format(e), state)
+                root._resolved = True
+            else:
+                if state.full_ast:
+                    raise erring.ParseError('There was no data to load', state)
+                raise erring.ParseError('There was no data to load; consider using "empty_default"', state)
         else:
             raise erring.ParseError('Failed to resolved root node', state)
 

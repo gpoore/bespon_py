@@ -34,6 +34,8 @@ def load_roundtrip_ast(fp, cls=None, **kwargs):
     '''
     encoder = kwargs.pop('encoder', None)
     enforce_types = kwargs.pop('enforce_types', None)
+    if 'empty_default' in kwargs:
+        raise NotImplementedError('Keyword argument "empty_default" is not supported for roundtrip use')
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(fp.read())
@@ -50,6 +52,8 @@ def loads_roundtrip_ast(s, cls=None, **kwargs):
     '''
     encoder = kwargs.pop('encoder', None)
     enforce_types = kwargs.pop('enforce_types', None)
+    if 'empty_default' in kwargs:
+        raise NotImplementedError('Keyword argument "empty_default" is not supported for roundtrip use')
     if cls is None:
         if not kwargs:
             ast = _DEFAULT_DECODER.decode_to_ast(s)
