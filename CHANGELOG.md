@@ -1,6 +1,13 @@
 # `bespon` Change Log
 
 
+## v0.5.0 (dev)
+
+* `.value` with roundtrip AST nodes now gives correct, updated value for
+  collections that have been modified (#1).
+
+
+
 ## v0.4.0 (2020-03-30)
 
 * Many improvements and new features for `RoundtripAst`.

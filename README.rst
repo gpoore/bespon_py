@@ -70,6 +70,14 @@ attributes.
   immediately follows a key on the same line.
 * ``value``:  Value of the current location.  Can be assigned, as long as the
   new object is of the same type as the old object, and the type is supported.
+  When ``value`` is accessed or assigned and is a mutable object like a dict
+  or list, the object should not be modified.  Currently, modifying the object
+  will not change the actual data contained in the AST (the AST does not
+  update automatically).  But modifying the object will make the AST's
+  temporary representation of itself (available via ``value``) invalid.  If
+  you need to modify the object returned by ``value``, use ``copy.deepcopy()``
+  to create a completely independent copy.  If you need to assign an object
+  that will later be modified, assign a deepcopy of the object.
 * ``value_doc_comment``:  Doc comment of the value at the current location.
   ``None`` if there is no doc comment.  Currently only supports assignment for
   existing doc comments.

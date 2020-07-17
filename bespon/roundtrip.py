@@ -469,6 +469,8 @@ class RoundtripAst(object):
         pos.final_val = obj
         if pos.implicit_type not in ('dict', 'list'):
             pos.raw_val = encoded_val
+        if hasattr(pos, 'index'):
+            pos.parent.final_val[pos.index] = obj
         self._replacements[(pos.first_lineno, pos.first_colno, pos.last_lineno, pos.last_colno)] = encoded_val
 
 
