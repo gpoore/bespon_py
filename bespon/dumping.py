@@ -24,9 +24,11 @@ def dump(obj, fp, cls=None, **kwargs):
     '''
     if cls is None:
         if not kwargs:
-            return fp.writelines(_DEFAULT_ENCODER.iterencode(obj))
-        return fp.writelines(BespONEncoder(**kwargs).iterencode(obj))
-    return fp.writelines(cls(**kwargs).iterencode(obj))
+            fp.write(_DEFAULT_ENCODER.encode(obj))
+        else:
+            fp.write(BespONEncoder(**kwargs).encode(obj))
+    else:
+        fp.write(cls(**kwargs).encode(obj))
 
 
 def dumps(obj, cls=None, **kwargs):

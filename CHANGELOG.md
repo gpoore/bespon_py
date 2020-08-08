@@ -5,6 +5,7 @@
 
 * `.value` with roundtrip AST nodes now gives correct, updated value for
   collections that have been modified (#1).
+* `dump()` now works (#2).
 
 
 
