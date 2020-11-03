@@ -372,13 +372,13 @@ class BespONEncoder(object):
             self._scalar_bidi_rtl = self.bidi_rtl_re.search(obj) is not None
             self._buffer.append(leading)
             if delim_char == "'":
-                if "'" not in obj or obj == "'":
+                if "'" not in obj[1:-1]:
                     self._buffer.append("'{0}'".format(self._escape_unicode(obj, "'", inline=True)))
                     return
                 self._buffer.append("'''{0}'''".format(self._escape_unicode(obj, "'", inline=True, multidelim=True)))
                 return
             if delim_char == '"' or obj == '' or self._invalid_literal_unicode_re.search(obj) is not None:
-                if '"' not in obj or obj == '"':
+                if '"' not in obj[1:-1]:
                     self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"', inline=True)))
                     return
                 self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', inline=True, multidelim=True)))
@@ -408,7 +408,7 @@ class BespONEncoder(object):
                     close_delim = '```'
                 self._buffer.append(open_delim + obj + close_delim)
                 return
-            if '"' not in obj or obj == '"':
+            if '"' not in obj[1:-1]:
                 self._buffer.append('"{0}"'.format(self._escape_unicode(obj, '"', inline=True)))
                 return
             self._buffer.append('"""{0}"""'.format(self._escape_unicode(obj, '"', inline=True, multidelim=True)))
@@ -472,13 +472,13 @@ class BespONEncoder(object):
         if self._line_terminator_bytes_re.search(obj) is None:
             self._buffer.append(leading)
             if delim_char == "'":
-                if b"'" not in obj or obj == b"'":
+                if b"'" not in obj[1:-1]:
                     self._buffer.append(tag + "'{0}'".format(self._escape_bytes(obj, "'", inline=True).decode('ascii')))
                     return
                 self._buffer.append(tag + "'''{0}'''".format(self._escape_bytes(obj, "'", inline=True, multidelim=True).decode('ascii')))
                 return
             if delim_char == '"' or obj == b'' or self._invalid_literal_bytes_re.search(obj) is not None:
-                if b'"' not in obj or obj == b'"':
+                if b'"' not in obj[1:-1]:
                     self._buffer.append(tag + '"{0}"'.format(self._escape_bytes(obj, '"', inline=True).decode('ascii')))
                     return
                 self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', inline=True, multidelim=True).decode('ascii')))
@@ -508,7 +508,7 @@ class BespONEncoder(object):
                     close_delim = '```'
                 self._buffer.append(tag + open_delim + obj.decode('ascii') + close_delim)
                 return
-            if b'"' not in obj or obj == b'"':
+            if b'"' not in obj[1:-1]:
                 self._buffer.append(tag +'"{0}"'.format(self._escape_bytes(obj, '"', inline=True).decode('ascii')))
                 return
             self._buffer.append(tag + '"""{0}"""'.format(self._escape_bytes(obj, '"', inline=True, multidelim=True).decode('ascii')))
