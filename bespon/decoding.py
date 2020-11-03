@@ -1345,10 +1345,13 @@ class BespONDecoder(object):
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
             if node.tag is None:
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-                content = newline.join(content_lines_dedent)
-                content_lines_dedent[-1] = content_lines_dedent_last_line
+                if content_lines:
+                    content_lines_dedent_last_line = content_lines_dedent[-1]
+                    content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                    content = newline.join(content_lines_dedent)
+                    content_lines_dedent[-1] = content_lines_dedent_last_line
+                else:
+                    content = ''
                 node.final_val = content
             else:
                 if 'newline' in node.tag:
@@ -1359,13 +1362,16 @@ class BespONDecoder(object):
                     tag_indent = node.tag['indent'].final_val
                 else:
                     tag_indent = None
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                content_lines_dedent[-1] = content_lines_dedent_last_line + tag_newline
-                if tag_indent is None:
-                    content = tag_newline.join(content_lines_dedent)
+                if content_lines:
+                    content_lines_dedent_last_line = content_lines_dedent[-1]
+                    content_lines_dedent[-1] = content_lines_dedent_last_line + tag_newline
+                    if tag_indent is None:
+                        content = tag_newline.join(content_lines_dedent)
+                    else:
+                        content = tag_newline.join(tag_indent + x for x in content_lines_dedent)
+                    content_lines_dedent[-1] = content_lines_dedent_last_line
                 else:
-                    content = tag_newline.join(tag_indent + x for x in content_lines_dedent)
-                content_lines_dedent[-1] = content_lines_dedent_last_line
+                    content = ''
                 if node.tag.type is None:
                     node.final_val = content
                 elif not state.data_types[node.tag.type].ascii_bytes:
@@ -1389,10 +1395,13 @@ class BespONDecoder(object):
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
             if node.tag is None:
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-                content = newline.join(content_lines_dedent)
-                content_lines_dedent[-1] = content_lines_dedent_last_line
+                if content_lines:
+                    content_lines_dedent_last_line = content_lines_dedent[-1]
+                    content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                    content = newline.join(content_lines_dedent)
+                    content_lines_dedent[-1] = content_lines_dedent_last_line
+                else:
+                    content = ''
                 try:
                     content_esc = self._unescape_unicode(content)
                 except Exception as e:
@@ -1403,20 +1412,23 @@ class BespONDecoder(object):
                     tag_newline = node.tag['newline'].final_val
                 else:
                     tag_newline = newline
-                content_lines_dedent_first_line = content_lines_dedent[0]
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                if 'indent' in node.tag:
-                    tag_indent = node.tag['indent'].final_val
-                    content_lines_dedent[0] = tag_indent + content_lines_dedent_first_line
-                    # Don't use `content_lines_dedent_last_line`, but access
-                    # by index, to account for only a single line
-                    content_lines_dedent[-1] = content_lines_dedent[-1] + newline + sentinel
+                if content_lines:
+                    content_lines_dedent_first_line = content_lines_dedent[0]
+                    content_lines_dedent_last_line = content_lines_dedent[-1]
+                    if 'indent' in node.tag:
+                        tag_indent = node.tag['indent'].final_val
+                        content_lines_dedent[0] = tag_indent + content_lines_dedent_first_line
+                        # Don't use `content_lines_dedent_last_line`, but access
+                        # by index, to account for only a single line
+                        content_lines_dedent[-1] = content_lines_dedent[-1] + newline + sentinel
+                    else:
+                        tag_indent = ''
+                        content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                    content = newline.join(content_lines_dedent)
+                    content_lines_dedent[0] = content_lines_dedent_first_line
+                    content_lines_dedent[-1] = content_lines_dedent_last_line
                 else:
-                    tag_indent = ''
-                    content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-                content = newline.join(content_lines_dedent)
-                content_lines_dedent[0] = content_lines_dedent_first_line
-                content_lines_dedent[-1] = content_lines_dedent_last_line
+                    content = ''
                 if node.tag.type is None:
                     try:
                         content_esc = self._unescape_unicode(content, newline=tag_newline, indent=tag_indent)
@@ -1456,13 +1468,16 @@ class BespONDecoder(object):
                                        'doc_comment', delim=delim, block=True)
                 node.raw_val = content_lines_dedent
                 state.ast.scalar_nodes.append(node)
-                # Modify last line by adding `\n`, then join lines with `\n`, then
-                # put last line back to original value, to avoid having to modify the
-                # final string by adding an `\n` at the end
-                content_lines_dedent_last_line = content_lines_dedent[-1]
-                content_lines_dedent[-1] = content_lines_dedent_last_line + newline
-                content = newline.join(content_lines_dedent)
-                content_lines_dedent[-1] = content_lines_dedent_last_line
+                if content_lines:
+                    # Modify last line by adding `\n`, then join lines with `\n`, then
+                    # put last line back to original value, to avoid having to modify the
+                    # final string by adding an `\n` at the end
+                    content_lines_dedent_last_line = content_lines_dedent[-1]
+                    content_lines_dedent[-1] = content_lines_dedent_last_line + newline
+                    content = newline.join(content_lines_dedent)
+                    content_lines_dedent[-1] = content_lines_dedent_last_line
+                else:
+                    content = ''
                 node.final_val = content
             state.next_doc_comment = node
             state.next_cache = True

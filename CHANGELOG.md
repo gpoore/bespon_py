@@ -1,6 +1,13 @@
 # `bespon` Change Log
 
 
+## v0.6.0 (dev)
+
+* Fixed bug that prevented decoding empty block strings and empty block
+  comments.
+
+
+
 ## v0.5.0 (2020-08-11)
 
 * `.value` with roundtrip AST nodes now gives correct, updated value for
