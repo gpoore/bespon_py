@@ -3,6 +3,8 @@
 
 ## v0.6.0 (dev)
 
+* Fixed encoder bug that caused invalid output for inline strings starting
+  with a quotation mark (#3).
 * Fixed bug that prevented decoding empty block strings and empty block
   comments.
 
