@@ -477,7 +477,7 @@ class Ast(object):
         # Temp variables must be used with care; otherwise, don't update self
         pos = self.pos
         if pos is self.section_pos:
-            ListlikeNode(state)
+            list_node = ListlikeNode(state)
             list_node._open = True
             self._append_key_path_collection(list_node)
         elif pos.implicit_type == 'list' and state.indent == pos.indent:

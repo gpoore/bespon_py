@@ -8,6 +8,8 @@
 * Encoder now uses single-character string delimiters in more cases.
 * Fixed bug that prevented decoding empty block strings and empty block
   comments.
+* Fixed bug that prevented lists in indentation-based syntax immediately
+  under sections.
 
 
 
