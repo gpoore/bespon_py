@@ -1,7 +1,7 @@
 # `bespon` Change Log
 
 
-## v0.6.0 (dev)
+## v0.6.0 (2021-02-06)
 
 * Fixed encoder bug that caused invalid output for inline strings starting
   with a quotation mark (#3).
