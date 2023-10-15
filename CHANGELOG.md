@@ -1,6 +1,12 @@
 # `bespon` Change Log
 
 
+## v0.7.0 (2023-10-15)
+
+* Switched packaging to `pyproject.toml`.
+
+
+
 ## v0.6.0 (2021-02-06)
 
 * Fixed encoder bug that caused invalid output for inline strings starting
